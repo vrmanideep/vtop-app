@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="32dp"
+    android:background="#121212">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:layout_marginTop="24dp"
+        android:layout_marginBottom="32dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="VTOP SIMULATOR"
+            android:textColor="#F5E79E"
+            android:textSize="28sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="SECURE LOGIN"
+            android:textColor="#00FFFF"
+            android:textSize="14sp"
+            android:letterSpacing="0.2"/>
+    </LinearLayout>
+
+    <EditText
+        android:id="@+id/inputRegNo"
+        android:layout_width="match_parent"
+        android:layout_height="55dp"
+        android:backgroundTint="#F5E79E"
+        android:textColor="#FFFFFF"
+        android:textColorHint="#888888"
+        android:hint="Registration No (e.g. 21BCExxxx)"
+        android:inputType="textCapCharacters"
+        android:layout_marginBottom="16dp"/>
+
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="24dp">
+
+        <EditText
+            android:id="@+id/inputPassword"
+            android:layout_width="match_parent"
+            android:layout_height="55dp"
+            android:backgroundTint="#F5E79E"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#888888"
+            android:hint="VTOP Password"
+            android:inputType="textPassword"
+            android:paddingEnd="60dp"/>
+
+        <TextView
+            android:id="@+id/btnTogglePassword"
+            android:layout_width="wrap_content"
+            android:layout_height="55dp"
+            android:layout_alignParentEnd="true"
+            android:gravity="center"
+            android:paddingStart="16dp"
+            android:paddingEnd="8dp"
+            android:text="SHOW"
+            android:textColor="#00FFFF"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+    </RelativeLayout>
+
+    <Button
+        android:id="@+id/btnLogin"
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
+        android:text="INITIALIZE CONNECTION"
+        android:textColor="#121212"
+        android:textStyle="bold"
+        android:backgroundTint="#F5E79E" />
+
+    <ScrollView
+        android:id="@+id/consoleScroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="24dp"
+        android:background="#0A0A0A"
+        android:padding="12dp">
+
+        <TextView
+            android:id="@+id/tvConsole"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#00FF00"
+            android:fontFamily="monospace"
+            android:textSize="12sp"
+            android:text="> System standing by...\n" />
+    </ScrollView>
+
+</LinearLayout>

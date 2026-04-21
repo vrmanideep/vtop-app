@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Vtop" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+
+        <item name="colorPrimary">#F5E79E</item>
+        <item name="colorPrimaryVariant">#121212</item>
+        <item name="colorOnPrimary">#000000</item>
+
+        <item name="colorSecondary">#00FFFF</item>
+        <item name="colorSecondaryVariant">#00CCCC</item>
+        <item name="colorOnSecondary">#000000</item>
+
+        <item name="android:statusBarColor">#121212</item>
+        <item name="android:windowBackground">#000000</item>
+
+        <item name="colorSurface">#121212</item>
+        <item name="colorOnSurface">#FFFFFF</item>
+    </style>
+</resources>
