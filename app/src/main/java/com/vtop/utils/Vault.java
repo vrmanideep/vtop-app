@@ -13,20 +13,22 @@ import com.google.gson.reflect.TypeToken;
 import com.vtop.models.AttendanceModel;
 import com.vtop.models.ExamScheduleModel;
 import com.vtop.models.TimetableModel;
-
-// --- NEW MARKS ECOSYSTEM IMPORTS ---
 import com.vtop.models.SemesterOption;
 import com.vtop.models.CourseMark;
 import com.vtop.models.CourseGrade;
 import com.vtop.models.GradeHistoryItem;
 import com.vtop.models.CGPASummary;
 
-import java.lang.reflect.Type;
+import org.json.JSONObject;
+
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public class Vault {
 
@@ -34,7 +36,6 @@ public class Vault {
     private static final String SECRET_PREFS = "secret_vtop_prefs";
     private static final String PUBLIC_PREFS = "VTOP_VAULT";
 
-    // Storage Keys
     private static final String KEY_TIMETABLE = "OFFLINE_TIMETABLE";
     private static final String KEY_ATTENDANCE = "OFFLINE_ATTENDANCE";
     private static final String KEY_EXAMS = "OFFLINE_EXAMS_JSON";
@@ -43,23 +44,24 @@ public class Vault {
     private static final String KEY_SEM_ID = "SELECTED_SEM_ID";
     private static final String KEY_SEM_NAME = "SELECTED_SEM_NAME";
 
-    // --- NEW MARKS ECOSYSTEM KEYS ---
     private static final String KEY_SEMESTER_OPTIONS = "OFFLINE_SEM_OPTIONS";
     private static final String KEY_MARKS = "OFFLINE_MARKS";
     private static final String KEY_GRADES = "OFFLINE_GRADES";
     private static final String KEY_HISTORY_ITEMS = "OFFLINE_HISTORY_ITEMS";
     private static final String KEY_HISTORY_SUMMARY = "OFFLINE_HISTORY_SUMMARY";
 
-    // --- SECURE CREDENTIALS (ENCRYPTED) ---
-    public static void setNavStyle(Context context, String style) {
-        context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
-                .edit().putString("NAV_STYLE", style).apply();
+    // --- FIXED: Native Java implementation for Nav Style ---
+    public static void saveNavStyle(Context context, String style) {
+        SharedPreferences prefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE);
+        prefs.edit().putString("NAV_STYLE", style).apply();
     }
 
     public static String getNavStyle(Context context) {
-        return context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
-                .getString("NAV_STYLE", "DOCK"); // Default to the new optimal bar
+        SharedPreferences prefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE);
+        return prefs.getString("NAV_STYLE", "DOCK");
     }
+    // --------------------------------------------------------
+
     public static void saveCredentials(Context context, String regNo, String password) {
         try {
             MasterKey masterKey = new MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build();
@@ -88,7 +90,48 @@ public class Vault {
         } catch (Exception e) { return new String[]{null, null}; }
     }
 
-    // --- ACADEMIC DATA STORAGE (TIMETABLE, ATTENDANCE, EXAMS) ---
+    public static void saveProfile(Context context, Map<String, Map<String, String>> profileData) {
+        if (profileData == null) return;
+        try {
+            JSONObject rootObj = new JSONObject();
+            for (Map.Entry<String, Map<String, String>> categoryEntry : profileData.entrySet()) {
+                JSONObject categoryObj = new JSONObject();
+                for (Map.Entry<String, String> dataEntry : categoryEntry.getValue().entrySet()) {
+                    categoryObj.put(dataEntry.getKey(), dataEntry.getValue());
+                }
+                rootObj.put(categoryEntry.getKey(), categoryObj);
+            }
+            context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE).edit().putString("STUDENT_PROFILE_DATA", rootObj.toString()).apply();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static Map<String, Map<String, String>> getProfile(Context context) {
+        Map<String, Map<String, String>> profileData = new HashMap<>();
+        String jsonString = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE).getString("STUDENT_PROFILE_DATA", null);
+
+        if (jsonString != null) {
+            try {
+                JSONObject rootObj = new JSONObject(jsonString);
+                Iterator<String> categoryKeys = rootObj.keys();
+                while (categoryKeys.hasNext()) {
+                    String category = categoryKeys.next();
+                    JSONObject categoryObj = rootObj.getJSONObject(category);
+                    Map<String, String> innerMap = new HashMap<>();
+
+                    Iterator<String> innerKeys = categoryObj.keys();
+                    while (innerKeys.hasNext()) {
+                        String key = innerKeys.next();
+                        innerMap.put(key, categoryObj.getString(key));
+                    }
+                    profileData.put(category, innerMap);
+                }
+            } catch (Exception e) { e.printStackTrace(); }
+        }
+        return profileData;
+    }
+
     @SuppressLint("ApplySharedPref")
     public static void saveTimetable(Context context, TimetableModel timetable) {
         context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE).edit().putString(KEY_TIMETABLE, new Gson().toJson(timetable)).commit();
@@ -132,9 +175,6 @@ public class Vault {
         } catch (Exception e) { return new ArrayList<>(); }
     }
 
-    // ==============================================================================
-    // --- NEW: MARKS, GRADES & HISTORY STORAGE ---
-    // ==============================================================================
     @SuppressLint("ApplySharedPref")
     public static void saveSemesterOptions(Context context, List<SemesterOption> list) {
         context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE).edit().putString(KEY_SEMESTER_OPTIONS, new Gson().toJson(list)).commit();
@@ -192,14 +232,13 @@ public class Vault {
         return json == null ? null : new Gson().fromJson(json, CGPASummary.class);
     }
 
-    // --- UTILS & SETTINGS ---
     public static void saveLastSyncTime(Context context) {
         String time = new SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(new Date());
         long currentMillis = System.currentTimeMillis();
         context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .putString(KEY_LAST_SYNC, time)
-                .putLong("LAST_SYNC_TIMESTAMP", currentMillis) // <-- NEW: Save raw timestamp
+                .putLong("LAST_SYNC_TIMESTAMP", currentMillis)
                 .apply();
     }
 
@@ -207,7 +246,6 @@ public class Vault {
         return context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE).getString(KEY_LAST_SYNC, "Never");
     }
 
-    // <-- NEW: Retrieve raw timestamp for the live counter
     public static long getLastSyncTimestamp(Context context) {
         return context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE).getLong("LAST_SYNC_TIMESTAMP", 0L);
     }
@@ -219,11 +257,8 @@ public class Vault {
         return new String[]{ prefs.getString(KEY_SEM_ID, "AP2025264"), prefs.getString(KEY_SEM_NAME, "Winter Semester 2025-26") };
     }
     public static void clearAll(Context context) {
-        // 1. Clear normal academic data
         context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE).edit().clear().apply();
-        // 2. Clear fallback credentials
         context.getSharedPreferences("vtop_fallback", Context.MODE_PRIVATE).edit().clear().apply();
-        // 3. Clear Encrypted Credentials
         context.getSharedPreferences(SECRET_PREFS, Context.MODE_PRIVATE).edit().clear().apply();
         Log.d(TAG, "All local vault data AND secure credentials cleared.");
     }

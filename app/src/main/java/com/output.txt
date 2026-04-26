@@ -1,0 +1,71 @@
+Folder PATH listing for volume Windows-SSD
+Volume serial number is 2CF3-9AAF
+C:.
+|   output.txt
+|   
+\---vtop
+    +---assets
+    |       bunk_cache.json
+    |       weights.json
+    |       
+    +---logic
+    |       AttendanceParser.java
+    |       BunkSimulator.kt
+    |       CaptchaSolver.java
+    |       ExamScheduleParser.kt
+    |       HolidaySync.kt
+    |       MarksParser.kt
+    |       OutingParser.kt
+    |       TimetableParser.java
+    |       
+    +---models
+    |       AttendanceDetailModel.java
+    |       AttendanceModel.java
+    |       CourseSession.java
+    |       ExamScheduleModel.kt
+    |       LoggedInStudent.java
+    |       MarksModels.kt
+    |       OutingModel.kt
+    |       TimetableModel.java
+    |       
+    +---network
+    |       VtopClient.java
+    |       
+    +---ui
+    |   |   BunkSimulatorTab.kt
+    |   |   LoginActivity.java
+    |   |   MainActivity.java
+    |   |   OutingActionHandler.kt
+    |   |   VtopAnalytics.kt
+    |   |   VtopOutingsTab.kt
+    |   |   VtopTimetableComposeUI.kt
+    |   |   
+    |   +---core
+    |   |       Bridges.kt
+    |   |       ReminderManager.kt
+    |   |       
+    |   +---screens
+    |   |   +---auth
+    |   |   |       LoginScreen.kt
+    |   |   |       
+    |   |   \---main
+    |   |           Attendance.kt
+    |   |           Exams.kt
+    |   |           MainScreen.kt
+    |   |           Marks.kt
+    |   |           Profile.kt
+    |   |           Timetable.kt
+    |   |           
+    |   \---theme
+    |           Theme.kt
+    |           
+    +---utils
+    |       Vault.java
+    |       
+    \---widget
+            NextClassWidget.kt
+            NextClassWidgetReceiver.kt
+            WidgetLogic.kt
+            WidgetUpdater.kt
+            WidgetWorker.kt
+            

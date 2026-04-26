@@ -1,3 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <color name="widget_bg">#141414</color>
+    <color name="widget_card_bg">#1E1E1E</color>
+    <color name="widget_text_primary">#FFFFFF</color>
+    <color name="widget_text_secondary">#AAAAAA</color>
+
+    <color name="widget_rem_quiz_bg">#1E3A8A</color>
+    <color name="widget_rem_quiz_text">#60A5FA</color>
+    <color name="widget_rem_viva_bg">#78350F</color>
+    <color name="widget_rem_viva_text">#FBBF24</color>
+    <color name="widget_rem_def_bg">#14532D</color>
+    <color name="widget_rem_def_text">#4ADE80</color>
 </resources>

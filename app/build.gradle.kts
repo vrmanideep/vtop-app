@@ -30,7 +30,7 @@ android {
         release {
             // FIX 2: Kotlin syntax uses "is..." and "="
             isMinifyEnabled = true
-            isShrinkResources = true
+            isShrinkResources = false
 
             // FIX 3: Kotlin requires brackets and double quotes
             proguardFiles(

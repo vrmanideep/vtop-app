@@ -195,10 +195,6 @@ public class TimetableParser {
 
     private static List<CourseInfo> getCourseInfo(Document doc) {
         List<CourseInfo> list = new ArrayList<>();
-        // CHANGE THIS:
-// Elements rows = doc.select("tr");
-
-// TO THIS:
         Element infoTable = doc.selectFirst("#studentDetailsList table");
         if (infoTable == null) return list;
         Elements rows = infoTable.select("tr");
@@ -232,12 +228,10 @@ public class TimetableParser {
                 }
 
                 // Column 6: Class number (AP2025264...)
-// Use .ownText() or select the first <p> to avoid hidden text
                 String classId = "N/A";
                 Element classIdCell = cells.get(6);
                 Element pTag = classIdCell.selectFirst("p");
 
-                // Null check prevents the "failed" crash [cite: 15]
                 if (pTag != null) {
                     classId = pTag.text().trim();
                 } else {
@@ -277,13 +271,8 @@ public class TimetableParser {
     // -------------------------------------------------------------------------
     // Resolve a grid cell string to a full CourseSession
     //
-    // Grid cell format: SLOT-COURSECODE-TYPE-BUILDING-ROOM-GROUP
-    // e.g. "D1-CSE2007-ETH-526-CB-ALL"
-    //
-    // Three-pass lookup:
-    //   Pass 1 — code + venue match (most precise)
-    //   Pass 2 — code + type match  (handles same course, different components)
-    //   Pass 3 — code only          (last resort, avoids "Unknown")
+    // Grid cell format: SLOT-COURSECODE-TYPE-VENUE-GROUP
+    // e.g. "D1-CSE2007-ETH-526-CB-ALL" or "F2-ECE1002-ETH-420-AB-1-ALL"
     // -------------------------------------------------------------------------
 
     private static CourseSession resolveCourseData(
@@ -302,7 +291,17 @@ public class TimetableParser {
         String actualSlot    = parts[0].trim();
         String courseCode    = parts[1].trim();
         String courseType    = parts[2].trim();
-        String expectedVenue = parts[3].trim() + "-" + parts[4].trim();
+
+        // Dynamically build the venue from all the middle parts
+        StringBuilder venueBuilder = new StringBuilder();
+        for (int i = 3; i < parts.length - 1; i++) {
+            venueBuilder.append(parts[i].trim());
+            if (i < parts.length - 2) {
+                venueBuilder.append("-");
+            }
+        }
+        String expectedVenue = venueBuilder.toString();
+
         String cleanText     = actualSlot + " • " + courseCode + " • "
                 + expectedVenue.replace("-", " ");
 

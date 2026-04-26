@@ -1,4 +1,4 @@
-package com.vtop.ui
+package com.vtop.ui.screens.main
 
 import java.io.File
 
