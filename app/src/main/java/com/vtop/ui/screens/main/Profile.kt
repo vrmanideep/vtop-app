@@ -1,7 +1,11 @@
 package com.vtop.ui.screens.main
 
+import android.Manifest
 import android.content.Intent
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -12,6 +16,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -19,6 +24,8 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.outlined.DateRange
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.*
@@ -28,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -38,6 +46,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import com.vtop.BuildConfig
+import com.vtop.models.ExamScheduleModel
+import com.vtop.models.TimetableModel
+import com.vtop.ui.core.CalendarInfo
+import com.vtop.ui.core.CalendarSync
 import com.vtop.ui.core.CourseReminder
 import com.vtop.ui.theme.AppThemeMode
 import com.vtop.utils.UpdateInfo
@@ -46,9 +58,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
-// Helper to format yyyy-MM-dd to dd-MMM-yy
 private fun formatReminderDate(dateStr: String): String {
     return try {
         val inFormat = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
@@ -58,8 +72,14 @@ private fun formatReminderDate(dateStr: String): String {
     } catch (e: Exception) { dateStr }
 }
 
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun Profile(
+    onBack: () -> Unit,
+    timetable: TimetableModel,
+    examsData: List<ExamScheduleModel>,
+    onOpenPortal: () -> Unit,
     currentTheme: AppThemeMode,
     onThemeChange: (AppThemeMode) -> Unit,
     useDynamicColor: Boolean,
@@ -68,6 +88,12 @@ fun Profile(
     onAccentChange: (Color) -> Unit,
     currentNavStyle: String,
     onNavStyleChange: (String) -> Unit,
+    mergeLabs: Boolean,
+    onMergeLabsChange: (Boolean) -> Unit,
+    mergeMarks: Boolean,
+    onMergeMarksChange: (Boolean) -> Unit,
+    showOutings: Boolean,
+    onShowOutingsChange: (Boolean) -> Unit,
     onLogout: () -> Unit,
     profileData: Map<String, Map<String, String>>,
     selectedSemester: String,
@@ -85,6 +111,20 @@ fun Profile(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
+    var showCalendarSheet by remember { mutableStateOf(false) }
+    var availableCalendars by remember { mutableStateOf<List<CalendarInfo>>(emptyList()) }
+
+    val calendarPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        if (permissions[Manifest.permission.WRITE_CALENDAR] == true && permissions[Manifest.permission.READ_CALENDAR] == true) {
+            availableCalendars = CalendarSync.getWritableCalendars(context)
+            showCalendarSheet = true
+        } else {
+            Toast.makeText(context, "Calendar permissions are required to export schedule", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     val basicInfo = profileData["basic"] ?: emptyMap()
     val name = basicInfo["name"]?.takeIf { it != "-" && it.isNotBlank() } ?: "Student Name"
     val regNo = basicInfo["regno"]?.takeIf { it != "-" && it.isNotBlank() } ?: currentRegNo.ifEmpty { "Reg No" }
@@ -97,7 +137,6 @@ fun Profile(
     var showCredDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
 
-    // Update States
     var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var isCheckingUpdate by remember { mutableStateOf(false) }
     var isDownloadingUpdate by remember { mutableStateOf(false) }
@@ -108,10 +147,29 @@ fun Profile(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = bottomPadding),
+            .padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 0.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // --- STUDENT INFO HEADER ---
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
+                    .clickable { onBack() }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Go Back", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             shape = RoundedCornerShape(16.dp),
@@ -149,54 +207,27 @@ fun Profile(
                         Spacer(Modifier.height(2.dp))
                         Text("$regNo · $branch", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(2.dp))
-                        Text("VIT-AP University", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
-                    }
-                }
-
-                Spacer(Modifier.height(16.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                Spacer(Modifier.height(12.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
-                            .clickable {
-                                Toast.makeText(context, "Opening VTOP...", Toast.LENGTH_SHORT).show()
-                            }
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("Open VTOP ↗", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-
-                    Spacer(Modifier.width(12.dp))
-
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f))
-                            .border(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                            .clickable { showLogoutDialog = true }
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Logout", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Logout", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("VIT-AP University", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                            Text(
+                                text = "Open VTOP ↗",
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .clickable { onOpenPortal() }
+                            )
                         }
                     }
                 }
             }
         }
 
-        // --- SECTION: SHORTCUTS & DATA ---
         CardGroup {
             Row(
                 modifier = Modifier
@@ -241,6 +272,17 @@ fun Profile(
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
             SettingRow(
+                label = "Export to Calendar",
+                value = "Add classes & exams to Google Calendar",
+                actionText = "Sync",
+                onClick = {
+                    calendarPermissionLauncher.launch(
+                        arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
+                    )
+                }
+            )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+            SettingRow(
                 label = "Advanced Analytics",
                 value = "View attendance trends",
                 actionText = "Open",
@@ -248,7 +290,52 @@ fun Profile(
             )
         }
 
-        // --- SECTION: REMINDERS ---
+        SectionHeader("PREFERENCES")
+        CardGroup {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Show Outings Tab", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                    Spacer(Modifier.height(2.dp))
+                    Text("Display hostel outings in navigation", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = showOutings, onCheckedChange = onShowOutingsChange)
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Merge Consecutive Labs", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                    Spacer(Modifier.height(2.dp))
+                    Text("Combine L26+L27 in Timetable", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = mergeLabs, onCheckedChange = onMergeLabsChange)
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Merge Marks Components", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                    Spacer(Modifier.height(2.dp))
+                    Text("Group Theory & Lab marks together", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = mergeMarks, onCheckedChange = onMergeMarksChange)
+            }
+        }
+
         SectionHeader("UPCOMING REMINDERS")
         if (reminders.isEmpty()) {
             Text(
@@ -288,7 +375,6 @@ fun Profile(
             }
         }
 
-        // --- SECTION: APPEARANCE ---
         SectionHeader("APPEARANCE")
         CardGroup {
             SettingRow(
@@ -342,7 +428,6 @@ fun Profile(
             }
         }
 
-        // --- SECTION: ABOUT ---
         CardGroup {
             Row(
                 modifier = Modifier
@@ -382,9 +467,142 @@ fun Profile(
                 Text(actionText, color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
+
+        Spacer(Modifier.height(16.dp))
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .clickable { showLogoutDialog = true },
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 16.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Logout", tint = MaterialTheme.colorScheme.error)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("LOG OUT", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Black, fontSize = 16.sp)
+            }
+        }
+
+        Spacer(Modifier.height(bottomPadding))
     }
 
-    // --- DIALOGS ---
+    if (showCalendarSheet) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        var selectedCalendarId by remember { mutableLongStateOf(availableCalendars.firstOrNull()?.id ?: -1L) }
+        var calendarDropdownExpanded by remember { mutableStateOf(false) }
+
+        var reminderMins by remember { mutableIntStateOf(10) }
+        var reminderDropdownExpanded by remember { mutableStateOf(false) }
+        val reminderOptions = mapOf(0 to "No Reminder", 10 to "10 mins before", 30 to "30 mins before", 60 to "1 hour before")
+
+        var titleTemplate by remember { mutableStateOf("{courseCode} ({slot})") }
+        var descTemplate by remember { mutableStateOf("{courseTitle}\nFaculty: {faculty}\nType: {courseType}\nClass ID: {classId}") }
+        var locTemplate by remember { mutableStateOf("{venue}") }
+
+        val sdf = remember { SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH) }
+        var endDate by remember { mutableStateOf(CalendarSync.getDefaultEndDate(context)) }
+        var showDatePicker by remember { mutableStateOf(false) }
+
+        ModalBottomSheet(
+            onDismissRequest = { showCalendarSheet = false },
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text("Export to Google Calendar", fontSize = 20.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+
+                Text("SELECT CALENDAR", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Box(modifier = Modifier.fillMaxWidth().border(1.dp, getPremiumBorderColor(), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { calendarDropdownExpanded = true }.padding(16.dp)) {
+                    val selectedName = availableCalendars.find { it.id == selectedCalendarId }?.name ?: "None"
+                    Text(selectedName, color = MaterialTheme.colorScheme.onSurface)
+                    DropdownMenu(expanded = calendarDropdownExpanded, onDismissRequest = { calendarDropdownExpanded = false }) {
+                        availableCalendars.forEach { cal ->
+                            DropdownMenuItem(text = { Text(cal.name) }, onClick = { selectedCalendarId = cal.id; calendarDropdownExpanded = false })
+                        }
+                    }
+                }
+
+                Text("REMINDER", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Box(modifier = Modifier.fillMaxWidth().border(1.dp, getPremiumBorderColor(), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { reminderDropdownExpanded = true }.padding(16.dp)) {
+                    Text(reminderOptions[reminderMins] ?: "None", color = MaterialTheme.colorScheme.onSurface)
+                    DropdownMenu(expanded = reminderDropdownExpanded, onDismissRequest = { reminderDropdownExpanded = false }) {
+                        reminderOptions.forEach { (mins, label) ->
+                            DropdownMenuItem(text = { Text(label) }, onClick = { reminderMins = mins; reminderDropdownExpanded = false })
+                        }
+                    }
+                }
+
+                Text("END SYNC ON (LAST INSTRUCTIONAL DAY)", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Row(modifier = Modifier.fillMaxWidth().border(1.dp, getPremiumBorderColor(), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { showDatePicker = true }.padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(endDate, color = MaterialTheme.colorScheme.onSurface)
+                    Icon(Icons.Outlined.Edit, "Edit", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                }
+
+                Text("EVENT TEMPLATES (Available: {courseCode}, {courseTitle}, {slot}, {faculty}, {courseType}, {venue}, {classId})", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, lineHeight = 14.sp)
+                OutlinedTextField(value = titleTemplate, onValueChange = { titleTemplate = it }, label = { Text("Event Title") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(value = descTemplate, onValueChange = { descTemplate = it }, label = { Text("Event Description") }, modifier = Modifier.fillMaxWidth().height(100.dp))
+                OutlinedTextField(value = locTemplate, onValueChange = { locTemplate = it }, label = { Text("Location") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+
+                Spacer(Modifier.height(8.dp))
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(
+                        onClick = {
+                            CalendarSync.clearSyncedEvents(context, selectedCalendarId)
+                            showCalendarSheet = false
+                        },
+                        modifier = Modifier.weight(1f).height(50.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.15f)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Clear Old", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Black)
+                    }
+
+                    Button(
+                        onClick = {
+                            if (selectedCalendarId != -1L) {
+                                CalendarSync.syncToCalendar(context, timetable, examsData, mergeLabs, selectedCalendarId, reminderMins, endDate, titleTemplate, descTemplate, locTemplate)
+                            }
+                            showCalendarSheet = false
+                        },
+                        modifier = Modifier.weight(1f).height(50.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Sync Now", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Black)
+                    }
+                }
+
+                Text(
+                    text = "Google Calendar may take a few minutes to fully sync and display these changes across your devices.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                )
+            }
+        }
+
+        if (showDatePicker) {
+            val datePickerState = rememberDatePickerState(initialSelectedDateMillis = sdf.parse(endDate)?.time?.plus(TimeZone.getDefault().rawOffset))
+            DatePickerDialog(
+                onDismissRequest = { showDatePicker = false },
+                confirmButton = { TextButton(onClick = { datePickerState.selectedDateMillis?.let { millis -> val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = millis }; endDate = sdf.format(cal.time) }; showDatePicker = false }) { Text("OK", color = MaterialTheme.colorScheme.primary) } },
+                dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+            ) { DatePicker(state = datePickerState) }
+        }
+    }
 
     if (updateInfo != null) {
         AlertDialog(

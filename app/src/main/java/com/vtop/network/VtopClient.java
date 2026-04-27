@@ -59,6 +59,14 @@ public class VtopClient {
     private final String password;
     private String csrfToken;
 
+    public String getCsrfToken() { return this.csrfToken; }
+    public String getUsername() { return this.username; }
+
+    // ADD THIS GETTER:
+    public OkHttpClient getClient() {
+        return this.client;
+    }
+
     // ================= INTERFACES =================
     public interface OtpResolver {
         void submit(String otpCode);

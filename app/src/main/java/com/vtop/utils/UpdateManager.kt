@@ -7,112 +7,123 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
 import android.os.Environment
-import android.util.Log
+import android.widget.Toast
 import androidx.core.content.FileProvider
 import com.vtop.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 
 data class UpdateInfo(
     val isUpdateAvailable: Boolean,
     val latestVersion: String,
-    val downloadUrl: String
+    val downloadUrl: String,
+    val changelog: String
 )
 
 object UpdateManager {
 
     suspend fun checkForGitHubUpdates(): UpdateInfo = withContext(Dispatchers.IO) {
         try {
-            val client = OkHttpClient()
-            val request = Request.Builder()
-                .url("https://api.github.com/repos/vrmanideep/vtop-app/releases/latest")
-                .header("Accept", "application/vnd.github.v3+json")
-                .build()
+            // Hit the GitHub API for your specific repository
+            val url = URL("https://api.github.com/repos/vrmanideep/vtop-app/releases/latest")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.setRequestProperty("Accept", "application/vnd.github.v3+json")
+            connection.connectTimeout = 5000
 
-            val response = client.newCall(request).execute()
-            val responseData = response.body?.string()
+            if (connection.responseCode != HttpURLConnection.HTTP_OK) {
+                return@withContext UpdateInfo(false, "", "", "")
+            }
 
-            if (response.isSuccessful && responseData != null) {
-                val json = JSONObject(responseData)
-                val latestTag = json.getString("tag_name").replace("v", "")
+            val response = connection.inputStream.bufferedReader().use { it.readText() }
+            val json = JSONObject(response)
 
-                val downloadUrl = json.getJSONArray("assets")
-                    .getJSONObject(0)
-                    .getString("browser_download_url")
+            // Extract tag (e.g. "v1.0.0" becomes "1.0.0")
+            val tagName = json.getString("tag_name").replace("v", "").trim()
+            val body = json.optString("body", "Bug fixes and performance improvements.")
 
-                val currentVersion = BuildConfig.VERSION_NAME.replace("v", "")
-
-                if (isVersionGreater(latestTag, currentVersion)) {
-                    return@withContext UpdateInfo(true, latestTag, downloadUrl)
+            // Find the .apk file in the release assets
+            var apkUrl = ""
+            val assets = json.getJSONArray("assets")
+            for (i in 0 until assets.length()) {
+                val asset = assets.getJSONObject(i)
+                if (asset.getString("name").endsWith(".apk")) {
+                    apkUrl = asset.getString("browser_download_url")
+                    break
                 }
             }
+
+            if (apkUrl.isEmpty()) {
+                return@withContext UpdateInfo(false, "", "", "")
+            }
+
+            val currentVersion = BuildConfig.VERSION_NAME.replace("v", "").trim()
+            val isNewer = compareVersions(tagName, currentVersion) > 0
+
+            return@withContext UpdateInfo(isNewer, tagName, apkUrl, body)
         } catch (e: Exception) {
-            Log.e("UpdateCheck", "Failed: ${e.message}")
+            e.printStackTrace()
+            return@withContext UpdateInfo(false, "", "", "")
         }
-        return@withContext UpdateInfo(false, BuildConfig.VERSION_NAME, "")
     }
 
-    private fun isVersionGreater(latest: String, current: String): Boolean {
-        val lParts = latest.split(".").map { it.toIntOrNull() ?: 0 }
-        val cParts = current.split(".").map { it.toIntOrNull() ?: 0 }
-
-        val length = maxOf(lParts.size, cParts.size)
+    // Semantic Versioning Comparer (1.0.0 > 0.5.0)
+    private fun compareVersions(v1: String, v2: String): Int {
+        val parts1 = v1.split(".").map { it.toIntOrNull() ?: 0 }
+        val parts2 = v2.split(".").map { it.toIntOrNull() ?: 0 }
+        val length = maxOf(parts1.size, parts2.size)
         for (i in 0 until length) {
-            val l = lParts.getOrElse(i) { 0 }
-            val c = cParts.getOrElse(i) { 0 }
-            if (l > c) return true
-            if (l < c) return false
+            val p1 = parts1.getOrElse(i) { 0 }
+            val p2 = parts2.getOrElse(i) { 0 }
+            if (p1 > p2) return 1
+            if (p1 < p2) return -1
         }
-        return false
+        return 0
     }
 
     fun downloadAndInstallUpdate(context: Context, downloadUrl: String, version: String) {
-        val fileName = "VTOP_Update_v$version.apk"
-        val destination = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName)
+        try {
+            Toast.makeText(context, "Downloading update...", Toast.LENGTH_SHORT).show()
 
-        if (destination.exists()) {
-            destination.delete()
-        }
+            val request = DownloadManager.Request(Uri.parse(downloadUrl))
+                .setTitle("VTOP Update v$version")
+                .setDescription("Downloading latest version")
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "vtop_update_$version.apk")
+                .setMimeType("application/vnd.android.package-archive")
 
-        val request = DownloadManager.Request(Uri.parse(downloadUrl))
-            .setTitle("Downloading VTOP Update")
-            .setDescription("Version $version")
-            .setDestinationUri(Uri.fromFile(destination))
-            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val downloadId = downloadManager.enqueue(request)
 
-        val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val downloadId = downloadManager.enqueue(request)
-
-        // Listen for the download to finish
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1)
-                if (id == downloadId) {
-                    installApk(context, destination)
-                    context.unregisterReceiver(this)
+            // Register receiver to automatically trigger install when download finishes
+            val onComplete = object : BroadcastReceiver() {
+                override fun onReceive(ctxt: Context, intent: Intent) {
+                    val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1)
+                    if (id == downloadId) {
+                        installApk(ctxt, "vtop_update_$version.apk")
+                        ctxt.unregisterReceiver(this)
+                    }
                 }
             }
+            context.registerReceiver(onComplete, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), Context.RECEIVER_EXPORTED)
+
+        } catch (e: Exception) {
+            Toast.makeText(context, "Failed to start download.", Toast.LENGTH_SHORT).show()
         }
-        context.registerReceiver(receiver, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), Context.RECEIVER_EXPORTED)
     }
 
-    private fun installApk(context: Context, apkFile: File) {
-        try {
-            val authority = "${context.packageName}.provider"
-            val apkUri = FileProvider.getUriForFile(context, authority, apkFile)
-
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(apkUri, "application/vnd.android.package-archive")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    private fun installApk(context: Context, fileName: String) {
+        val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName)
+        if (file.exists()) {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
+            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
             }
-            context.startActivity(intent)
-        } catch (e: Exception) {
-            Log.e("InstallUpdate", "Failed to launch installer: ${e.message}")
+            context.startActivity(installIntent)
         }
     }
 }

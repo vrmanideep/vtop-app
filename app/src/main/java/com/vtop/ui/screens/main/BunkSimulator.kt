@@ -29,6 +29,7 @@ import com.vtop.models.TimetableModel
 import com.vtop.logic.BunkSimulator
 import com.vtop.logic.BunkProjectorResult
 import org.json.JSONObject
+import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -40,7 +41,10 @@ import kotlin.math.ceil
 @Composable
 fun BunkSimulatorTab(timetable: TimetableModel, attendanceData: List<AttendanceModel>, onBack: () -> Unit) {
     val context = LocalContext.current
-    val holidayMap = remember { loadHolidaysFromAssets(context) }
+
+    // Generates a massive map of Holidays, Exams, AND Week-Offs to perfectly block the calendar
+    val holidayMap = remember { buildComprehensiveHolidayMap(context) }
+
     var selectedDates by remember { mutableStateOf<Set<LocalDate>>(emptySet()) }
     var showCalendar by remember { mutableStateOf(false) }
     var simulationResults by remember { mutableStateOf<List<BunkProjectorResult>>(emptyList()) }
@@ -81,6 +85,7 @@ fun BunkSimulatorTab(timetable: TimetableModel, attendanceData: List<AttendanceM
             onClick = {
                 if (selectedDates.isNotEmpty()) {
                     try {
+                        // The external simulator logic will naturally ignore the week-offs we injected into the map!
                         simulationResults = BunkSimulator.simulateMultiDayBunk(selectedDates.sorted(), timetable, attendanceData, holidayMap)
                         hasRun = true
                     } catch (e: Exception) { Toast.makeText(context, e.message, Toast.LENGTH_LONG).show() }
@@ -249,16 +254,90 @@ fun BunkResultCard(res: BunkProjectorResult) {
     }
 }
 
-fun loadHolidaysFromAssets(context: Context): Map<String, String> {
+@SuppressLint("NewApi")
+fun buildComprehensiveHolidayMap(context: Context): Map<String, String> {
     val map = mutableMapOf<String, String>()
     try {
         val jsonString = context.assets.open("bunk_cache.json").bufferedReader().use { it.readText() }
-        val jsonObject = JSONObject(jsonString)
-        if (jsonObject.has("blocked_dates")) {
-            val blocked = jsonObject.getJSONObject("blocked_dates")
-            val keys = blocked.keys()
-            while (keys.hasNext()) { val key = keys.next(); map[key] = blocked.getString(key) }
+        val root = JSONObject(jsonString)
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
+        val now = System.currentTimeMillis()
+
+        var activeSem: JSONObject? = null
+        val weekOffs = mutableListOf<String>()
+        var lastDay = ""
+
+        // Find the active semester using our standard logic
+        val keys = root.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val semBlock = root.optJSONObject(key)
+            if (semBlock != null) {
+                val startStr = semBlock.optString("start_date", "")
+                val endStr = semBlock.optString("last_instructional_day", "")
+                if (startStr.isNotEmpty() && endStr.isNotEmpty()) {
+                    val startMs = sdf.parse(startStr)?.time ?: 0L
+                    val endMs = sdf.parse(endStr)?.time ?: 0L
+                    val extendedEndMs = endMs + (30L * 24 * 60 * 60 * 1000)
+                    if (now in startMs..extendedEndMs) {
+                        activeSem = semBlock
+                        break
+                    }
+                }
+            }
+        }
+
+        if (activeSem != null) {
+            lastDay = activeSem.optString("last_instructional_day", "")
+
+            // 1. Add standard Holidays
+            val hols = activeSem.optJSONObject("holidays")
+            if (hols != null) {
+                val holKeys = hols.keys()
+                while (holKeys.hasNext()) {
+                    val hk = holKeys.next()
+                    map[hk] = hols.getString(hk)
+                }
+            }
+
+            // 2. Add Exam Days
+            val exams = activeSem.optJSONObject("exams")
+            if (exams != null) {
+                val examKeys = exams.keys()
+                while (examKeys.hasNext()) {
+                    val examType = examKeys.next()
+                    val dates = exams.optJSONArray(examType)
+                    if (dates != null) {
+                        for (i in 0 until dates.length()) {
+                            map[dates.getString(i)] = "$examType Exam"
+                        }
+                    }
+                }
+            }
+
+            // 3. Extract Week Offs
+            val wOffArr = activeSem.optJSONArray("week_off")
+            if (wOffArr != null) {
+                for (i in 0 until wOffArr.length()) {
+                    weekOffs.add(wOffArr.getString(i).uppercase(Locale.getDefault()))
+                }
+            }
+        }
+
+        // 4. GENERATE WEEK OFFS DYNAMICALLY
+        // This stops the simulator from thinking Sundays are working days
+        if (lastDay.isNotEmpty() && weekOffs.isNotEmpty()) {
+            val endLocalDate = LocalDate.parse(lastDay)
+            var current = LocalDate.now()
+            while (!current.isAfter(endLocalDate)) {
+                val dayName = current.dayOfWeek.name
+                if (weekOffs.contains(dayName)) {
+                    map[current.toString()] = "Week Off"
+                }
+                current = current.plusDays(1)
+            }
         }
     } catch (_: Exception) {}
+
     return map
 }

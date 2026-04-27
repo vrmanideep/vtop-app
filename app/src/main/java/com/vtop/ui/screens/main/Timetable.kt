@@ -3,6 +3,7 @@
 package com.vtop.ui.screens.main
 
 import android.annotation.SuppressLint
+import android.content.Context
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -21,9 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -44,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vtop.models.AttendanceModel
 import com.vtop.models.CourseSession
+import com.vtop.models.ExamScheduleModel
 import com.vtop.models.TimetableModel
 import com.vtop.ui.core.CourseReminder
 import com.vtop.ui.core.ReminderManager
@@ -60,6 +60,13 @@ fun getPremiumSurfaceColor(): Color = if (MaterialTheme.colorScheme.background.l
 
 @Composable
 fun getPremiumBorderColor(): Color = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.08f)
+
+private fun String?.clean(): String {
+    if (this == null || this.isBlank() || this.trim() == "-" || this.trim().equals("TBD", true) || this.trim().equals("N/A", true) || this.trim().equals("null", true)) {
+        return " "
+    }
+    return this.trim()
+}
 
 private fun formatReminderDate(dateStr: String): String {
     return try {
@@ -80,14 +87,11 @@ fun getCourseTimeStatus(timeSlot: String?, isToday: Boolean, isNextInLine: Boole
     try {
         val parts = timeSlot.split("-").map { it.trim() }
         if (parts.size < 2) return TimeStatus.FUTURE
-
         val sdf = SimpleDateFormat(if (parts[0].contains(Regex("[a-zA-Z]"))) "hh:mm a" else "HH:mm", Locale.ENGLISH)
         val nowCal = Calendar.getInstance()
         val currentMins = nowCal.get(Calendar.HOUR_OF_DAY) * 60 + nowCal.get(Calendar.MINUTE)
-
         val startCal = Calendar.getInstance().apply { time = sdf.parse(parts[0])!! }
         val startMins = startCal.get(Calendar.HOUR_OF_DAY) * 60 + startCal.get(Calendar.MINUTE)
-
         val endCal = Calendar.getInstance().apply { time = sdf.parse(parts[1])!! }
         val endMins = endCal.get(Calendar.HOUR_OF_DAY) * 60 + endCal.get(Calendar.MINUTE)
 
@@ -107,30 +111,94 @@ private fun isSameTypeGroup(a: String?, b: String?): Boolean {
     return aLab == bLab
 }
 
+data class ProcessedCourse(
+    val originalSession: CourseSession,
+    val mergedTimeSlot: String,
+    val mergedSlot: String
+) {
+    val courseCode: String? get() = originalSession.courseCode
+    val courseName: String? get() = originalSession.courseName
+    val courseType: String? get() = originalSession.courseType
+    val classId: String? get() = originalSession.classId
+    val venue: String? get() = originalSession.venue
+    val faculty: String? get() = originalSession.faculty
+}
+
+fun processAndMergeCourses(courses: List<CourseSession>, mergeLabs: Boolean): List<ProcessedCourse> {
+    val timeSorted = courses.sortedBy { course ->
+        try {
+            val timeStr = course.timeSlot?.split("-")?.firstOrNull()?.trim() ?: ""
+            if (timeStr.isNotEmpty()) {
+                val sdf = SimpleDateFormat(if (timeStr.contains(Regex("[a-zA-Z]"))) "hh:mm a" else "HH:mm", Locale.ENGLISH)
+                sdf.parse(timeStr)?.time ?: Long.MAX_VALUE
+            } else { Long.MAX_VALUE }
+        } catch (e: Exception) { Long.MAX_VALUE }
+    }
+    if (!mergeLabs) return timeSorted.map { ProcessedCourse(it, it.timeSlot ?: "", it.slot ?: "") }
+    val result = mutableListOf<ProcessedCourse>()
+    var current: ProcessedCourse? = null
+    for (course in timeSorted) {
+        val isLab = course.courseType?.contains("L") == true || course.courseType?.contains("P") == true
+        val processed = ProcessedCourse(course, course.timeSlot ?: "", course.slot ?: "")
+        if (current == null) { current = processed } else {
+            val currentIsLab = current.courseType?.contains("L") == true || current.courseType?.contains("P") == true
+            if (isLab && currentIsLab && current.courseCode == course.courseCode) {
+                val start = current.mergedTimeSlot.split("-").firstOrNull()?.trim() ?: ""
+                val end = course.timeSlot?.split("-")?.lastOrNull()?.trim() ?: ""
+                val newTime = if (start.isNotEmpty() && end.isNotEmpty()) "$start - $end" else current.mergedTimeSlot
+                val newSlot = "${current.mergedSlot}+${course.slot}"
+                current = current.copy(mergedTimeSlot = newTime, mergedSlot = newSlot)
+            } else { result.add(current); current = processed }
+        }
+    }
+    if (current != null) result.add(current)
+    return result
+}
+
+private fun findExamForDate(dateCal: Calendar, exams: List<ExamScheduleModel>): ExamScheduleModel? {
+    val targetYear = dateCal.get(Calendar.YEAR)
+    val targetDayOfYear = dateCal.get(Calendar.DAY_OF_YEAR)
+
+    return exams.find { exam ->
+        val dateStr = exam.examDate ?: return@find false
+        try {
+            val formats = listOf("dd-MMM-yyyy", "yyyy-MM-dd", "dd/MM/yyyy", "dd-MM-yyyy", "MMM dd, yyyy")
+            var matched = false
+            for (format in formats) {
+                try {
+                    val sdf = SimpleDateFormat(format, Locale.ENGLISH)
+                    val d = sdf.parse(dateStr.trim())
+                    if (d != null) {
+                        val c = Calendar.getInstance().apply { time = d }
+                        if (c.get(Calendar.YEAR) == targetYear && c.get(Calendar.DAY_OF_YEAR) == targetDayOfYear) {
+                            matched = true
+                            break
+                        }
+                    }
+                } catch (e: Exception) { }
+            }
+            matched
+        } catch (e: Exception) { false }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SimpleDateFormat")
 @Composable
-fun Timetable(timetable: TimetableModel, attendanceData: List<AttendanceModel>) {
+fun Timetable(timetable: TimetableModel, attendanceData: List<AttendanceModel>, examsData: List<ExamScheduleModel> = emptyList()) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = 30)
-
     var allReminders by remember { mutableStateOf(ReminderManager.loadReminders(context)) }
-
     val sdfDateKey = remember { SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH) }
     val sdfDayFull = remember { SimpleDateFormat("EEEE", Locale.ENGLISH) }
     val sdfDayShort = remember { SimpleDateFormat("EEE", Locale.ENGLISH) }
-    val todayCal = remember { Calendar.getInstance() }
-    val todayDateStr = sdfDateKey.format(todayCal.time)
-
+    val todayDateStr = sdfDateKey.format(Calendar.getInstance().time)
     val timelineDates = remember { (-30..60).map { offset -> Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, offset) } } }
-
     var expandedDateStr by remember { mutableStateOf(todayDateStr) }
-    var selectedCourse by remember { mutableStateOf<CourseSession?>(null) }
+    var selectedCourse by remember { mutableStateOf<ProcessedCourse?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-
     val showJumpToToday by remember { derivedStateOf { listState.firstVisibleItemIndex !in 25..35 } }
-
     var tick by remember { mutableIntStateOf(0) }
     var currentTimeStr by remember { mutableStateOf(SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())) }
 
@@ -140,7 +208,7 @@ fun Timetable(timetable: TimetableModel, attendanceData: List<AttendanceModel>) 
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
-            NextClassCard(timetable, allReminders, tick)
+            NextClassCard(timetable, allReminders, tick, examsData)
             LazyColumn(
                 state = listState, modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(top = 8.dp, bottom = 120.dp), verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -151,16 +219,19 @@ fun Timetable(timetable: TimetableModel, attendanceData: List<AttendanceModel>) 
                     val dayShort = sdfDayShort.format(dateCal.time)
                     val isToday = dateStr == todayDateStr
                     val isWeekend = dayName == "Saturday" || dayName == "Sunday"
-                    val courses = timetable.scheduleMap[dayName] ?: emptyList()
+                    val examToday = findExamForDate(dateCal, examsData)
+                    val rawCourses = if (examToday != null) emptyList() else timetable.scheduleMap[dayName] ?: emptyList()
                     val isExpanded = expandedDateStr == dateStr
                     val daysOffset = abs(index - 30)
                     val rowAlpha = when (daysOffset) { 0 -> 1f; 1, 2 -> 0.85f; in 3..5 -> 0.6f; in 6..14 -> 0.35f; else -> 0.15f }
 
-                    if (courses.isEmpty() && isWeekend && !isExpanded) {
+                    if (examToday != null) {
+                        ExamRow(dateCal, examToday, isToday, isExpanded, rowAlpha, onExpandToggle = { expandedDateStr = if (isExpanded) "" else dateStr })
+                    } else if (rawCourses.isEmpty() && isWeekend && !isExpanded) {
                         WeekendSeparator(dayShort, dateCal.get(Calendar.DAY_OF_MONTH), rowAlpha)
                     } else {
                         TimetableRow(
-                            dateCal, courses, allReminders, isToday, isExpanded, rowAlpha, tick,
+                            dateCal, rawCourses, allReminders, isToday, isExpanded, rowAlpha, tick,
                             onExpandToggle = { expandedDateStr = if (isExpanded) "" else dateStr },
                             onCourseClick = { selectedCourse = it }
                         )
@@ -186,62 +257,76 @@ fun Timetable(timetable: TimetableModel, attendanceData: List<AttendanceModel>) 
 
     if (selectedCourse != null) {
         val bottomSheetBg = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF111111) else Color(0xFFFFFFFF)
-        ModalBottomSheet(onDismissRequest = { selectedCourse = null }, sheetState = sheetState, containerColor = bottomSheetBg, dragHandle = { BottomSheetDefaults.DragHandle(color = MaterialTheme.colorScheme.outline) }) {
-            CourseDetailsSheet(
-                course = selectedCourse!!, attendanceData = attendanceData, allReminders = allReminders,
-                onRemindersUpdated = { newReminders -> allReminders = newReminders }
-            )
+        ModalBottomSheet(onDismissRequest = { selectedCourse = null }, sheetState = sheetState, containerColor = bottomSheetBg) {
+            CourseDetailsSheet(course = selectedCourse!!, attendanceData = attendanceData, allReminders = allReminders, onRemindersUpdated = { allReminders = it })
         }
     }
 }
 
 @Composable
-fun NextClassCard(timetable: TimetableModel, allReminders: List<CourseReminder>, tick: Int) {
+fun NextClassCard(timetable: TimetableModel, allReminders: List<CourseReminder>, tick: Int, exams: List<ExamScheduleModel>) {
+    val context = LocalContext.current
+    val sharedPrefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
     val themePrimary = MaterialTheme.colorScheme.primary
     val themeOnSurface = MaterialTheme.colorScheme.onSurface
     val themeOnSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
 
-    val nextClassInfo = remember(timetable, tick) {
+    val nextEvent = remember(timetable, tick, exams) {
+        val mergeLabs = sharedPrefs.getBoolean("MERGE_LABS", true)
         val cal = Calendar.getInstance()
+        val examToday = findExamForDate(cal, exams)
+        if (examToday != null) return@remember Pair(examToday, "EXAM TODAY" to themePrimary)
         val todayStr = SimpleDateFormat("EEEE", Locale.getDefault()).format(cal.time)
-        val todayCourses = timetable.scheduleMap[todayStr] ?: emptyList()
-        var found = false
+        val todayCourses = processAndMergeCourses(timetable.scheduleMap[todayStr] ?: emptyList(), mergeLabs)
         val nextToday = todayCourses.firstOrNull { course ->
-            val status = getCourseTimeStatus(course.timeSlot, true, true)
-            if (status == TimeStatus.NEXT || status == TimeStatus.ONGOING) { found = true; true } else false
+            val status = getCourseTimeStatus(course.mergedTimeSlot, true, true)
+            status == TimeStatus.NEXT || status == TimeStatus.ONGOING
         }
-        if (nextToday != null) { Pair(nextToday, "NEXT UP" to themePrimary.copy(alpha = 0.8f)) } else {
-            var nextFutureCourse: CourseSession? = null; var label = "UPCOMING"
-            for (i in 1..7) {
-                cal.add(Calendar.DAY_OF_YEAR, 1)
-                val nextDayStr = SimpleDateFormat("EEEE", Locale.getDefault()).format(cal.time)
-                val futureCourses = timetable.scheduleMap[nextDayStr] ?: emptyList()
-                if (futureCourses.isNotEmpty()) { nextFutureCourse = futureCourses.first(); label = if (i == 1) "TOMORROW" else nextDayStr.uppercase(Locale.getDefault()); break }
-            }
-            if (nextFutureCourse != null) Pair(nextFutureCourse, label to themeOnSurfaceVariant) else null
+        if (nextToday != null) return@remember Pair(nextToday, "NEXT UP" to themePrimary.copy(alpha = 0.8f))
+        for (i in 1..7) {
+            cal.add(Calendar.DAY_OF_YEAR, 1)
+            val examFuture = findExamForDate(cal, exams)
+            if (examFuture != null) return@remember Pair(examFuture, "UPCOMING EXAM" to themePrimary)
+            val futureDayStr = SimpleDateFormat("EEEE", Locale.getDefault()).format(cal.time)
+            val futureCourses = processAndMergeCourses(timetable.scheduleMap[futureDayStr] ?: emptyList(), mergeLabs)
+            if (futureCourses.isNotEmpty()) return@remember Pair(futureCourses.first(), (if (i == 1) "TOMORROW" else futureDayStr.uppercase()) to themeOnSurfaceVariant)
         }
+        null
     }
 
-    if (nextClassInfo != null) {
-        val nextCourse = nextClassInfo.first
-        val (headerText, headerColor) = nextClassInfo.second
-        val activeReminder = allReminders.find { it.classId == nextCourse.classId }
-
+    if (nextEvent != null) {
+        val (event, header) = nextEvent
+        val (headerText, headerColor) = header
         Card(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = getPremiumSurfaceColor()), border = BorderStroke(1.dp, getPremiumBorderColor())
+            shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = getPremiumSurfaceColor()), border = BorderStroke(1.dp, if(headerText.contains("EXAM")) themePrimary.copy(0.3f) else getPremiumBorderColor())
         ) {
-            Row(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column {
+            Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(headerText, fontSize = 9.sp, color = headerColor, letterSpacing = 1.5.sp, fontWeight = FontWeight.Black)
                     Spacer(Modifier.height(4.dp))
-                    Text(nextCourse.courseCode ?: "", fontSize = 22.sp, fontWeight = FontWeight.Black, color = themeOnSurface)
-                    Text(nextCourse.timeSlot ?: "", fontSize = 12.sp, color = themeOnSurfaceVariant)
+                    if (event is ExamScheduleModel) {
+                        Text(event.courseCode.clean(), fontSize = 22.sp, fontWeight = FontWeight.Black, color = themeOnSurface)
+                        Text("${event.examType.clean()} · ${event.reportingTime.clean()}", fontSize = 12.sp, color = themeOnSurfaceVariant)
+                    } else if (event is ProcessedCourse) {
+                        Text(event.courseCode.clean(), fontSize = 22.sp, fontWeight = FontWeight.Black, color = themeOnSurface)
+                        Text(event.mergedTimeSlot.clean(), fontSize = 12.sp, color = themeOnSurfaceVariant)
+                    }
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    Text(nextCourse.slot ?: "", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = themeOnSurface)
-                    if (activeReminder != null) Text(activeReminder.type.uppercase(), fontSize = 10.sp, fontWeight = FontWeight.Black, color = ColorDanger, modifier = Modifier.padding(top = 4.dp))
-                    else Text(nextCourse.venue ?: "", fontSize = 12.sp, color = themeOnSurfaceVariant)
+                    if (event is ExamScheduleModel) {
+                        val v = event.venue.clean()
+                        val sl = event.seatLocation.clean()
+                        val sn = event.seatNumber.clean()
+                        val rightStr = if (v == " " && sl == " " && sn == " ") " " else "$v - $sl ($sn)"
+
+                        Text(rightStr, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = themePrimary)
+                    } else if (event is ProcessedCourse) {
+                        val activeReminder = allReminders.find { it.classId == event.classId }
+                        Text(event.mergedSlot.clean(), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = themeOnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (activeReminder != null) Text(activeReminder.type.uppercase(), fontSize = 10.sp, fontWeight = FontWeight.Black, color = ColorDanger, modifier = Modifier.padding(top = 4.dp))
+                        else Text(event.venue.clean(), fontSize = 12.sp, color = themeOnSurfaceVariant)
+                    }
                 }
             }
         }
@@ -249,32 +334,84 @@ fun NextClassCard(timetable: TimetableModel, allReminders: List<CourseReminder>,
 }
 
 @Composable
-fun TimetableRow(
-    dateCal: Calendar, courses: List<CourseSession>, allReminders: List<CourseReminder>,
-    isToday: Boolean, isExpanded: Boolean, alpha: Float, tick: Int,
-    onExpandToggle: () -> Unit, onCourseClick: (CourseSession) -> Unit
-) {
-    val themePrimary = MaterialTheme.colorScheme.primary
+fun ExamRow(dateCal: Calendar, exam: ExamScheduleModel, isToday: Boolean, isExpanded: Boolean, alpha: Float, onExpandToggle: () -> Unit) {
     val sdfDayShort = remember { SimpleDateFormat("EEE", Locale.ENGLISH) }
+    val themePrimary = MaterialTheme.colorScheme.primary
 
-    val courseStatuses = remember(courses, tick) {
-        var foundNextIndex = -1
-        courses.mapIndexed { index, course ->
-            val isNextInLine = foundNextIndex == -1
-            val status = getCourseTimeStatus(course.timeSlot, isToday, isNextInLine)
-            if (status == TimeStatus.NEXT || status == TimeStatus.ONGOING) {
-                foundNextIndex = index
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).alpha(alpha).clip(RoundedCornerShape(14.dp))
+            .background(Brush.verticalGradient(listOf(themePrimary.copy(0.15f), Color.Transparent)))
+            .border(1.5.dp, themePrimary.copy(0.4f), RoundedCornerShape(14.dp))
+            .clickable { onExpandToggle() }
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (isToday) "TODAY" else dateCal.get(Calendar.DAY_OF_MONTH).toString(), fontSize = 14.sp, fontWeight = FontWeight.Black, color = themePrimary)
+                    Spacer(Modifier.width(8.dp))
+                    Text(sdfDayShort.format(dateCal.time), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                val eType = exam.examType.clean()
+                Text(if (eType == " ") "EXAM" else eType, fontSize = 10.sp, fontWeight = FontWeight.Black, color = themePrimary, modifier = Modifier.background(themePrimary.copy(0.1f), CircleShape).padding(horizontal = 8.dp, vertical = 2.dp))
             }
+            Spacer(Modifier.height(12.dp))
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(exam.courseCode.clean(), fontSize = 18.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+                    Text(exam.courseTitle.clean(), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+
+                if (!isExpanded) {
+                    val v = exam.venue.clean()
+                    val sl = exam.seatLocation.clean()
+                    val sn = exam.seatNumber.clean()
+                    val rightStr = if (v == " " && sl == " " && sn == " ") " " else "$v and $sl ($sn)"
+
+                    Text(
+                        text = rightStr,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.padding(start = 8.dp)
+                    )
+                }
+            }
+
+            if (isExpanded) {
+                Spacer(Modifier.height(12.dp)); HorizontalDivider(color = themePrimary.copy(0.2f)); Spacer(Modifier.height(12.dp))
+
+                val eTime = (exam.examTime ?: exam.reportingTime).clean()
+                DetailRow("Exam time", eTime)
+                DetailRow("Venue", exam.venue.clean())
+                DetailRow("Seat location", exam.seatLocation.clean())
+                DetailRow("Seat number", exam.seatNumber.clean())
+                DetailRow("Class ID", exam.classId.clean())
+            }
+        }
+    }
+}
+
+@Composable
+fun TimetableRow(dateCal: Calendar, rawCourses: List<CourseSession>, allReminders: List<CourseReminder>, isToday: Boolean, isExpanded: Boolean, alpha: Float, tick: Int, onExpandToggle: () -> Unit, onCourseClick: (ProcessedCourse) -> Unit) {
+    val context = LocalContext.current
+    val sharedPrefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
+    val themePrimary = MaterialTheme.colorScheme.primary
+    val mergedCourses = remember(rawCourses) { processAndMergeCourses(rawCourses, sharedPrefs.getBoolean("MERGE_LABS", true)) }
+    val courseStatuses = remember(mergedCourses, tick) {
+        var foundNextIndex = -1
+        mergedCourses.mapIndexed { index, course ->
+            val isNextInLine = foundNextIndex == -1
+            val status = getCourseTimeStatus(course.mergedTimeSlot, isToday, isNextInLine)
+            if (status == TimeStatus.NEXT || status == TimeStatus.ONGOING) foundNextIndex = index
             status
         }
     }
-
-    Box(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).alpha(alpha).scale(if (isToday) 1f else 0.96f).clip(RoundedCornerShape(14.dp))
-            .background(if (isExpanded) Brush.verticalGradient(listOf(if (isToday) getPremiumSurfaceColor() else Color.Transparent, Color.Transparent)) else SolidColor(if (isToday) getPremiumSurfaceColor() else Color.Transparent))
-            .border(1.dp, if (isToday || isExpanded) getPremiumBorderColor() else Color.Transparent, RoundedCornerShape(14.dp))
-            .clickable { onExpandToggle() }
-            .animateContentSize(animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing))
+    Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).alpha(alpha).scale(if (isToday) 1f else 0.96f).clip(RoundedCornerShape(14.dp))
+        .background(if (isExpanded) Brush.verticalGradient(listOf(if (isToday) getPremiumSurfaceColor() else Color.Transparent, Color.Transparent)) else SolidColor(if (isToday) getPremiumSurfaceColor() else Color.Transparent))
+        .border(1.dp, if (isToday || isExpanded) getPremiumBorderColor() else Color.Transparent, RoundedCornerShape(14.dp))
+        .clickable { onExpandToggle() }.animateContentSize()
     ) {
         if (isExpanded) {
             Column(modifier = Modifier.padding(12.dp)) {
@@ -282,15 +419,15 @@ fun TimetableRow(
                     Row(verticalAlignment = Alignment.Bottom) {
                         Text(dateCal.get(Calendar.DAY_OF_MONTH).toString(), fontSize = 24.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
                         Spacer(Modifier.width(6.dp))
-                        Text(sdfDayShort.format(dateCal.time), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(SimpleDateFormat("EEE", Locale.ENGLISH).format(dateCal.time), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Text("${courses.size} Classes", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 4.dp))
+                    Text("${mergedCourses.size} Classes", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 4.dp))
                 }
                 Spacer(Modifier.height(12.dp))
-                if (courses.isEmpty()) Text("No Classes 🎉", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp, horizontal = 8.dp))
+                if (mergedCourses.isEmpty()) Text("No Classes 🎉", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp, horizontal = 8.dp))
                 else {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        itemsIndexed(courses) { index, course ->
+                        itemsIndexed(mergedCourses) { index, course ->
                             val reminder = allReminders.find { it.classId == course.classId }
                             ClassTile(course, courseStatuses[index], reminder?.type) { onCourseClick(course) }
                         }
@@ -301,13 +438,13 @@ fun TimetableRow(
             Column(modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp, horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (isToday) "Today" else sdfDayShort.format(dateCal.time), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isToday) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (isToday) "Today" else SimpleDateFormat("EEE", Locale.ENGLISH).format(dateCal.time), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isToday) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.width(6.dp))
                         Text(dateCal.get(Calendar.DAY_OF_MONTH).toString(), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
                     }
-                    Text(if (courses.isEmpty()) "No Classes " else "${courses.size} Classes", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                    Text(if (mergedCourses.isEmpty()) "No Classes " else "${mergedCourses.size} Classes", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
                 }
-                if (courses.isNotEmpty()) {
+                if (mergedCourses.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.Bottom) {
                         courseStatuses.forEach { status ->
@@ -322,7 +459,7 @@ fun TimetableRow(
 }
 
 @Composable
-fun ClassTile(course: CourseSession, status: TimeStatus, reminderType: String?, onClick: () -> Unit) {
+fun ClassTile(course: ProcessedCourse, status: TimeStatus, reminderType: String?, onClick: () -> Unit) {
     val themePrimary = MaterialTheme.colorScheme.primary
     val pulseAlpha by rememberInfiniteTransition(label = "pulse").animateFloat(initialValue = 0.4f, targetValue = 1f, animationSpec = infiniteRepeatable(animation = tween(800), repeatMode = RepeatMode.Reverse), label = "pulseAlpha")
 
@@ -333,19 +470,16 @@ fun ClassTile(course: CourseSession, status: TimeStatus, reminderType: String?, 
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.padding(8.dp).fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
-                Text(course.courseCode ?: "", fontSize = 11.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
-
+                Text(course.courseCode.clean(), fontSize = 11.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
                 val pillColor = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF0A0A0A) else Color(0xFFF5F5F5)
                 Box(modifier = Modifier.padding(top = 4.dp).background(pillColor, RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 3.dp)) {
-                    Text(course.timeSlot?.split("-")?.firstOrNull() ?: "", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    Text(course.mergedTimeSlot.split("-").firstOrNull()?.trim() ?: "", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                 }
-
                 Spacer(modifier = Modifier.weight(1f))
-                Text(course.slot ?: "", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-
-                if (status == TimeStatus.ONGOING) Text("LIVE NOW", fontSize = 8.sp, fontWeight = FontWeight.Black, color = themePrimary, letterSpacing = 0.5.sp, modifier = Modifier.padding(top = 2.dp).alpha(pulseAlpha))
-                else if (!reminderType.isNullOrEmpty()) Text(reminderType.uppercase(), fontSize = 8.sp, fontWeight = FontWeight.Black, color = ColorDanger, letterSpacing = 0.5.sp, modifier = Modifier.padding(top = 2.dp))
-                else if (status == TimeStatus.NEXT) Text("NEXT UP", fontSize = 8.sp, fontWeight = FontWeight.Black, color = themePrimary.copy(alpha = 0.8f), letterSpacing = 0.5.sp, modifier = Modifier.padding(top = 2.dp))
+                Text(course.mergedSlot.clean(), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (status == TimeStatus.ONGOING) Text("LIVE NOW", fontSize = 8.sp, fontWeight = FontWeight.Black, color = themePrimary, modifier = Modifier.alpha(pulseAlpha))
+                else if (!reminderType.isNullOrEmpty()) Text(reminderType.uppercase(), fontSize = 8.sp, fontWeight = FontWeight.Black, color = ColorDanger)
+                else if (status == TimeStatus.NEXT) Text("NEXT UP", fontSize = 8.sp, fontWeight = FontWeight.Black, color = themePrimary.copy(alpha = 0.8f))
                 else Spacer(modifier = Modifier.height(12.dp))
             }
         }
@@ -355,7 +489,7 @@ fun ClassTile(course: CourseSession, status: TimeStatus, reminderType: String?, 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CourseDetailsSheet(
-    course: CourseSession, attendanceData: List<AttendanceModel>, allReminders: List<CourseReminder>,
+    course: ProcessedCourse, attendanceData: List<AttendanceModel>, allReminders: List<CourseReminder>,
     onRemindersUpdated: (List<CourseReminder>) -> Unit
 ) {
     val context = LocalContext.current
@@ -385,7 +519,7 @@ fun CourseDetailsSheet(
                 IconButton(onClick = { isViewingAttendance = false }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = MaterialTheme.colorScheme.onSurface) }
                 Text("Attendance Details", fontSize = 18.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
             }
-            AttendanceDetailCore(course = attendance, onSimulateClick = null)
+            com.vtop.ui.screens.main.AttendanceDetailCore(course = attendance, onSimulateClick = null)
 
         } else if (isEditingReminder) {
             val reminderToEdit = activeReminders.find { it.id == editingReminderId }
@@ -463,7 +597,7 @@ fun CourseDetailsSheet(
             }
         } else {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(course.courseCode ?: "N/A", fontSize = 16.sp, fontWeight = FontWeight.Black, color = themePrimary)
+                Text(course.courseCode.clean(), fontSize = 16.sp, fontWeight = FontWeight.Black, color = themePrimary)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("$attendanceStr%", fontSize = 16.sp, fontWeight = FontWeight.Black, color = attenColor)
                     if (attendance != null) {
@@ -474,13 +608,13 @@ fun CourseDetailsSheet(
                 }
             }
             Spacer(Modifier.height(12.dp))
-            Text(text = course.courseName ?: "Unknown Course", fontSize = 24.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, lineHeight = 28.sp)
+            Text(text = course.courseName.clean(), fontSize = 24.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, lineHeight = 28.sp)
             Spacer(Modifier.height(24.dp))
-            DetailRow(label = "TIME", value = course.timeSlot ?: "N/A")
-            DetailRow(label = "SLOT", value = course.slot ?: "N/A")
-            DetailRow(label = "VENUE", value = course.venue ?: "N/A")
-            DetailRow(label = "FACULTY", value = course.faculty ?: "N/A")
-            DetailRow(label = "CLASS ID", value = course.classId ?: "N/A")
+            DetailRow(label = "TIME", value = course.mergedTimeSlot.clean())
+            DetailRow(label = "SLOT", value = course.mergedSlot.clean())
+            DetailRow(label = "VENUE", value = course.venue.clean())
+            DetailRow(label = "FACULTY", value = course.faculty.clean())
+            DetailRow(label = "CLASS ID", value = course.classId.clean())
             Spacer(Modifier.height(24.dp))
 
             activeReminders.forEach { reminder ->

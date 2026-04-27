@@ -1,5 +1,8 @@
+@file:Suppress("SpellCheckingInspection")
+
 package com.vtop.ui.screens.auth
 
+import android.content.Context
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -20,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -33,9 +37,13 @@ import com.vtop.ui.core.OtpForm
 import com.vtop.ui.theme.*
 import com.vtop.logic.*
 import kotlinx.coroutines.delay
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 @Composable
 fun LoginScreen(savedReg: String?, savedPass: String?, callback: AuthActionCallback) {
+    val context = LocalContext.current
     val currentState = LoginBridge.currentState.value
     val errorMsg = LoginBridge.loginError.value
 
@@ -64,13 +72,8 @@ fun LoginScreen(savedReg: String?, savedPass: String?, callback: AuthActionCallb
                     LoginFormView(savedReg, savedPass, state == AuthState.LOADING_SEMESTERS, callback)
                 }
                 AuthState.SELECT_SEMESTER, AuthState.DOWNLOADING_DATA -> {
-                    // Mocking some semesters for the UI if the bridge is empty
                     val sems = if (LoginBridge.fetchedSemesters.value.isEmpty()) {
-                        listOf(
-                            mapOf("id" to "AP2025264", "name" to "WIN 2024-25"),
-                            mapOf("id" to "AP2024264", "name" to "FALL 2024-25"),
-                            mapOf("id" to "AP2024254", "name" to "SUM 2023-24")
-                        )
+                        loadSemestersFromCache(context)
                     } else LoginBridge.fetchedSemesters.value
 
                     SemesterPickerView(sems, state == AuthState.DOWNLOADING_DATA, callback)
@@ -79,7 +82,6 @@ fun LoginScreen(savedReg: String?, savedPass: String?, callback: AuthActionCallb
             }
         }
 
-        // Error Toast
         AnimatedVisibility(
             visible = errorMsg != null,
             enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
@@ -99,7 +101,6 @@ fun LoginScreen(savedReg: String?, savedPass: String?, callback: AuthActionCallb
             }
         }
 
-        // --- GLOBAL OTP OVERLAY ---
         val otpResolver = AppBridge.currentOtpResolver.value
         if (otpResolver != null) {
             OtpForm(
@@ -127,7 +128,6 @@ private fun LoginFormView(savedReg: String?, savedPass: String?, isLoading: Bool
         modifier = Modifier.fillMaxWidth(0.85f),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // --- LOGO HEADER ---
         Box(
             modifier = Modifier
                 .size(64.dp)
@@ -143,7 +143,6 @@ private fun LoginFormView(savedReg: String?, savedPass: String?, isLoading: Bool
 
         Spacer(Modifier.height(40.dp))
 
-        // --- INPUTS ---
         val colors = OutlinedTextFieldDefaults.colors(
             focusedTextColor = MaterialTheme.colorScheme.onBackground,
             unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
@@ -190,7 +189,6 @@ private fun LoginFormView(savedReg: String?, savedPass: String?, isLoading: Bool
 
         Spacer(Modifier.height(24.dp))
 
-        // --- SUBMIT BUTTON & PROGRESS BAR ---
         Button(
             onClick = {
                 LoginBridge.cachedRegNo = regNo
@@ -201,13 +199,14 @@ private fun LoginFormView(savedReg: String?, savedPass: String?, isLoading: Bool
             modifier = Modifier.fillMaxWidth().height(50.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.primary,
-                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
             ),
             shape = RoundedCornerShape(12.dp)
         ) {
             Text(
                 text = if (isLoading) "LOGGING IN..." else "LOGIN",
-                color = if (isLoading) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onPrimary,
                 fontWeight = FontWeight.Black,
                 letterSpacing = 1.sp
             )
@@ -221,26 +220,14 @@ private fun LoginFormView(savedReg: String?, savedPass: String?, isLoading: Bool
                 trackColor = MaterialTheme.colorScheme.surfaceVariant
             )
         }
-
-        // --- GLOBAL OTP OVERLAY ---
-        val otpResolver = AppBridge.currentOtpResolver.value
-        if (otpResolver != null) {
-            OtpForm(
-                onVerify = { otp ->
-                    otpResolver.submit(otp)
-                    AppBridge.currentOtpResolver.value = null
-                },
-                onCancel = {
-                    otpResolver.cancel()
-                    AppBridge.currentOtpResolver.value = null
-                }
-            )
-        }
     }
 }
 
 @Composable
 private fun SemesterPickerView(semesters: List<Map<String, String>>, isDownloading: Boolean, callback: AuthActionCallback) {
+    val context = LocalContext.current
+    val activeKeys = remember { getActiveSemesterKeysFromCache(context) }
+
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp).systemBarsPadding(),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -259,16 +246,24 @@ private fun SemesterPickerView(semesters: List<Map<String, String>>, isDownloadi
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 itemsIndexed(semesters) { index, sem ->
-                    // Reads the logic from LoginActivity, falls back to index 0 for mocked UI
-                    val isCurrent = sem["isCurrent"]?.toBoolean() ?: (index == 0)
-                    val opacity = if (isCurrent) 1f else if (index == 1 || index == 0) 0.7f else 0.4f
+                    val semName = sem["name"] ?: ""
+                    val semId = sem["id"] ?: ""
+
+                    // Prioritize exact date math from bunk_cache.json. Fallback to API/Index if empty.
+                    val isCurrent = if (activeKeys.isNotEmpty()) {
+                        activeKeys.any { it.equals(semName, ignoreCase = true) || it.equals(semId, ignoreCase = true) }
+                    } else {
+                        sem["isCurrent"] == "true" || (sem["isCurrent"] == null && index == 0)
+                    }
+
+                    val opacity = if (isCurrent) 1f else 0.6f
 
                     Card(
                         shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = opacity)),
                         border = BorderStroke(1.dp, AppColors.glassBorder.copy(alpha = opacity)),
                         modifier = Modifier.fillMaxWidth().clickable {
-                            callback.onSemesterSelect(sem["id"] ?: "", sem["name"] ?: "")
+                            callback.onSemesterSelect(semId, semName)
                         }
                     ) {
                         Row(
@@ -277,7 +272,7 @@ private fun SemesterPickerView(semesters: List<Map<String, String>>, isDownloadi
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = sem["name"] ?: "Unknown",
+                                text = semName,
                                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = opacity),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
@@ -298,4 +293,92 @@ private fun SemesterPickerView(semesters: List<Map<String, String>>, isDownloadi
             }
         }
     }
+}
+
+// --------------------------------------------------------------------------------------
+// JSON PARSERS & HELPERS
+// --------------------------------------------------------------------------------------
+
+private fun getActiveSemesterKeysFromCache(context: Context): List<String> {
+    val activeKeys = mutableListOf<String>()
+    try {
+        val jsonStr = context.assets.open("bunk_cache.json").bufferedReader().use { it.readText() }
+        val root = JSONObject(jsonStr)
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
+        val now = System.currentTimeMillis()
+
+        if (root.has("semester")) {
+            val semInfo = root.getJSONObject("semester")
+            val startStr = semInfo.optString("start_date", "")
+            val endStr = semInfo.optString("last_instructional_day", "")
+            val name = semInfo.optString("name", "")
+            if (startStr.isNotEmpty() && endStr.isNotEmpty()) {
+                val startMs = sdf.parse(startStr)?.time ?: 0L
+                val endMs = sdf.parse(endStr)?.time ?: 0L
+                // Add 30 days to the last instructional day to cover FAT exams and grading
+                val extendedEndMs = endMs + (30L * 24 * 60 * 60 * 1000)
+
+                if (now in startMs..extendedEndMs) {
+                    activeKeys.add(name)
+                    activeKeys.add(semInfo.optString("id", ""))
+                }
+            }
+        } else if (!root.has("blocked_dates")) {
+            val keys = root.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val semBlock = root.optJSONObject(key)
+                if (semBlock != null) {
+                    val startStr = semBlock.optString("start_date", "")
+                    val endStr = semBlock.optString("last_instructional_day", "")
+                    if (startStr.isNotEmpty() && endStr.isNotEmpty()) {
+                        val startMs = sdf.parse(startStr)?.time ?: 0L
+                        val endMs = sdf.parse(endStr)?.time ?: 0L
+                        val extendedEndMs = endMs + (30L * 24 * 60 * 60 * 1000)
+
+                        if (now in startMs..extendedEndMs) {
+                            activeKeys.add(key)
+                            activeKeys.add(semBlock.optString("id", ""))
+                        }
+                    }
+                }
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+    return activeKeys.filter { it.isNotBlank() }
+}
+
+private fun loadSemestersFromCache(context: Context): List<Map<String, String>> {
+    val sems = mutableListOf<Map<String, String>>()
+    try {
+        val jsonStr = context.assets.open("bunk_cache.json").bufferedReader().use { it.readText() }
+        val root = JSONObject(jsonStr)
+
+        if (root.has("semester")) {
+            val semInfo = root.getJSONObject("semester")
+            val name = semInfo.optString("name", "Current Semester")
+            val id = semInfo.optString("id", name)
+            sems.add(mapOf("id" to id, "name" to name, "isCurrent" to "true"))
+        } else if (!root.has("blocked_dates")) {
+            val keys = root.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val semBlock = root.optJSONObject(key)
+                if (semBlock != null) {
+                    val id = semBlock.optString("id", key)
+                    val isCurrent = semBlock.optString("is_current", "false")
+                    sems.add(mapOf("id" to id, "name" to key, "isCurrent" to isCurrent))
+                }
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+
+    if (sems.isEmpty()) {
+        sems.add(mapOf("id" to "DEFAULT", "name" to "Default Semester", "isCurrent" to "true"))
+    }
+    return sems
 }

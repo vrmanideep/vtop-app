@@ -6,6 +6,10 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalView
 import androidx.core.content.edit
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
@@ -49,13 +53,31 @@ class MainActivity : ComponentActivity() {
         // 2. Load Material You toggle (Defaults to true)
         ThemeManager.useDynamicColor.value = sharedPrefs.getBoolean("USE_DYNAMIC_COLOR", true)
 
-        // 3. Load Custom Accent Color (Defaults to VtopPrimaryBlue)
-        val defaultAccentInt = VtopPrimaryBlue.value.toULong().toInt()
+        // 3. Load Custom Accent Color
+        val defaultAccentInt = VtopPrimaryBlue.toArgb()
         val savedAccentInt = sharedPrefs.getInt("CUSTOM_ACCENT", defaultAccentInt)
-        ThemeManager.customAccent.value = androidx.compose.ui.graphics.Color(savedAccentInt.toULong())
+        ThemeManager.customAccent.value = androidx.compose.ui.graphics.Color(savedAccentInt)
 
         setContent {
-            AppTheme(themeMode = ThemeManager.themeMode.value) {
+            val themeMode = ThemeManager.themeMode.value
+            val isDark = when (themeMode) {
+                AppThemeMode.LIGHT -> false
+                AppThemeMode.DARK -> true
+                AppThemeMode.SYSTEM -> isSystemInDarkTheme()
+            }
+
+            // THE FIX: Automatically switch status bar icons to dark when in Light Mode
+            val view = LocalView.current
+            if (!view.isInEditMode) {
+                SideEffect {
+                    val insetsController = WindowCompat.getInsetsController(window, view)
+                    // TRUE means "Background is light, make the icons dark"
+                    insetsController.isAppearanceLightStatusBars = !isDark
+                    insetsController.isAppearanceLightNavigationBars = !isDark
+                }
+            }
+
+            AppTheme(themeMode = themeMode) {
                 MainScreen(
                     timetable = AppBridge.timetableState.value ?: TimetableModel(),
                     attendanceData = AppBridge.attendanceState.value,
@@ -194,7 +216,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
 
-                    } // End of object
+                    }
                 )
             }
         }

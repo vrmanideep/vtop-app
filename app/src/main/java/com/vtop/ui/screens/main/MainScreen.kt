@@ -6,14 +6,26 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.ExperimentalMaterialApi
@@ -30,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalConfiguration
@@ -38,14 +51,16 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.core.content.edit
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.core.content.edit
 import androidx.glance.appwidget.updateAll
 import com.vtop.models.*
 import com.vtop.ui.VtopAnalyticsTab
 import com.vtop.ui.core.*
+import com.vtop.ui.screens.portal.VtopPortalScreen
 import com.vtop.ui.theme.AppColors
+import com.vtop.ui.theme.AppThemeMode
 import com.vtop.ui.theme.DockPosition
 import com.vtop.ui.theme.ThemeManager
 import com.vtop.utils.Vault
@@ -67,24 +82,62 @@ fun MainScreen(
     outingHandler: OutingActionHandler
 ) {
     val context = LocalContext.current
-    var navStyle by remember { mutableStateOf(Vault.getNavStyle(context)) }
-    var currentScreen by remember { mutableStateOf("HOME") }
-    val navItems = listOf("HOME", "ATTENDANCE", "EXAMS", "MARKS", "OUTINGS")
+    val sharedPrefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
+
+    LaunchedEffect(Unit) {
+        if (sharedPrefs.contains("CUSTOM_ACCENT")) {
+            ThemeManager.customAccent.value = Color(sharedPrefs.getInt("CUSTOM_ACCENT", 0))
+        }
+        if (sharedPrefs.contains("USE_DYNAMIC_COLOR")) {
+            ThemeManager.useDynamicColor.value = sharedPrefs.getBoolean("USE_DYNAMIC_COLOR", true)
+        }
+        val savedTheme = sharedPrefs.getString("APP_THEME", null)
+        if (savedTheme != null) {
+            try { ThemeManager.themeMode.value = AppThemeMode.valueOf(savedTheme) } catch (_: Exception) {}
+        }
+    }
+
+    // Explicitly defaulting to "STATIC" if not defined
+    var navStyle by remember {
+        mutableStateOf(
+            Vault.getNavStyle(context).let {
+                if (it.isBlank() || !sharedPrefs.contains("NAV_STYLE_SET")) "STATIC" else it
+            }
+        )
+    }
+
+    var showOutings by remember { mutableStateOf(sharedPrefs.getBoolean("SHOW_OUTINGS", true)) }
+    var mergeLabs by remember { mutableStateOf(sharedPrefs.getBoolean("MERGE_LABS", true)) }
+    var mergeMarks by remember { mutableStateOf(sharedPrefs.getBoolean("MERGE_MARKS", true)) }
+
+    val navItems = remember(showOutings) {
+        val list = mutableListOf("HOME", "ATTENDANCE", "EXAMS", "MARKS")
+        if (showOutings) list.add("OUTINGS")
+        list.add("PROFILE")
+        list
+    }
+
+    val pagerState = rememberPagerState(pageCount = { navItems.size })
     val coroutineScope = rememberCoroutineScope()
 
-    // Consolidates the Sync Click and Widget Update
+    var activeOverlay by remember { mutableStateOf<String?>(null) }
+
+    val currentTab = navItems.getOrNull(pagerState.currentPage) ?: navItems.last()
+
     val handleSyncAndUpdateWidget = { screen: String ->
         onSyncClick(screen)
         coroutineScope.launch {
-            try {
-                NextClassWidget().updateAll(context)
-            } catch (_: Exception) {}
+            try { NextClassWidget().updateAll(context) } catch (_: Exception) {}
         }
         Unit
     }
 
-    BackHandler(enabled = currentScreen != "HOME") {
-        currentScreen = if (currentScreen == "ANALYTICS") "PROFILE" else "HOME"
+    BackHandler(enabled = activeOverlay != null || pagerState.currentPage != 0) {
+        if (activeOverlay != null) {
+            activeOverlay = if (activeOverlay == "ANALYTICS" || activeOverlay == "PORTAL") null else null
+        } else {
+            coroutineScope.launch { pagerState.scrollToPage(0) }
+        }
     }
 
     val config = LocalConfiguration.current
@@ -93,14 +146,13 @@ fun MainScreen(
     val screenHeightPx = with(density) { config.screenHeightDp.dp.toPx() }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
-
     var isRefreshing by remember { mutableStateOf(false) }
 
     val pullRefreshState = rememberPullRefreshState(
         refreshing = isRefreshing,
         onRefresh = {
             isRefreshing = true
-            handleSyncAndUpdateWidget(currentScreen)
+            handleSyncAndUpdateWidget(currentTab)
             coroutineScope.launch {
                 delay(1500)
                 isRefreshing = false
@@ -118,74 +170,53 @@ fun MainScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // The Box fills the screen entirely, allowing lists to scroll UNDER the floating nav
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-                .pullRefresh(pullRefreshState)
+            modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).pullRefresh(pullRefreshState)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                if (currentScreen != "SIMULATOR") {
-                    GlobalTopBar(
-                        currentScreen = currentScreen,
-                        onProfileClick = { currentScreen = "PROFILE" }
-                    )
-                }
+                GlobalTopBar(
+                    currentScreen = currentTab,
+                    onProfileClick = { coroutineScope.launch { pagerState.scrollToPage(navItems.indexOf("PROFILE")) } }
+                )
 
-                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    when {
-                        currentScreen.equals("HOME", true) -> {
-                            if (timetable.scheduleMap.isNotEmpty()) Timetable(timetable, attendanceData)
-                            else Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No Timetable Data Found", color = MaterialTheme.colorScheme.onBackground) }
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    userScrollEnabled = true,
+                    key = { index -> navItems.getOrNull(index) ?: index }
+                ) { page ->
+                    val pageName = navItems.getOrNull(page) ?: return@HorizontalPager
+
+                    when (pageName) {
+                        "HOME" -> {
+                            if (timetable.scheduleMap.isNotEmpty() || examsData.isNotEmpty()) {
+                                Timetable(timetable, attendanceData, examsData)
+                            } else {
+                                Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No Timetable Data Found", color = MaterialTheme.colorScheme.onBackground) }
+                            }
                         }
-                        currentScreen.equals("ATTENDANCE", true) -> {
-                            Attendance(
-                                attendanceData = attendanceData,
-                                onLaunchSimulator = { currentScreen = "SIMULATOR" }
-                            )
-                        }
-                        currentScreen.equals("SIMULATOR", true) -> {
-                            BunkSimulatorTab(
-                                timetable = timetable,
-                                attendanceData = attendanceData,
-                                onBack = { currentScreen = "ATTENDANCE" }
-                            )
-                        }
-                        currentScreen.equals("EXAMS", true) -> {
-                            Exams(exams = examsData)
-                        }
-                        currentScreen.equals("MARKS", true) -> {
-                            Marks(
-                                marksData = AppBridge.marksState.value,
-                                historySummary = AppBridge.historySummaryState.value,
-                                historyData = AppBridge.historyItemsState.value,
-                                onHistoryLoad = { handleSyncAndUpdateWidget("MARKS") }
-                            )
-                        }
-                        currentScreen.equals("OUTINGS", true) -> {
-                            VtopOutingsTab(
-                                outingsData = AppBridge.outingsState.value,
-                                handler = outingHandler
-                            )
-                        }
-                        currentScreen.equals("PROFILE", true) -> {
-                            val sharedPrefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
+                        "ATTENDANCE" -> Attendance(attendanceData = attendanceData, onLaunchSimulator = { activeOverlay = "SIMULATOR" })
+                        "EXAMS" -> Exams(exams = examsData)
+                        "MARKS" -> Marks(
+                            marksData = AppBridge.marksState.value,
+                            historySummary = AppBridge.historySummaryState.value,
+                            historyData = AppBridge.historyItemsState.value,
+                            onHistoryLoad = { handleSyncAndUpdateWidget("MARKS") }
+                        )
+                        "OUTINGS" -> VtopOutingsTab(outingsData = AppBridge.outingsState.value, handler = outingHandler)
+                        "PROFILE" -> {
                             val semInfo = Vault.getSelectedSemester(context)
                             val creds = Vault.getCredentials(context)
-
                             val actualReminders = ReminderManager.loadReminders(context)
-                            val profileMap = AppBridge.profileState.value?.takeIf { it.isNotEmpty() }
-                                ?: Vault.getProfile(context)
-
+                            val profileMap = AppBridge.profileState.value?.takeIf { it.isNotEmpty() } ?: Vault.getProfile(context)
                             val semesterOptions = Vault.getSemesterOptions(context)
-                            val allSemesters = if (semesterOptions.isNotEmpty()) {
-                                semesterOptions.map { it.name }
-                            } else {
-                                listOf(semInfo[1] ?: "Unknown Semester")
-                            }
+                            val allSemesters = if (semesterOptions.isNotEmpty()) semesterOptions.map { it.name } else listOf(semInfo[1] ?: "Unknown Semester")
 
                             Profile(
+                                onBack = { coroutineScope.launch { pagerState.scrollToPage(0) } },
+                                timetable = timetable,
+                                examsData = examsData,
+                                onOpenPortal = { activeOverlay = "PORTAL" },
                                 currentTheme = ThemeManager.themeMode.value,
                                 onThemeChange = { newTheme ->
                                     ThemeManager.themeMode.value = newTheme
@@ -199,12 +230,22 @@ fun MainScreen(
                                 customAccent = ThemeManager.customAccent.value,
                                 onAccentChange = { color ->
                                     ThemeManager.customAccent.value = color
-                                    sharedPrefs.edit { putInt("CUSTOM_ACCENT", color.value.toULong().toInt()) }
+                                    sharedPrefs.edit { putInt("CUSTOM_ACCENT", color.toArgb()) }
                                 },
                                 currentNavStyle = navStyle,
                                 onNavStyleChange = { newStyle ->
                                     navStyle = newStyle
+                                    sharedPrefs.edit { putBoolean("NAV_STYLE_SET", true) }
                                     Vault.saveNavStyle(context, newStyle)
+                                },
+                                mergeLabs = mergeLabs,
+                                onMergeLabsChange = { v -> mergeLabs = v; sharedPrefs.edit { putBoolean("MERGE_LABS", v) } },
+                                mergeMarks = mergeMarks,
+                                onMergeMarksChange = { v -> mergeMarks = v; sharedPrefs.edit { putBoolean("MERGE_MARKS", v) } },
+                                showOutings = showOutings,
+                                onShowOutingsChange = { v ->
+                                    showOutings = v
+                                    sharedPrefs.edit { putBoolean("SHOW_OUTINGS", v) }
                                 },
                                 onLogout = { onLogoutClick.run() },
                                 profileData = profileMap,
@@ -229,39 +270,11 @@ fun MainScreen(
                                     ReminderManager.saveReminders(context, updated)
                                     handleSyncAndUpdateWidget("NONE")
                                 },
-                                onNavigateToAnalytics = { currentScreen = "ANALYTICS" },
+                                onNavigateToAnalytics = { activeOverlay = "ANALYTICS" },
                                 lastSyncTime = Vault.getLastSyncTime(context),
                                 onSyncClick = { handleSyncAndUpdateWidget("PROFILE") }
                             )
                         }
-
-                        currentScreen.equals("ANALYTICS", true) -> {
-                            VtopAnalyticsTab(
-                                attendanceData = attendanceData,
-                                historySummary = AppBridge.historySummaryState.value,
-                                historyData = AppBridge.historyItemsState.value
-                            )
-                        }
-                        else -> Box(Modifier.fillMaxSize(), Alignment.Center) { Text("$currentScreen Coming Soon", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    }
-                }
-            }
-
-            AnimatedVisibility(
-                visible = errorMsg != null,
-                enter = slideInVertically(initialOffsetY = { fullHeight: Int -> -fullHeight }) + fadeIn(),
-                exit = slideOutVertically(targetOffsetY = { fullHeight: Int -> -fullHeight }) + fadeOut(),
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 90.dp)
-            ) {
-                Card(
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.error),
-                    modifier = Modifier.padding(16.dp).fillMaxWidth(0.9f).clickable { AppBridge.appError.value = null }
-                ) {
-                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Warning, contentDescription = "Error", tint = Color.White)
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(text = errorMsg ?: "", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     }
                 }
             }
@@ -274,25 +287,18 @@ fun MainScreen(
                 contentColor = MaterialTheme.colorScheme.primary
             )
 
-            // --- NEW FLOATING NAV BAR ---
-            if (navStyle == "STATIC") {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                ) {
-                    BottomNavigation(currentScreen) { currentScreen = it }
+            if (navStyle == "STATIC" && currentTab != "PROFILE") {
+                Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding()) {
+                    BottomNavigation(currentTab, navItems) { tabName ->
+                        val targetPage = navItems.indexOf(tabName)
+                        if (targetPage != -1) coroutineScope.launch { pagerState.scrollToPage(targetPage) }
+                    }
                 }
             }
 
-            // --- FLOATING DOCK ---
-            if (navStyle != "STATIC") {
+            if (navStyle != "STATIC" && currentTab != "PROFILE") {
                 Box(
-                    modifier = Modifier
-                        .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 60.dp)
+                    modifier = Modifier.offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }.align(Alignment.BottomCenter).padding(bottom = 60.dp)
                         .pointerInput(Unit) {
                             detectDragGestures { change, dragAmount ->
                                 change.consume()
@@ -306,7 +312,29 @@ fun MainScreen(
                             }
                         }
                 ) {
-                    FloatingDockContainer(currentScreen, navItems, offsetX, offsetY, screenWidthPx, screenHeightPx, handleSyncAndUpdateWidget) { currentScreen = it }
+                    FloatingDockContainer(currentTab, navItems, offsetX, offsetY, screenWidthPx, screenHeightPx, handleSyncAndUpdateWidget) { tabName ->
+                        val targetPage = navItems.indexOf(tabName)
+                        if (targetPage != -1) coroutineScope.launch { pagerState.scrollToPage(targetPage) }
+                    }
+                }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = activeOverlay != null,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            modifier = Modifier.fillMaxSize().zIndex(50f)
+        ) {
+            Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                when (activeOverlay) {
+                    "SIMULATOR" -> BunkSimulatorTab(timetable = timetable, attendanceData = attendanceData, onBack = { activeOverlay = null })
+                    "ANALYTICS" -> VtopAnalyticsTab(attendanceData = attendanceData, historySummary = AppBridge.historySummaryState.value, historyData = AppBridge.historyItemsState.value)
+                    "PORTAL" -> {
+                        val creds = Vault.getCredentials(context)
+                        val client = remember { com.vtop.network.VtopClient(context, creds[0] ?: "", creds[1] ?: "") }
+                        VtopPortalScreen(vtopClient = client, onClose = { activeOverlay = null })
+                    }
                 }
             }
         }
@@ -315,14 +343,8 @@ fun MainScreen(
         if (otpResolver != null) {
             Box(modifier = Modifier.fillMaxSize().zIndex(100f)) {
                 OtpForm(
-                    onVerify = { otp ->
-                        otpResolver.submit(otp)
-                        AppBridge.currentOtpResolver.value = null
-                    },
-                    onCancel = {
-                        otpResolver.cancel()
-                        AppBridge.currentOtpResolver.value = null
-                    }
+                    onVerify = { otp -> otpResolver.submit(otp); AppBridge.currentOtpResolver.value = null },
+                    onCancel = { otpResolver.cancel(); AppBridge.currentOtpResolver.value = null }
                 )
             }
         }
@@ -369,21 +391,10 @@ fun GlobalTopBar(currentScreen: String, onProfileClick: () -> Unit) {
         else -> "Last synced: $timeAgoText"
     }
 
-    val alpha by animateFloatAsState(
-        targetValue = if (syncStatus != "IDLE") 0.5f else 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(800),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "syncAlpha"
-    )
+    val alpha by animateFloatAsState(targetValue = if (syncStatus != "IDLE") 0.5f else 1f, animationSpec = infiniteRepeatable(animation = tween(800), repeatMode = RepeatMode.Reverse), label = "syncAlpha")
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.Transparent)
-            .statusBarsPadding()
-            .padding(horizontal = 20.dp, vertical = 12.dp),
+        modifier = Modifier.fillMaxWidth().background(Color.Transparent).statusBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -391,19 +402,17 @@ fun GlobalTopBar(currentScreen: String, onProfileClick: () -> Unit) {
             Text(text = displayTitle, color = MaterialTheme.colorScheme.onBackground, fontSize = 28.sp, fontWeight = FontWeight.Black)
             Text(text = subtitleText, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha), fontSize = 12.sp, fontWeight = FontWeight.Medium)
         }
-
-        IconButton(
-            onClick = onProfileClick,
-            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
-        ) {
-            Icon(Icons.Default.Person, contentDescription = "Profile", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (currentScreen != "PROFILE") {
+            IconButton(onClick = onProfileClick, modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)) {
+                Icon(Icons.Default.Person, contentDescription = "Profile", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
 
 @Composable
-fun BottomNavigation(currentScreen: String, onSelect: (String) -> Unit) {
-    val items = listOf(
+fun BottomNavigation(currentTab: String, availableTabs: List<String>, onSelect: (String) -> Unit) {
+    val allTabs = listOf(
         Triple("HOME", "Home", Icons.Default.Home),
         Triple("ATTENDANCE", "Attendance", Icons.Default.CheckCircle),
         Triple("EXAMS", "Exams", Icons.Default.Event),
@@ -411,59 +420,28 @@ fun BottomNavigation(currentScreen: String, onSelect: (String) -> Unit) {
         Triple("OUTINGS", "Outings", Icons.AutoMirrored.Filled.DirectionsRun)
     )
 
+    val visibleTabs = allTabs.filter { availableTabs.contains(it.first) }
+
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 16.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
         shape = RoundedCornerShape(24.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 12.dp, horizontal = 4.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            items.forEach { item ->
+        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+            visibleTabs.forEach { item ->
                 val (screenId, label, icon) = item
-                val isSelected = currentScreen.equals(screenId, true)
-
-                val tint by animateColorAsState(
-                    targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                    label = "navTint"
-                )
-                val scale by animateFloatAsState(
-                    targetValue = if (isSelected) 1.15f else 1f,
-                    label = "navScale"
-                )
+                val isSelected = currentTab.equals(screenId, true)
+                val tint by animateColorAsState(targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), label = "navTint")
+                val scale by animateFloatAsState(targetValue = if (isSelected) 1.15f else 1f, label = "navScale")
 
                 Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) { onSelect(screenId) },
+                    modifier = Modifier.weight(1f).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onSelect(screenId) },
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = label,
-                        tint = tint,
-                        modifier = Modifier
-                            .size(24.dp)
-                            .graphicsLayer(scaleX = scale, scaleY = scale)
-                    )
+                    Icon(imageVector = icon, contentDescription = label, tint = tint, modifier = Modifier.size(24.dp).graphicsLayer(scaleX = scale, scaleY = scale))
                     Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = label,
-                        color = tint,
-                        fontSize = 10.sp,
-                        fontWeight = if (isSelected) FontWeight.Black else FontWeight.Medium,
-                        maxLines = 1
-                    )
+                    Text(text = label, color = tint, fontSize = 10.sp, fontWeight = if (isSelected) FontWeight.Black else FontWeight.Medium, maxLines = 1)
                 }
             }
         }
@@ -495,7 +473,7 @@ fun FloatingDockContainer(currentScreen: String, items: List<String>, offsetX: F
                 Card(
                     modifier = Modifier.requiredSize(width = 140.dp, height = 44.dp).graphicsLayer { rotationZ = rotation }.clickable { expanded = !expanded },
                     shape = RoundedCornerShape(22.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)),
                     border = BorderStroke(1.dp, AppColors.glassBorder)
                 ) {
                     Row(Modifier.fillMaxSize().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
@@ -507,9 +485,9 @@ fun FloatingDockContainer(currentScreen: String, items: List<String>, offsetX: F
 
             Box {
                 AnimatedVisibility(visible = expanded, enter = fadeIn() + scaleIn(transformOrigin = transformOrigin, animationSpec = tween(200)), exit = fadeOut() + scaleOut(transformOrigin = transformOrigin, animationSpec = tween(150))) {
-                    Card(modifier = Modifier.width(200.dp), shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(0.98f)), border = BorderStroke(1.dp, AppColors.glassBorder)) {
+                    Card(modifier = Modifier.width(200.dp), shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)), border = BorderStroke(1.dp, AppColors.glassBorder)) {
                         Column(modifier = Modifier.padding(8.dp)) {
-                            items.forEach { item ->
+                            items.filter { it != "PROFILE" }.forEach { item ->
                                 val isSelected = currentScreen.equals(item, ignoreCase = true)
                                 Text(
                                     text = item,

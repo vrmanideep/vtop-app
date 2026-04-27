@@ -1,5 +1,6 @@
 package com.vtop.ui.screens.main
 
+import android.content.Context
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -26,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -47,7 +49,6 @@ private val MarksColorBGrade = Color(0xFF60A5FA)
 private val MarksColorCGrade = Color(0xFFFBBF24)
 private val MarksColorFGrade = Color(0xFFF87171)
 
-// --- UI Models to handle Separated Component Data ---
 data class UiMarkDetail(
     val title: String,
     val scoredMaxStr: String,
@@ -103,7 +104,6 @@ private fun getCourseTypePriority(type: String?): Int {
     }
 }
 
-// Helper to filter out Re-Evaluations and sum up the highest marks
 private fun getBestAttemptTotals(mark: CourseMark): Pair<Double, Double> {
     val detailsList = mark.details
     if (detailsList.isNullOrEmpty()) {
@@ -129,6 +129,10 @@ fun Marks(
     historyData: List<GradeHistoryItem>,
     onHistoryLoad: () -> Unit
 ) {
+    val context = LocalContext.current
+    val sharedPrefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
+    val mergeMarks = sharedPrefs.getBoolean("MERGE_MARKS", true)
+
     val pagerState = rememberPagerState(pageCount = { 2 })
     val coroutineScope = rememberCoroutineScope()
 
@@ -158,7 +162,7 @@ fun Marks(
         Spacer(modifier = Modifier.height(12.dp))
         HorizontalPager(state = pagerState, modifier = Modifier.weight(1f)) { page ->
             when (page) {
-                0 -> CurrentSemesterMarksView(marksData)
+                0 -> CurrentSemesterMarksView(marksData, mergeMarks)
                 1 -> AcademicHistoryView(historyData, historySummary, onHistoryLoad)
             }
         }
@@ -217,14 +221,13 @@ fun HeroSummaryCard(summary: CGPASummary) {
 }
 
 @Composable
-fun CurrentSemesterMarksView(marksData: List<CourseMark>) {
+fun CurrentSemesterMarksView(marksData: List<CourseMark>, mergeMarks: Boolean) {
     if (marksData.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text("No Marks Data Available", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
         }
     } else {
-        // --- Core Merging Logic (75% Theory + 25% Lab/Project) ---
-        val uiMarks = remember(marksData) {
+        val uiMarks = remember(marksData, mergeMarks) {
             val list = mutableListOf<UiMark>()
             val grouped = marksData.groupBy { it.courseCode?.trim() ?: "" }
 
@@ -238,18 +241,16 @@ fun CurrentSemesterMarksView(marksData: List<CourseMark>) {
                     t.contains("ELA") || t.contains("EPJ") || t.contains("PJT") || t.contains("LAB") || t.contains("PROJECT")
                 }
 
-                if (eth != null && elaOrEpj != null) {
+                if (mergeMarks && eth != null && elaOrEpj != null) {
                     val thTotals = getBestAttemptTotals(eth)
                     val pracTotals = getBestAttemptTotals(elaOrEpj)
 
-                    // The actual Math! Theory*0.75 + Lab/Proj*0.25
                     val finalGained = (thTotals.first * 0.75) + (pracTotals.first * 0.25)
                     val finalMax = (thTotals.second * 0.75) + (pracTotals.second * 0.25)
 
                     val isLab = elaOrEpj.courseType?.uppercase(Locale.getDefault())?.contains("LAB") == true || elaOrEpj.courseType?.uppercase(Locale.getDefault())?.contains("ELA") == true
                     val pracName = if (isLab) "Lab" else "Project"
 
-                    // Create separate components for UI rendering
                     val thComponent = UiMarkComponent(
                         name = "Theory",
                         gainedRaw = thTotals.first,
@@ -275,7 +276,6 @@ fun CurrentSemesterMarksView(marksData: List<CourseMark>) {
                         )
                     )
 
-                    // Add any other anomalies directly (if a course somehow has ETH, ELA, *and* EPJ)
                     groupMarks.filter { it != eth && it != elaOrEpj }.forEach { remaining ->
                         val remTotals = getBestAttemptTotals(remaining)
                         val comp = UiMarkComponent(
@@ -296,7 +296,6 @@ fun CurrentSemesterMarksView(marksData: List<CourseMark>) {
                         )
                     }
                 } else {
-                    // Standard processing for non-embedded or standalone courses
                     groupMarks.forEach { mark ->
                         val totals = getBestAttemptTotals(mark)
                         val comp = UiMarkComponent(
@@ -351,7 +350,6 @@ fun MarksExpandableCard(mark: UiMark) {
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Header
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(mark.courseCode, color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp, fontWeight = FontWeight.Bold)
@@ -377,7 +375,6 @@ fun MarksExpandableCard(mark: UiMark) {
                 Icon(Icons.Default.KeyboardArrowDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.rotate(rotation))
             }
 
-            // Expanded Assessment List broken down by Components
             if (expanded) {
                 val hasAnyDetails = mark.components.any { it.details.isNotEmpty() }
 
@@ -389,7 +386,6 @@ fun MarksExpandableCard(mark: UiMark) {
                     mark.components.forEachIndexed { index, comp ->
                         if (comp.details.isNotEmpty()) {
 
-                            // Component Header (e.g. "Theory" or "Lab")
                             if (mark.components.size > 1) {
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
                                     Text(comp.name.uppercase(Locale.getDefault()), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
@@ -398,7 +394,6 @@ fun MarksExpandableCard(mark: UiMark) {
                                 }
                                 Spacer(Modifier.height(6.dp))
 
-                                // Mini Progress bar for the specific component
                                 val compProgress = if (comp.totalRaw > 0) (comp.gainedRaw / comp.totalRaw).toFloat().coerceIn(0f, 1f) else 0f
                                 val compBarColor = getMarksColor(comp.gainedRaw, comp.totalRaw)
                                 Box(modifier = Modifier.fillMaxWidth().height(2.dp).clip(CircleShape).background(MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))) {
@@ -407,7 +402,6 @@ fun MarksExpandableCard(mark: UiMark) {
                                 Spacer(Modifier.height(12.dp))
                             }
 
-                            // Assessment Table Headers
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text("Assessment", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                                 Text("Scored / Max", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
@@ -415,7 +409,6 @@ fun MarksExpandableCard(mark: UiMark) {
                             }
                             Spacer(Modifier.height(8.dp))
 
-                            // Assessment Rows
                             comp.details.forEach { detail ->
                                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                     Text(detail.title, color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))

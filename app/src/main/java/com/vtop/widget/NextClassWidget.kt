@@ -1,5 +1,8 @@
+@file:SuppressLint("RestrictedApi")
+
 package com.vtop.widget
 
+import android.annotation.SuppressLint
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -16,22 +19,28 @@ import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
+import androidx.glance.color.ColorProvider
 import androidx.glance.layout.*
 import androidx.glance.text.*
-import androidx.glance.unit.ColorProvider
-import com.vtop.models.CourseSession
+import com.vtop.ui.core.CalendarSync
 import com.vtop.ui.core.CourseReminder
 import com.vtop.ui.core.ReminderManager
+import com.vtop.ui.screens.main.ProcessedCourse
+import com.vtop.ui.screens.main.processAndMergeCourses
+import com.vtop.models.ExamScheduleModel
 import com.vtop.utils.Vault
 import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
-import com.vtop.R
 
 class NextClassWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = NextClassWidget()
 }
+
+// Helper to completely bypass Kotlin's strict null-safety compiler warnings
+private fun Any?.toSafeString(): String = this?.toString() ?: ""
 
 class NextClassWidget : GlanceAppWidget() {
 
@@ -40,30 +49,112 @@ class NextClassWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         try {
             val timetable = Vault.getTimetable(context)
+
+            val exams: List<ExamScheduleModel> = Vault.getExamSchedule(context)
             val reminders = ReminderManager.loadReminders(context)
 
             val cal = Calendar.getInstance()
-            val todayStr = SimpleDateFormat("EEEE", Locale.getDefault()).format(cal.time)
-            val todayCourses = timetable?.scheduleMap?.get(todayStr) ?: emptyList()
-
-            var targetCourse: CourseSession? = null
             val currentTimeMin = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
-
             val sdfTime = SimpleDateFormat("HH:mm", Locale.ENGLISH)
 
-            for (i in todayCourses.indices) {
-                val course = todayCourses[i]
-                try {
-                    val endStr = course.timeSlot?.split("-")?.get(1)?.trim() ?: ""
-                    val endCal = Calendar.getInstance().apply { time = sdfTime.parse(endStr)!! }
-                    val endMin = endCal.get(Calendar.HOUR_OF_DAY) * 60 + endCal.get(Calendar.MINUTE)
+            // 1. HOLIDAY & SEMESTER END CHECKS
+            val bunkCache = CalendarSync.parseBunkCache(context)
+            var blockReason: String? = null
+            bunkCache.blockedDates.forEach { (blockedCal, reason) ->
+                if (blockedCal.get(Calendar.YEAR) == cal.get(Calendar.YEAR) &&
+                    blockedCal.get(Calendar.DAY_OF_YEAR) == cal.get(Calendar.DAY_OF_YEAR)) {
+                    blockReason = reason
+                }
+            }
 
-                    if (endMin > currentTimeMin) {
-                        targetCourse = course
-                        break
+            var semesterEnded = false
+            if (bunkCache.lastInstructionalDay.isNotEmpty()) {
+                try {
+                    val endMs = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).parse(bunkCache.lastInstructionalDay)?.time ?: 0L
+                    if (cal.timeInMillis > endMs + 86400000L) { // Add 1 day padding
+                        semesterEnded = true
                     }
                 } catch (_: Exception) {}
             }
+
+            // 2. EXAM DAY LOGIC (Overrides standard timetable)
+            val dateFormats = listOf("dd-MMM-yyyy", "yyyy-MM-dd", "dd/MM/yyyy", "dd-MM-yyyy", "MMM dd, yyyy")
+            val todayExams = exams.filter { exam ->
+                val dateStr = exam.examDate.toSafeString().trim()
+                var parsedDate: Date? = null
+                for (format in dateFormats) {
+                    try {
+                        parsedDate = SimpleDateFormat(format, Locale.ENGLISH).parse(dateStr)
+                        if (parsedDate != null) break
+                    } catch (_: Exception) {}
+                }
+                if (parsedDate != null) {
+                    val examCal = Calendar.getInstance().apply { time = parsedDate }
+                    examCal.get(Calendar.YEAR) == cal.get(Calendar.YEAR) &&
+                            examCal.get(Calendar.DAY_OF_YEAR) == cal.get(Calendar.DAY_OF_YEAR)
+                } else false
+            }
+
+            var targetExam: ExamScheduleModel? = null
+            if (todayExams.isNotEmpty()) {
+                for (exam in todayExams) {
+                    val timeStr = exam.examTime.toSafeString().trim().ifEmpty { exam.reportingTime.toSafeString().trim() }
+                    if (timeStr == "-") continue
+
+                    val parts = timeStr.split("-")
+                    val endStr = parts.getOrNull(1)?.trim()?.ifEmpty { parts.getOrNull(0)?.trim() } ?: parts.getOrNull(0)?.trim() ?: ""
+
+                    if (endStr.isNotEmpty()) {
+                        try {
+                            val parsedTime = sdfTime.parse(endStr)
+                            if (parsedTime != null) {
+                                val endCal = Calendar.getInstance().apply { time = parsedTime }
+                                if (!timeStr.contains("-")) endCal.add(Calendar.HOUR_OF_DAY, 2)
+                                val endMin = endCal.get(Calendar.HOUR_OF_DAY) * 60 + endCal.get(Calendar.MINUTE)
+
+                                if (endMin > currentTimeMin) {
+                                    targetExam = exam
+                                    break
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
+
+            // 3. REGULAR CLASS LOGIC
+            val todayStr = SimpleDateFormat("EEEE", Locale.getDefault()).format(cal.time)
+            val rawCourses = timetable?.scheduleMap?.get(todayStr) ?: emptyList()
+
+            val sharedPrefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
+            val mergeLabs = sharedPrefs.getBoolean("MERGE_LABS", true)
+            val todayCourses = processAndMergeCourses(rawCourses, mergeLabs)
+
+            var targetCourse: ProcessedCourse? = null
+            if (todayExams.isEmpty()) {
+                for (i in todayCourses.indices) {
+                    val course = todayCourses[i]
+                    try {
+                        val endStr = course.mergedTimeSlot.toSafeString().split("-").getOrNull(1)?.trim() ?: ""
+                        if (endStr.isNotEmpty()) {
+                            val parsedTime = sdfTime.parse(endStr)
+                            if (parsedTime != null) {
+                                val endCal = Calendar.getInstance().apply { time = parsedTime }
+                                val endMin = endCal.get(Calendar.HOUR_OF_DAY) * 60 + endCal.get(Calendar.MINUTE)
+
+                                if (endMin > currentTimeMin) {
+                                    targetCourse = course
+                                    break
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+
+            // Freeze variables for Kotlin Smart Casting
+            val finalExam = targetExam
+            val finalCourse = targetCourse
 
             provideContent {
                 val launchIntent = Intent().apply {
@@ -71,7 +162,7 @@ class NextClassWidget : GlanceAppWidget() {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                 }
 
-                val widgetBg = ColorProvider(R.color.widget_bg)
+                val widgetBg = ColorProvider(day = Color(0xFFF4F4F5), night = Color(0xFF141414))
 
                 Box(
                     modifier = GlanceModifier
@@ -80,29 +171,31 @@ class NextClassWidget : GlanceAppWidget() {
                         .cornerRadius(24.dp)
                         .clickable(actionStartActivity(launchIntent))
                         .padding(16.dp)
-                )
-
-                {
-                    if (targetCourse != null) {
-                        val activeReminder = reminders.find { it.classId == targetCourse.classId }
-                        WidgetContent(context, targetCourse, activeReminder)
-                    } else {
-                        EmptyWidgetContent()
+                ) {
+                    when {
+                        semesterEnded -> EmptyWidgetContent("Semester Completed")
+                        todayExams.isNotEmpty() && finalExam != null -> ExamWidgetContent(context, finalExam)
+                        todayExams.isNotEmpty() && finalExam == null -> EmptyWidgetContent("All exams completed today")
+                        blockReason != null && !blockReason!!.lowercase(Locale.getDefault()).contains("exam") -> EmptyWidgetContent(blockReason!!)
+                        finalCourse != null -> {
+                            val activeReminder = reminders.find { it.classId == finalCourse.classId }
+                            ClassWidgetContent(context, finalCourse, activeReminder)
+                        }
+                        else -> EmptyWidgetContent("No more classes today")
                     }
                 }
             }
         } catch (e: Throwable) {
-            // THE DEBUG LIFESAVER: This catches the silent crash and prints it on your screen!
             provideContent {
                 Box(
                     modifier = GlanceModifier
                         .fillMaxSize()
-                        .background(ColorProvider(Color.White))
+                        .background(ColorProvider(day = Color.White, night = Color.White))
                         .padding(8.dp)
                 ) {
                     Text(
-                        text = "Crash: ${e.javaClass.simpleName}\nMsg: ${e.message}",
-                        style = TextStyle(color = ColorProvider(Color.Red), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        text = "Crash: ${e.javaClass.simpleName}\nMsg: ${e.message.toSafeString()}",
+                        style = TextStyle(color = ColorProvider(day = Color.Red, night = Color.Red), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     )
                 }
             }
@@ -110,39 +203,89 @@ class NextClassWidget : GlanceAppWidget() {
     }
 
     @Composable
-    private fun WidgetContent(
-        context: Context,
-        course: CourseSession,
-        reminder: CourseReminder?
-    ) {
-        val textPrimary = ColorProvider(R.color.widget_text_primary)
-        val textSecondary = ColorProvider(R.color.widget_text_secondary)
-        val cardBg = ColorProvider(R.color.widget_card_bg)
+    private fun ExamWidgetContent(context: Context, exam: ExamScheduleModel) {
+        val textPrimary = ColorProvider(day = Color(0xFF18181B), night = Color(0xFFFFFFFF))
+        val textSecondary = ColorProvider(day = Color(0xFF71717A), night = Color(0xFFA1A1AA))
+        val cardBg = ColorProvider(day = Color(0xFFFFFFFF), night = Color(0xFF1E1E1E))
 
-        val remBg = ColorProvider(
-            when {
-                reminder == null -> android.R.color.transparent
-                reminder.type.lowercase(Locale.getDefault()).contains("quiz") -> R.color.widget_rem_quiz_bg
-                reminder.type.lowercase(Locale.getDefault()).contains("viva") -> R.color.widget_rem_viva_bg
-                else -> R.color.widget_rem_def_bg
-            }
-        )
+        val timeStr = exam.examTime.toSafeString().trim().ifEmpty { exam.reportingTime.toSafeString().trim() }
+        val startTimeStr = formatDisplayTime(context, timeStr)
+        val diffMinutes = getMinutesUntilEvent(timeStr)
 
-        val remText = ColorProvider(
-            when {
-                reminder == null -> android.R.color.transparent
-                reminder.type.lowercase(Locale.getDefault()).contains("quiz") -> R.color.widget_rem_quiz_text
-                reminder.type.lowercase(Locale.getDefault()).contains("viva") -> R.color.widget_rem_viva_text
-                else -> R.color.widget_rem_def_text
+        val cleanLoc = exam.seatLocation.toSafeString().trim()
+        val cleanSeat = exam.seatNumber.toSafeString().trim()
+        val seatDisplay = if (cleanLoc.isNotEmpty() && cleanSeat.isNotEmpty()) "$cleanLoc - $cleanSeat" else cleanLoc.ifEmpty { cleanSeat }
+
+        Column(modifier = GlanceModifier.fillMaxSize()) {
+            Text(text = "UPCOMING EXAM • ${exam.examType.toSafeString().uppercase(Locale.getDefault())}", style = TextStyle(color = textSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold))
+            Spacer(modifier = GlanceModifier.height(8.dp))
+
+            Column(
+                modifier = GlanceModifier
+                    .fillMaxSize() // Automatically stretches to fill 4x4 or 8x8 sizes
+                    .background(cardBg)
+                    .cornerRadius(16.dp)
+                    .padding(16.dp)
+            ) {
+                Spacer(GlanceModifier.defaultWeight()) // Elastic spacing
+
+                if (diffMinutes in 0..60) {
+                    Text("Exam starts in", style = TextStyle(color = ColorProvider(day = Color(0xFFF97316), night = Color(0xFFF97316)), fontSize = 14.sp, fontWeight = FontWeight.Bold))
+                    Text(text = if (diffMinutes == 0L) "Now" else "$diffMinutes mins", style = TextStyle(color = textPrimary, fontSize = 32.sp, fontWeight = FontWeight.Bold))
+                } else if (diffMinutes < 0) {
+                    Text("Ongoing Exam", style = TextStyle(color = ColorProvider(day = Color(0xFF4ADE80), night = Color(0xFF4ADE80)), fontSize = 14.sp, fontWeight = FontWeight.Bold))
+                    Text(text = "In Progress", style = TextStyle(color = textPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold))
+                } else {
+                    Text("Starts at", style = TextStyle(color = textSecondary, fontSize = 14.sp))
+                    Text(text = startTimeStr, style = TextStyle(color = textPrimary, fontSize = 32.sp, fontWeight = FontWeight.Bold))
+                }
+
+                Spacer(modifier = GlanceModifier.defaultWeight())
+
+                Text(text = exam.courseCode.toSafeString(), style = TextStyle(color = textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold))
+                Text(text = exam.courseTitle.toSafeString(), style = TextStyle(color = textSecondary, fontSize = 14.sp))
+
+                Spacer(modifier = GlanceModifier.defaultWeight())
+
+                Row(modifier = GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = "Venue: ${exam.venue.toSafeString()}", style = TextStyle(color = textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold))
+                    if (seatDisplay.isNotEmpty()) {
+                        Spacer(modifier = GlanceModifier.width(12.dp))
+                        Text(text = "Seat: $seatDisplay", style = TextStyle(color = ColorProvider(day = Color(0xFFF97316), night = Color(0xFFF97316)), fontSize = 14.sp, fontWeight = FontWeight.Bold))
+                    }
+                }
+
+                Spacer(modifier = GlanceModifier.defaultWeight())
             }
-        )
+        }
+    }
+
+    @Composable
+    private fun ClassWidgetContent(context: Context, course: ProcessedCourse, reminder: CourseReminder?) {
+        val textPrimary = ColorProvider(day = Color(0xFF18181B), night = Color(0xFFFFFFFF))
+        val textSecondary = ColorProvider(day = Color(0xFF71717A), night = Color(0xFFA1A1AA))
+        val cardBg = ColorProvider(day = Color(0xFFFFFFFF), night = Color(0xFF1E1E1E))
+
+        val remBg = when {
+            reminder == null -> ColorProvider(day = Color.Transparent, night = Color.Transparent)
+            reminder.type.lowercase(Locale.getDefault()).contains("quiz") -> ColorProvider(day = Color(0xFFDBEAFE), night = Color(0xFF1E3A8A))
+            reminder.type.lowercase(Locale.getDefault()).contains("viva") -> ColorProvider(day = Color(0xFFF3E8FF), night = Color(0xFF4C1D95))
+            else -> ColorProvider(day = Color(0xFFFEF3C7), night = Color(0xFF78350F))
+        }
+
+        val remText = when {
+            reminder == null -> ColorProvider(day = Color.Transparent, night = Color.Transparent)
+            reminder.type.lowercase(Locale.getDefault()).contains("quiz") -> ColorProvider(day = Color(0xFF1D4ED8), night = Color(0xFF60A5FA))
+            reminder.type.lowercase(Locale.getDefault()).contains("viva") -> ColorProvider(day = Color(0xFF6D28D9), night = Color(0xFFA78BFA))
+            else -> ColorProvider(day = Color(0xFFB45309), night = Color(0xFFFCD34D))
+        }
 
         val sdfFullDate = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
         val todayDateStr = sdfFullDate.format(Calendar.getInstance().time)
         val displayDate = if (reminder != null && reminder.date != todayDateStr) {
             try {
                 val parsed = sdfFullDate.parse(reminder.date)
-                SimpleDateFormat("d/M", Locale.ENGLISH).format(parsed!!)
+                if (parsed != null) SimpleDateFormat("d/M", Locale.ENGLISH).format(parsed) else reminder.date
             } catch(_: Exception) { reminder.date }
         } else "today"
 
@@ -152,68 +295,76 @@ class NextClassWidget : GlanceAppWidget() {
             "UPCOMING CLASS"
         }
 
-        val startTimeStr = formatDisplayTime(context, course.timeSlot)
-        val diffMinutes = getMinutesUntilClass(course.timeSlot)
+        val startTimeStr = formatDisplayTime(context, course.mergedTimeSlot)
+        val diffMinutes = getMinutesUntilEvent(course.mergedTimeSlot)
 
         Column(modifier = GlanceModifier.fillMaxSize()) {
             Text(text = headerText, style = TextStyle(color = textSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold))
-            Spacer(modifier = GlanceModifier.height(10.dp))
+            Spacer(modifier = GlanceModifier.height(8.dp))
 
             Column(
                 modifier = GlanceModifier
-                    .fillMaxWidth()
+                    .fillMaxSize() // Automatically stretches
                     .background(cardBg)
                     .cornerRadius(16.dp)
-                    .padding(12.dp)
+                    .padding(16.dp)
             ) {
+                Spacer(GlanceModifier.defaultWeight())
+
                 if (diffMinutes in 0..35) {
-                    Text("Class starts in", style = TextStyle(color = ColorProvider(Color(0xFFF87171)), fontSize = 12.sp, fontWeight = FontWeight.Bold))
-                    Text(text = if (diffMinutes == 0L) "Now" else "$diffMinutes mins", style = TextStyle(color = textPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold))
+                    Text("Class starts in", style = TextStyle(color = ColorProvider(day = Color(0xFFF87171), night = Color(0xFFF87171)), fontSize = 14.sp, fontWeight = FontWeight.Bold))
+                    Text(text = if (diffMinutes == 0L) "Now" else "$diffMinutes mins", style = TextStyle(color = textPrimary, fontSize = 32.sp, fontWeight = FontWeight.Bold))
                 } else if (diffMinutes < 0) {
-                    Text("Ongoing class", style = TextStyle(color = ColorProvider(Color(0xFF4ADE80)), fontSize = 12.sp, fontWeight = FontWeight.Bold))
-                    Text(text = "Started", style = TextStyle(color = textPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold))
+                    Text("Ongoing class", style = TextStyle(color = ColorProvider(day = Color(0xFF4ADE80), night = Color(0xFF4ADE80)), fontSize = 14.sp, fontWeight = FontWeight.Bold))
+                    Text(text = "Started", style = TextStyle(color = textPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold))
                 } else {
-                    Text("Upcoming class at", style = TextStyle(color = textSecondary, fontSize = 12.sp))
-                    Text(text = startTimeStr, style = TextStyle(color = textPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold))
+                    Text("Upcoming class at", style = TextStyle(color = textSecondary, fontSize = 14.sp))
+                    Text(text = startTimeStr, style = TextStyle(color = textPrimary, fontSize = 32.sp, fontWeight = FontWeight.Bold))
                 }
 
-                Spacer(modifier = GlanceModifier.height(8.dp))
-                Text(course.courseCode ?: "", style = TextStyle(color = textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold))
-                Text(course.courseName ?: "", style = TextStyle(color = textSecondary, fontSize = 12.sp))
-                Spacer(modifier = GlanceModifier.height(10.dp))
+                Spacer(modifier = GlanceModifier.defaultWeight())
+
+                Text(text = course.courseCode.toSafeString(), style = TextStyle(color = textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold))
+                Text(text = course.courseName.toSafeString(), style = TextStyle(color = textSecondary, fontSize = 14.sp))
+
+                Spacer(modifier = GlanceModifier.defaultWeight())
 
                 Row(modifier = GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(course.venue ?: "", style = TextStyle(color = textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold))
+                    Text(text = course.venue.toSafeString(), style = TextStyle(color = textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold))
                     Spacer(modifier = GlanceModifier.width(12.dp))
-                    Text(course.slot ?: "", style = TextStyle(color = textSecondary, fontSize = 12.sp, fontWeight = FontWeight.Bold))
+                    Text(text = course.mergedSlot.toSafeString(), style = TextStyle(color = textSecondary, fontSize = 14.sp, fontWeight = FontWeight.Bold))
                 }
 
                 if (reminder != null) {
-                    Spacer(modifier = GlanceModifier.height(10.dp))
+                    Spacer(modifier = GlanceModifier.height(12.dp))
                     Text(
                         text = " • ${reminder.type} " + (if (displayDate == "today") "today" else "on $displayDate") + " ",
-                        style = TextStyle(color = remText, fontSize = 12.sp, fontWeight = FontWeight.Bold),
+                        style = TextStyle(color = remText, fontSize = 14.sp, fontWeight = FontWeight.Bold),
                         modifier = GlanceModifier.background(remBg).cornerRadius(4.dp).padding(4.dp)
                     )
                 }
+
+                Spacer(GlanceModifier.defaultWeight())
             }
         }
     }
 
     @Composable
-    private fun EmptyWidgetContent() {
+    private fun EmptyWidgetContent(message: String) {
+        val textPrimary = ColorProvider(day = Color(0xFF18181B), night = Color(0xFFFFFFFF))
         Column(
             modifier = GlanceModifier.fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("No more classes today", style = TextStyle(color = ColorProvider(R.color.widget_text_primary), fontSize = 14.sp, fontWeight = FontWeight.Bold))
+            Text(message, style = TextStyle(color = textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold))
         }
     }
 
     private fun formatDisplayTime(context: Context, timeSlot: String?): String {
-        if (timeSlot.isNullOrEmpty()) return ""
-        val startStr = timeSlot.split("-")[0].trim()
+        val safeTimeSlot = timeSlot.toSafeString()
+        if (safeTimeSlot.isEmpty()) return ""
+        val startStr = safeTimeSlot.split("-").firstOrNull()?.trim() ?: return ""
         return try {
             val inputFormat = SimpleDateFormat(if (startStr.contains(Regex("[a-zA-Z]"))) "hh:mm a" else "HH:mm", Locale.ENGLISH)
             val date = inputFormat.parse(startStr) ?: return startStr
@@ -234,10 +385,11 @@ class NextClassWidget : GlanceAppWidget() {
         } catch (_: Exception) { startStr }
     }
 
-    private fun getMinutesUntilClass(timeSlot: String?): Long {
-        if (timeSlot.isNullOrEmpty()) return 999L
-        val startStr = timeSlot.split("-")[0].trim()
-        try {
+    private fun getMinutesUntilEvent(timeSlot: String?): Long {
+        val safeTimeSlot = timeSlot.toSafeString()
+        if (safeTimeSlot.isEmpty()) return 999L
+        val startStr = safeTimeSlot.split("-").firstOrNull()?.trim() ?: return 999L
+        return try {
             val sdf = SimpleDateFormat(if (startStr.contains(Regex("[a-zA-Z]"))) "hh:mm a" else "HH:mm", Locale.ENGLISH)
             val startTime = sdf.parse(startStr) ?: return 999L
             val now = Calendar.getInstance()
@@ -248,7 +400,7 @@ class NextClassWidget : GlanceAppWidget() {
                 set(Calendar.DAY_OF_MONTH, now.get(Calendar.DAY_OF_MONTH))
             }
             val diffMillis = startCal.timeInMillis - now.timeInMillis
-            return TimeUnit.MILLISECONDS.toMinutes(diffMillis)
-        } catch(_: Exception) { return 999L }
+            TimeUnit.MILLISECONDS.toMinutes(diffMillis)
+        } catch(_: Exception) { 999L }
     }
 }

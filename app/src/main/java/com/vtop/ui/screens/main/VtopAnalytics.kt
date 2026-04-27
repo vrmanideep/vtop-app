@@ -32,7 +32,6 @@ fun VtopAnalyticsTab(
 ) {
     val scrollState = rememberScrollState()
 
-    // Helper to normalize course types for display
     fun formatCourseType(type: String?): String {
         val t = type?.uppercase() ?: ""
         return when {
@@ -68,101 +67,125 @@ fun VtopAnalyticsTab(
                 .sortedBy { it.second }
                 .take(3)
 
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.1f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(20.dp)) {
-                    // Heading: Normal weight/style as requested
-                    Text("The Danger Zone", color = MaterialTheme.colorScheme.error, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    Text("Courses closest to the 75% threshold", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                    Spacer(Modifier.height(16.dp))
+            if (dangerZone.isNotEmpty()) {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.1f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(20.dp)) {
+                        Text("The Danger Zone", color = MaterialTheme.colorScheme.error, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text("Courses closest to the 75% threshold", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                        Spacer(Modifier.height(16.dp))
 
-                    dangerZone.forEach { (course, percentage) ->
-                        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                // Requirement: Show coursecode - type (Lab/Theory)
+                        dangerZone.forEach { (course, percentage) ->
+                            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "${course.courseCode} - ${formatCourseType(course.courseType)}",
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                    Text(course.courseName ?: "", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
                                 Text(
-                                    text = "${course.courseCode} - ${formatCourseType(course.courseType)}",
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
+                                    "$percentage%",
+                                    color = if (percentage < 75) MaterialTheme.colorScheme.error else if (percentage < 80) Color(0xFFFFC107) else MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 18.sp, fontWeight = FontWeight.Bold
                                 )
-                                Text(course.courseName ?: "", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                            Text(
-                                "$percentage%",
-                                color = if (percentage < 75) MaterialTheme.colorScheme.error else if (percentage < 80) Color(0xFFFFC107) else MaterialTheme.colorScheme.onSurface,
-                                fontSize = 18.sp, fontWeight = FontWeight.Bold
-                            )
+                            if (course != dangerZone.last().first) HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
                         }
-                        if (course != dangerZone.last().first) HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
                     }
                 }
             }
         }
 
         if (historyData.isNotEmpty()) {
-            // Requirement: Graph including S,A,B,C,D,E,P,F,N in that exact order
             val gradeOrder = listOf("S", "A", "B", "C", "D", "E", "P", "F", "N")
+
+            // STRICT FILTERING: Only grades with a count > 0 will exist here.
             val gradeCounts = remember(historyData) {
-                gradeOrder.map { grade ->
-                    grade to historyData.count { it.grade?.trim()?.uppercase() == grade }
+                gradeOrder.mapNotNull { grade ->
+                    val count = historyData.count { it.grade?.trim()?.uppercase() == grade }
+                    if (count > 0) grade to count else null
                 }
             }
 
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.1f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(20.dp)) {
-                    // Heading: Normal weight/style as requested
-                    Text("Grade Distribution", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    Text("Historical performance across all semesters", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                    Spacer(Modifier.height(32.dp))
+            if (gradeCounts.isNotEmpty()) {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.1f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(20.dp)) {
+                        Text("Grade Distribution", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text("Historical performance across all semesters", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                        Spacer(Modifier.height(32.dp))
 
-                    val maxCount = gradeCounts.maxOf { it.second }.coerceAtLeast(1)
+                        val maxCount = gradeCounts.maxOf { it.second }.coerceAtLeast(1)
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(150.dp)
-                            .padding(horizontal = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.Bottom
-                    ) {
-                        gradeCounts.forEach { (grade, count) ->
-                            val barHeightRatio = count.toFloat() / maxCount.toFloat()
-                            val barColor = when (grade) {
-                                "S" -> Color(0xFF4CAF50)
-                                "A" -> Color(0xFF2196F3)
-                                "B" -> Color(0xFF9C27B0)
-                                "P" -> Color(0xFF00BCD4)
-                                "F", "N" -> MaterialTheme.colorScheme.error
-                                else -> Color(0xFFFFC107) // C, D, E
-                            }
-
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Bottom,
-                                modifier = Modifier.fillMaxHeight().weight(1f)
-                            ) {
-                                if (count > 0) {
-                                    Text(count.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(220.dp) // Generous, stable fixed height
+                                .padding(horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            gradeCounts.forEach { (grade, count) ->
+                                val barColor = when (grade) {
+                                    "S" -> Color(0xFF4CAF50)
+                                    "A" -> Color(0xFF2196F3)
+                                    "B" -> Color(0xFF9C27B0)
+                                    "P" -> Color(0xFF00BCD4)
+                                    "F", "N" -> MaterialTheme.colorScheme.error
+                                    else -> Color(0xFFFFC107)
                                 }
-                                Spacer(Modifier.height(4.dp))
-                                Box(
+
+                                // Proportional math for perfect rendering
+                                val barHeightRatio = count.toFloat() / maxCount.toFloat()
+                                val effectiveRatio = barHeightRatio.coerceAtLeast(0.05f)
+                                val spaceRatio = 1f - effectiveRatio
+
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier
-                                        .width(20.dp)
-                                        .fillMaxHeight(barHeightRatio.coerceAtLeast(0.05f)) // Minimum height so labels align
-                                        .background(barColor.copy(alpha = if(count > 0) 1f else 0.1f), RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
-                                )
-                                Spacer(Modifier.height(8.dp))
-                                Text(grade, color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        .fillMaxHeight()
+                                        .weight(1f) // Distributes horizontal space perfectly
+                                ) {
+                                    // 1. The Dynamic Drawing Area
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier
+                                            .weight(1f) // Takes up all space EXCEPT the bottom label
+                                            .fillMaxWidth()
+                                    ) {
+                                        // Invisible spacer pushes the bar down perfectly
+                                        if (spaceRatio > 0f) {
+                                            Spacer(modifier = Modifier.weight(spaceRatio))
+                                        }
+
+                                        // The Count number (floats right above the bar)
+                                        Text(count.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Spacer(Modifier.height(4.dp))
+
+                                        // The Bar itself
+                                        Box(
+                                            modifier = Modifier
+                                                .width(28.dp)
+                                                .weight(effectiveRatio)
+                                                .background(barColor, RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                                        )
+                                    }
+
+                                    // 2. The Bottom Label Area (Isolated to prevent clipping)
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(grade, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Black)
+                                    Spacer(Modifier.height(4.dp))
+                                }
                             }
                         }
                     }

@@ -1,5 +1,6 @@
-package com.vtop.ui.core // Use your actual package
+package com.vtop.ui.core
 
+import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,9 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import android.util.Log
 import kotlinx.coroutines.delay
-import com.vtop.ui.theme.AppColors
 
 @Composable
 fun OtpForm(onVerify: (String) -> Unit, onCancel: () -> Unit) {
@@ -42,20 +41,18 @@ fun OtpForm(onVerify: (String) -> Unit, onCancel: () -> Unit) {
         focusRequester.requestFocus()
     }
 
-    // THE NUCLEAR OPTION: Native Dialog
     Dialog(
         onDismissRequest = onCancel,
         properties = DialogProperties(
-            usePlatformDefaultWidth = false, // Forces it to take the full screen width
+            usePlatformDefaultWidth = false,
             dismissOnBackPress = true,
             dismissOnClickOutside = false
         )
     ) {
-        // Your exact same UI code below, now guaranteed to float above the app
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.85f)),
+                .background(Color.Black.copy(alpha = 0.65f)), // Standard modal dimming
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -63,8 +60,8 @@ fun OtpForm(onVerify: (String) -> Unit, onCancel: () -> Unit) {
                     .fillMaxWidth(0.9f)
                     .padding(16.dp),
                 shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF141414)),
-                border = BorderStroke(1.dp, AppColors.glassBorder)
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
             ) {
                 Column(
                     modifier = Modifier.padding(32.dp),
@@ -87,7 +84,7 @@ fun OtpForm(onVerify: (String) -> Unit, onCancel: () -> Unit) {
 
                     Spacer(Modifier.height(24.dp))
 
-                    Text("Verification Required", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                    Text("Verification Required", color = MaterialTheme.colorScheme.onSurface, fontSize = 22.sp, fontWeight = FontWeight.Black)
                     Text(
                         text = "A new network was detected. Enter the 6-digit code sent to your VIT email.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -131,17 +128,17 @@ fun OtpForm(onVerify: (String) -> Unit, onCancel: () -> Unit) {
                                             .weight(1f)
                                             .aspectRatio(0.8f)
                                             .background(
-                                                if (isFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else Color(0xFF1E1E1E),
+                                                if (isFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                                 RoundedCornerShape(8.dp)
                                             )
                                             .border(
                                                 1.dp,
-                                                if (isFocused) MaterialTheme.colorScheme.primary else AppColors.glassBorder,
+                                                if (isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
                                                 RoundedCornerShape(8.dp)
                                             ),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        Text(char, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                                        Text(char, color = MaterialTheme.colorScheme.onSurface, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -163,7 +160,7 @@ fun OtpForm(onVerify: (String) -> Unit, onCancel: () -> Unit) {
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primary,
-                            disabledContainerColor = Color(0xFF2C2C2C)
+                            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant
                         )
                     ) {
                         if (isVerifying) {
@@ -175,7 +172,7 @@ fun OtpForm(onVerify: (String) -> Unit, onCancel: () -> Unit) {
                         } else {
                             Text(
                                 "VERIFY SESSION",
-                                color = if (otpCode.length == 6) MaterialTheme.colorScheme.onPrimary else Color.Gray,
+                                color = if (otpCode.length == 6) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontWeight = FontWeight.ExtraBold,
                                 letterSpacing = 1.sp
                             )
@@ -196,8 +193,6 @@ fun OtpForm(onVerify: (String) -> Unit, onCancel: () -> Unit) {
 
                     if (isVerifying) {
                         LaunchedEffect(Unit) {
-                            // Safety net: if parent doesn't dismiss the dialog (resolver cleared) within a short window,
-                            // re-enable input so user isn't stuck.
                             delay(8_000)
                             if (isVerifying) {
                                 Log.w(TAG, "Still verifying after 8s (dialog not dismissed). Re-enabling input.")

@@ -1,55 +1,96 @@
 {
-    "blocked_dates": {
-        "22-02": "Vitopia- 2026",
-        "23-02": "Vitopia- 2026",
-        "24-02": "Vitopia- 2026",
-        "25-02": "Post-Vitopia- 2026",
-        "01-03": "Sunday",
-        "02-03": "Monday",
-        "04-03": "Holi",
-        "08-03": "Sunday",
-        "09-03": "Monday",
-        "15-03": "Sunday",
-        "16-03": "Monday",
-        "19-03": "Ugadi",
-        "21-03": "Eid-ul-Fitr / Ramzan",
-        "22-03": "Sunday",
-        "23-03": "CAT-2 Exams",
-        "24-03": "CAT-2 Exams",
-        "25-03": "CAT-2 Exams",
-        "26-03": "CAT-2 Exams",
-        "27-03": "CAT-2 Exams",
-        "28-03": "CAT-2 Exams",
-        "29-03": "Sunday (CAT-2)",
-        "30-03": "CAT-2 Exams",
-        "03-04": "Good Friday",
-        "05-04": "Sunday",
-        "06-04": "Monday",
-        "12-04": "Sunday",
-        "13-04": "Monday",
-        "14-04": "Dr. B R Ambedkar Jayanti",
-        "19-04": "Sunday",
-        "20-04": "Monday",
-        "26-04": "Sunday",
-        "27-04": "Monday",
-        "01-05": "May Day",
-        "03-05": "Sunday",
-        "04-05": "FAT Exams",
-        "05-05": "FAT Exams",
-        "06-05": "FAT Exams",
-        "07-05": "FAT Exams",
-        "08-05": "FAT Exams",
-        "09-05": "FAT Exams",
-        "10-05": "Sunday (FAT)",
-        "11-05": "FAT Exams",
-        "12-05": "FAT Exams",
-        "13-05": "FAT Exams",
-        "14-05": "FAT Exams",
-        "15-05": "FAT Exams",
-        "16-05": "FAT Exams",
-        "17-05": "Sunday (FAT)",
-        "18-05": "FAT Exams",
-        "19-05": "FAT Exams",
-        "20-05": "Commencement of Long and Short- 1 Summer Semesters"
+    "Winter Semester 2025-26": {
+        "id": "WIN 2025-26",
+        "is_current": "true",
+        "start_date": "2026-01-05",
+        "week_off": [
+            "Sunday",
+            "Monday"
+        ],
+        "last_instructional_day": "2026-05-02",
+        "holidays": {
+            "2026-02-22": "Vitopia- 2026",
+            "2026-02-23": "Vitopia- 2026",
+            "2026-02-24": "Vitopia- 2026",
+            "2026-02-25": "Post-Vitopia- 2026",
+            "2026-03-04": "Holi",
+            "2026-03-19": "Ugadi",
+            "2026-03-21": "Eid-ul-Fitr / Ramzan",
+            "2026-04-03": "Good Friday",
+            "2026-04-14": "Dr. B R Ambedkar Jayanti",
+            "2026-05-01": "May Day"
+        },
+        "exams": {
+            "CAT-1": [],
+            "CAT-2": [
+                "2026-03-23", "2026-03-24", "2026-03-25",
+                "2026-03-26", "2026-03-27", "2026-03-28", "2026-03-30"
+            ],
+            "FAT": [
+                "2026-05-04", "2026-05-05", "2026-05-06",
+                "2026-05-07", "2026-05-08", "2026-05-09",
+                "2026-05-11", "2026-05-12", "2026-05-13",
+                "2026-05-14", "2026-05-15", "2026-05-16",
+                "2026-05-18", "2026-05-19"
+            ]
+        }
+    },
+    "Long Summer 2025-26": {
+        "id": "LSUM 2025-26",
+        "is_current": "false",
+        "start_date": "2026-05-20",
+        "week_off": [
+            "Sunday"
+        ],
+        "last_instructional_day": "2026-07-13",
+        "holidays": {
+            "2026-05-27": "Eid-ul-Adha / Bakrid",
+            "2026-06-26": "Muharram"
+        },
+        "exams": {
+            "CAT": [
+                "2026-06-13", "2026-06-14", "2026-06-15",
+                "2026-06-16", "2026-06-17", "2026-06-18"
+            ],
+            "FAT": [
+                "2026-07-15", "2026-07-16", "2026-07-17",
+                "2026-07-18", "2026-07-19", "2026-07-20"
+            ]
+        }
+    },
+    "Short Summer-I 2025-26": {
+        "id": "SSUM1 2025-26",
+        "is_current": "false",
+        "start_date": "2026-05-20",
+        "week_off": [
+            "Sunday"
+        ],
+        "last_instructional_day": "2026-06-12",
+        "holidays": {
+            "2026-05-27": "Eid-ul-Adha / Bakrid"
+        },
+        "exams": {
+            "FAT": [
+                "2026-06-15", "2026-06-16", "2026-06-17", "2026-06-18"
+            ]
+        }
+    },
+    "Short Summer-II 2025-26": {
+        "id": "SSUM2 2025-26",
+        "is_current": "false",
+        "start_date": "2026-06-22",
+        "week_off": [
+            "Sunday"
+        ],
+        "last_instructional_day": "2026-07-14",
+        "holidays": {
+            "2026-06-26": "Muharram"
+        },
+        "exams": {
+            "FAT": [
+                "2026-07-16", "2026-07-17", "2026-07-18",
+                "2026-07-19", "2026-07-20"
+            ]
+        }
     }
 }
