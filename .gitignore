@@ -1,19 +1,50 @@
-*.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
+# Gradle files
+.gradle/
+build/
+*/build/
+
+# Local configuration file (sdk path, etc)
 local.properties
-# Keystore files
+
+# Android Studio / IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Android Studio Profiler Captures
+captures/
+*.hprof
+
+# External native build folder generated in Android Studio
+.externalNativeBuild/
+.cxx/
+
+# NDK
+obj/
+
+# Build outputs
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+
+# Sensitive / Keystore files (NEVER commit production keystores!)
 *.jks
 *.keystore
-vtop_key.jks
+
+# Mac OS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows specific
+ehthumbs.db
+Thumbs.db
+
+# Google Services (Optional: Uncomment if you use Firebase/Google Services and want to keep it private)
+ google-services.json
