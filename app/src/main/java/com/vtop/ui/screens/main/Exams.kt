@@ -10,9 +10,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,6 +24,16 @@ import com.vtop.models.ExamScheduleModel
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.*
+import com.composables.icons.lucide.*
+
+// Extracts a safe parsable time, falling back to reporting time or a default to prevent ParseExceptions
+private fun getSafeStartTime(exam: ExamScheduleModel): String {
+    val eTime = exam.examTime.trim()
+    if (eTime.isNotBlank() && eTime != "-") return eTime.split("-")[0].trim()
+    val rTime = exam.reportingTime.trim()
+    if (rTime.isNotBlank() && rTime != "-") return rTime.split("-")[0].trim()
+    return "12:00 AM"
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("NewApi")
@@ -38,7 +45,7 @@ fun Exams(exams: List<ExamScheduleModel>) {
     if (exams.isEmpty()) {
         Box(Modifier.fillMaxSize().padding(bottom = 80.dp), Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Icon(Lucide.CalendarDays, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(16.dp))
                 Text("No exams found for this semester", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
@@ -69,17 +76,21 @@ private fun ExamListScreen(exams: List<ExamScheduleModel>, onExamClick: (ExamSch
         while (true) { delay(60000); currentTime = Date() }
     }
 
+    // Safely find the next exam only if it actually has a valid scheduled date from VTOP
     val nextExam = remember(exams, currentTime) {
-        exams.mapNotNull { exam ->
-            try {
-                val date = sdfFull.parse("${exam.examDate} ${exam.examTime.split("-")[0].trim()}")
-                if (date != null && date.after(currentTime)) Pair(exam, date) else null
-            } catch (_: Exception) { null }
-        }.minByOrNull { it.second }?.first
+        exams.filter { it.examDate.isNotBlank() && it.examDate != "-" }
+            .mapNotNull { exam ->
+                try {
+                    val date = sdfFull.parse("${exam.examDate} ${getSafeStartTime(exam)}")
+                    if (date != null && date.after(currentTime)) Pair(exam, date) else null
+                } catch (_: Exception) { null }
+            }.minByOrNull { it.second }?.first
     }
 
+    // Only flag a clash if the exam has a genuine date and time assigned
     val clashingExams = remember(exams) {
-        exams.groupBy { "${it.examDate} ${it.examTime.split("-")[0].trim()}" }
+        exams.filter { it.examDate.isNotBlank() && it.examDate != "-" && getSafeStartTime(it) != "12:00 AM" }
+            .groupBy { "${it.examDate} ${getSafeStartTime(it)}" }
             .filter { it.value.size > 1 }.flatMap { it.value }.toSet()
     }
 
@@ -123,7 +134,7 @@ private fun ExamListScreen(exams: List<ExamScheduleModel>, onExamClick: (ExamSch
             if (filteredExams.isEmpty()) {
                 item {
                     Column(modifier = Modifier.fillMaxWidth().padding(top = 60.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.DateRange, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), modifier = Modifier.size(64.dp))
+                        Icon(Lucide.CalendarDays, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), modifier = Modifier.size(64.dp))
                         Spacer(Modifier.height(16.dp))
                         Text("No exams found", color = MaterialTheme.colorScheme.onBackground, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     }
@@ -138,14 +149,24 @@ private fun ExamListScreen(exams: List<ExamScheduleModel>, onExamClick: (ExamSch
                     }
                 }
                 items(filteredExams) { exam ->
-                    val targetDate = sdfFull.parse("${exam.examDate} ${exam.examTime.split("-")[0].trim()}") ?: currentTime
-                    val diffDays = ((targetDate.time - currentTime.time) / (1000 * 60 * 60 * 24)).toInt()
-                    val urgencyColor = when {
-                        diffDays < 0 -> Color.Transparent
-                        diffDays <= 3 -> Color(0xFFF87171)
-                        diffDays <= 7 -> Color(0xFF60A5FA)
-                        else -> Color.Transparent
+                    val hasValidDate = exam.examDate.isNotBlank() && exam.examDate != "-"
+
+                    val urgencyColor = if (!hasValidDate) {
+                        Color.Transparent
+                    } else {
+                        val targetDate = try {
+                            sdfFull.parse("${exam.examDate} ${getSafeStartTime(exam)}") ?: currentTime
+                        } catch (e: Exception) { currentTime }
+
+                        val diffDays = ((targetDate.time - currentTime.time) / (1000 * 60 * 60 * 24)).toInt()
+                        when {
+                            diffDays < 0 -> Color.Transparent
+                            diffDays <= 3 -> Color(0xFFF59E0B) // Swapped to a cleaner Amber/Orange
+                            diffDays <= 7 -> Color(0xFF60A5FA)
+                            else -> Color.Transparent
+                        }
                     }
+
                     StandardExamCard(exam = exam, urgencyColor = urgencyColor, isClashing = clashingExams.contains(exam), onClick = { onExamClick(exam) })
                 }
             }
@@ -156,7 +177,7 @@ private fun ExamListScreen(exams: List<ExamScheduleModel>, onExamClick: (ExamSch
 @Composable
 private fun NextUpCard(exam: ExamScheduleModel, currentTime: Date, onClick: () -> Unit) {
     val sdfFull = remember { SimpleDateFormat("dd-MMM-yyyy hh:mm a", Locale.ENGLISH) }
-    val targetDate = remember(exam) { try { sdfFull.parse("${exam.examDate} ${exam.examTime.split("-")[0].trim()}") } catch(e:Exception){ Date() } } ?: Date()
+    val targetDate = remember(exam) { try { sdfFull.parse("${exam.examDate} ${getSafeStartTime(exam)}") } catch(e:Exception){ Date() } } ?: Date()
     val diffMs = maxOf(0L, targetDate.time - currentTime.time)
     val days = diffMs / (1000 * 60 * 60 * 24)
     val hours = (diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
@@ -217,7 +238,7 @@ private fun StandardExamCard(exam: ExamScheduleModel, urgencyColor: Color, isCla
                             modifier = Modifier.border(1.dp, Color(0xFF60A5FA).copy(alpha = 0.5f), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Warning, null, tint = Color(0xFF60A5FA), modifier = Modifier.size(12.dp))
+                            Icon(Lucide.TriangleAlert, null, tint = Color(0xFF60A5FA), modifier = Modifier.size(12.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("clash", color = Color(0xFF60A5FA), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         }
@@ -234,7 +255,7 @@ private fun ExamDetailsGrid(exam: ExamScheduleModel) {
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(modifier = Modifier.fillMaxWidth()) {
             DetailBlock(label = "DATE", value = exam.examDate, modifier = Modifier.weight(1f))
-            DetailBlock(label = "TIME", value = exam.examTime.split("-")[0].trim(), modifier = Modifier.weight(1f))
+            DetailBlock(label = "TIME", value = getSafeStartTime(exam), modifier = Modifier.weight(1f))
         }
         Row(modifier = Modifier.fillMaxWidth()) {
             DetailBlock(label = "VENUE", value = exam.venue, modifier = Modifier.weight(1f))

@@ -155,12 +155,17 @@ public class Vault {
     public static void saveExamSchedule(Context context, List<ExamScheduleModel> exams) {
         context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE).edit().putString(KEY_EXAMS, new Gson().toJson(exams)).commit();
     }
+
     public static List<ExamScheduleModel> getExamSchedule(Context context) {
         String json = context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE).getString(KEY_EXAMS, "[]");
         try {
             List<ExamScheduleModel> list = new Gson().fromJson(json, new TypeToken<ArrayList<ExamScheduleModel>>(){}.getType());
             return list != null ? list : new ArrayList<>();
-        } catch (Exception e) { return new ArrayList<>(); }
+        } catch (Exception e) {
+            // THE FIX: If VTOP changes the schema, clear the corrupted data to prevent persistent crashing
+            context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE).edit().remove(KEY_EXAMS).apply();
+            return new ArrayList<>();
+        }
     }
 
     @SuppressLint("ApplySharedPref")

@@ -134,7 +134,6 @@ fun VtopPortalScreen(
                             setSupportMultipleWindows(true)
                         }
 
-                        // THE FIX: Use OkHttp to bypass the SSL block and save natively
                         setDownloadListener { url, _, contentDisposition, mimeType, _ ->
                             val fileName = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimeType)
                             Toast.makeText(context, "Downloading $fileName...", Toast.LENGTH_SHORT).show()
@@ -146,12 +145,10 @@ fun VtopPortalScreen(
                                         .addHeader("Referer", VTOP_BASE)
                                         .build()
 
-                                    // vtopClient already holds your session cookies and SSL bypass
                                     val response = vtopClient.client.newCall(request).execute()
                                     val bytes = response.body?.bytes()
 
                                     if (response.isSuccessful && bytes != null) {
-                                        // Save to Public Downloads folder (Android 10+)
                                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
                                             val resolver = context.contentResolver
                                             val values = android.content.ContentValues().apply {
@@ -162,7 +159,6 @@ fun VtopPortalScreen(
                                             val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                                             uri?.let { resolver.openOutputStream(it)?.use { out -> out.write(bytes) } }
                                         } else {
-                                            // Fallback for older Androids (Saves to App's private Download folder to avoid permission crashes)
                                             val dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)
                                             java.io.File(dir, fileName).writeBytes(bytes)
                                         }
@@ -231,7 +227,8 @@ fun VtopPortalScreen(
                                 else if (url?.contains("content") == true) {
                                     pageTitle = view.title?.take(30) ?: "VTOP Dashboard"
                                 }
-                                else if (url?.contains(VTOP_LOGIN) == true || url?.contains("securityOtpPending") == true) {
+                                // THE FIX: Ensure we ONLY auto-login on the bare login page, NOT when an OTP is pending
+                                else if (url?.endsWith("vtop/login") == true) {
                                     scope.launch { forceLogin() }
                                 }
                             }

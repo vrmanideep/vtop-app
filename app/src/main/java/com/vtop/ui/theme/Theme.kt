@@ -21,13 +21,12 @@ val VtopYellow = Color(0xFFF59E0B)
 val VtopRed = Color(0xFFC91818)
 val VtopPurple = Color(0xFF8A13DD)
 
-// The predefined list of accent colors users can pick from
 val AccentColors = listOf(
-    VtopPrimaryBlue,   // Original Blue
-    Color(0xFF10B981), // Emerald Green
-    Color(0xFFE11D48), // Crimson Red
-    Color(0xFF8B5CF6), // Royal Purple
-    Color(0xFFF59E0B)  // Sunset Amber
+    VtopPrimaryBlue,
+    Color(0xFF10B981),
+    Color(0xFFE11D48),
+    Color(0xFF8B5CF6),
+    Color(0xFFF59E0B)
 )
 
 val CoursePalette = listOf(VtopPrimaryBlue, VtopGreen, VtopYellow, VtopRed, VtopPurple)
@@ -35,8 +34,8 @@ val CoursePalette = listOf(VtopPrimaryBlue, VtopGreen, VtopYellow, VtopRed, Vtop
 // --- STATE MANAGER ---
 object ThemeManager {
     var themeMode = mutableStateOf(AppThemeMode.SYSTEM)
-    var useDynamicColor = mutableStateOf(true) // Idea 2
-    var customAccent = mutableStateOf(VtopPrimaryBlue) // Idea 3
+    var useDynamicColor = mutableStateOf(true)
+    var customAccent = mutableStateOf(VtopPrimaryBlue)
 }
 
 interface AuthActionCallback {
@@ -46,9 +45,10 @@ interface AuthActionCallback {
 
 enum class AuthState { FORM, LOADING_SEMESTERS, SELECT_SEMESTER, DOWNLOADING_DATA, OTP }
 enum class DockPosition { TOP, BOTTOM, LEFT, RIGHT }
+// REMOVED AMOLED enum
 enum class AppThemeMode { SYSTEM, LIGHT, DARK }
 
-// --- DARK THEME ---
+// --- DARK THEME (Base) ---
 private val DarkColors = darkColorScheme(
     background = VtopBlack,
     surface = VtopBlack,
@@ -60,7 +60,7 @@ private val DarkColors = darkColorScheme(
     error = VtopRed
 )
 
-// --- LIGHT THEME ---
+// --- LIGHT THEME (Base) ---
 private val LightColors = lightColorScheme(
     background = Color(0xFFF3F4F6),
     surface = VtopWhite,
@@ -73,8 +73,15 @@ private val LightColors = lightColorScheme(
 )
 
 object AppColors {
-    val glassBg: Color @Composable get() = if (isSystemInDarkTheme()) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.05f)
-    val glassBorder: Color @Composable get() = if (isSystemInDarkTheme()) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.1f)
+    private val isDark: Boolean
+        @Composable get() = when (ThemeManager.themeMode.value) {
+            AppThemeMode.DARK -> true
+            AppThemeMode.LIGHT -> false
+            AppThemeMode.SYSTEM -> isSystemInDarkTheme()
+        }
+
+    val glassBg: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.05f)
+    val glassBorder: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.1f)
     val success: Color = VtopGreen
     val danger: Color = VtopRed
     val warning: Color = VtopYellow
@@ -94,19 +101,34 @@ fun AppTheme(
         AppThemeMode.SYSTEM -> isSystemInDarkTheme()
     }
 
-    val colorScheme = when {
-        // Dynamic Color (Android 12+)
+    val baseColorScheme = when {
         useDynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
-        // Fallback to custom accent colors
         darkTheme -> DarkColors.copy(primary = customAccent)
         else -> LightColors.copy(primary = customAccent)
     }
 
+    // Use 'remember' so we don't recreate the entire color scheme 60 times a second!
+    val finalColorScheme = androidx.compose.runtime.remember(darkTheme, baseColorScheme) {
+        if (darkTheme) {
+            baseColorScheme.copy(
+                background = Color.Black,
+                surface = Color.Black,
+                surfaceVariant = Color(0xFF0A0A0A)
+            )
+        } else {
+            baseColorScheme
+        }
+    }
+
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = finalColorScheme,
+        content = content
+    )
+    MaterialTheme(
+        colorScheme = finalColorScheme,
         content = content
     )
 }

@@ -16,7 +16,7 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = 1
-        versionName = "1.0.0"
+        versionName = "1.1.1"
 
         // FIX 1: Kotlin syntax for adding ABI Filters
         ndk {
@@ -28,7 +28,7 @@ android {
 
     buildTypes {
         release {
-            // FIX 2: Kotlin syntax uses "is..." and "="
+
             isMinifyEnabled = true
             isShrinkResources = false
 
@@ -66,6 +66,8 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+    implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.37.0")
+    implementation("com.composables:icons-lucide:1.0.0")
     implementation("androidx.compose.material:material:1.6.0")
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
     implementation("org.jsoup:jsoup:1.17.2")

@@ -81,6 +81,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.roundToInt
+import com.composables.icons.lucide.*
 
 // --------------------------------------------------------
 // UNIVERSAL ACCENT COLORS (Preserved across themes)
@@ -689,7 +690,7 @@ private fun ActiveCardContent(
                             .padding(horizontal = 10.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(12.dp), tint = statusColor)
+                        Icon(Lucide.FileCheck, contentDescription = null, modifier = Modifier.size(12.dp), tint = statusColor)
                         Spacer(Modifier.width(6.dp))
                         Text("Pass available", color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
@@ -706,7 +707,7 @@ private fun ActiveCardContent(
                             contentAlignment = Alignment.Center
                         ) {
                             if (isFetching) CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onSurface, strokeWidth = 2.dp)
-                            else Icon(Icons.Default.Visibility, contentDescription = "View", tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
+                            else Icon(Lucide.SquareArrowUpRight, contentDescription = "View", tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
                         }
 
                         Box(
@@ -718,7 +719,7 @@ private fun ActiveCardContent(
                             contentAlignment = Alignment.Center
                         ) {
                             if (isDownloading) CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onSurface, strokeWidth = 2.dp)
-                            else Icon(Icons.Default.Download, contentDescription = "Download", tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
+                            else Icon(Lucide.FileDown, contentDescription = "Download", tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
                         }
 
                         Box(
@@ -729,8 +730,17 @@ private fun ActiveCardContent(
                                 .clickable(enabled = !isWorking) { onSharePass() },
                             contentAlignment = Alignment.Center
                         ) {
-                            if (isSharing) CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onSurface, strokeWidth = 2.dp)
-                            else Icon(Icons.Default.Share, contentDescription = "Share", tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
+                            if (isSharing) CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                strokeWidth = 2.dp
+                            )
+                            else Icon(
+                                Lucide.Share,
+                                contentDescription = "Share",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(16.dp)
+                            )
                         }
                     }
                 }
@@ -1108,7 +1118,7 @@ fun InAppPdfViewer(pdfFile: File, onDismiss: () -> Unit) {
                 IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, null, tint = MaterialTheme.colorScheme.onSurface) }
                 Text("Outpass Document", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 IconButton(onClick = { savePdfToDownloads(context, pdfFile, pdfFile.name) }) {
-                    Icon(Icons.Default.Download, null, tint = OutingPrimaryAccent)
+                    Icon(Lucide.FileDown, null, tint = OutingPrimaryAccent)
                 }
             }
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {

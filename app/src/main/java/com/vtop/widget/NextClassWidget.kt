@@ -19,6 +19,7 @@ import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
+import androidx.glance.appwidget.updateAll
 import androidx.glance.color.ColorProvider
 import androidx.glance.layout.*
 import androidx.glance.text.*
@@ -29,6 +30,9 @@ import com.vtop.ui.screens.main.ProcessedCourse
 import com.vtop.ui.screens.main.processAndMergeCourses
 import com.vtop.models.ExamScheduleModel
 import com.vtop.utils.Vault
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -37,6 +41,17 @@ import java.util.concurrent.TimeUnit
 
 class NextClassWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = NextClassWidget()
+
+    @OptIn(DelicateCoroutinesApi::class)
+    override fun onReceive(context: Context, intent: Intent) {
+        super.onReceive(context, intent)
+        // Force an instant widget redraw the second the system clock changes
+        if (intent.action == Intent.ACTION_TIME_CHANGED || intent.action == Intent.ACTION_TIMEZONE_CHANGED) {
+            GlobalScope.launch {
+                NextClassWidget().updateAll(context)
+            }
+        }
+    }
 }
 
 // Helper to completely bypass Kotlin's strict null-safety compiler warnings
@@ -55,7 +70,6 @@ class NextClassWidget : GlanceAppWidget() {
 
             val cal = Calendar.getInstance()
             val currentTimeMin = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
-            val sdfTime = SimpleDateFormat("HH:mm", Locale.ENGLISH)
 
             // 1. HOLIDAY & SEMESTER END CHECKS
             val bunkCache = CalendarSync.parseBunkCache(context)
@@ -106,7 +120,10 @@ class NextClassWidget : GlanceAppWidget() {
 
                     if (endStr.isNotEmpty()) {
                         try {
+                            val is12Hour = endStr.contains(Regex("[a-zA-Z]"))
+                            val sdfTime = SimpleDateFormat(if (is12Hour) "hh:mm a" else "HH:mm", Locale.ENGLISH)
                             val parsedTime = sdfTime.parse(endStr)
+
                             if (parsedTime != null) {
                                 val endCal = Calendar.getInstance().apply { time = parsedTime }
                                 if (!timeStr.contains("-")) endCal.add(Calendar.HOUR_OF_DAY, 2)
@@ -137,7 +154,10 @@ class NextClassWidget : GlanceAppWidget() {
                     try {
                         val endStr = course.mergedTimeSlot.toSafeString().split("-").getOrNull(1)?.trim() ?: ""
                         if (endStr.isNotEmpty()) {
+                            val is12Hour = endStr.contains(Regex("[a-zA-Z]"))
+                            val sdfTime = SimpleDateFormat(if (is12Hour) "hh:mm a" else "HH:mm", Locale.ENGLISH)
                             val parsedTime = sdfTime.parse(endStr)
+
                             if (parsedTime != null) {
                                 val endCal = Calendar.getInstance().apply { time = parsedTime }
                                 val endMin = endCal.get(Calendar.HOUR_OF_DAY) * 60 + endCal.get(Calendar.MINUTE)
@@ -176,7 +196,7 @@ class NextClassWidget : GlanceAppWidget() {
                         semesterEnded -> EmptyWidgetContent("Semester Completed")
                         todayExams.isNotEmpty() && finalExam != null -> ExamWidgetContent(context, finalExam)
                         todayExams.isNotEmpty() && finalExam == null -> EmptyWidgetContent("All exams completed today")
-                        blockReason != null && !blockReason!!.lowercase(Locale.getDefault()).contains("exam") -> EmptyWidgetContent(blockReason!!)
+                        blockReason != null && !blockReason.lowercase(Locale.getDefault()).contains("exam") -> EmptyWidgetContent(blockReason)
                         finalCourse != null -> {
                             val activeReminder = reminders.find { it.classId == finalCourse.classId }
                             ClassWidgetContent(context, finalCourse, activeReminder)
@@ -217,9 +237,6 @@ class NextClassWidget : GlanceAppWidget() {
         val seatDisplay = if (cleanLoc.isNotEmpty() && cleanSeat.isNotEmpty()) "$cleanLoc - $cleanSeat" else cleanLoc.ifEmpty { cleanSeat }
 
         Column(modifier = GlanceModifier.fillMaxSize()) {
-            Text(text = "UPCOMING EXAM • ${exam.examType.toSafeString().uppercase(Locale.getDefault())}", style = TextStyle(color = textSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold))
-            Spacer(modifier = GlanceModifier.height(8.dp))
-
             Column(
                 modifier = GlanceModifier
                     .fillMaxSize() // Automatically stretches to fill 4x4 or 8x8 sizes
@@ -289,19 +306,10 @@ class NextClassWidget : GlanceAppWidget() {
             } catch(_: Exception) { reminder.date }
         } else "today"
 
-        val headerText = if (reminder != null && reminder.date != displayDate) {
-            "${reminder.type.uppercase(Locale.getDefault())} ON ${displayDate.uppercase(Locale.getDefault())}"
-        } else {
-            "UPCOMING CLASS"
-        }
-
         val startTimeStr = formatDisplayTime(context, course.mergedTimeSlot)
         val diffMinutes = getMinutesUntilEvent(course.mergedTimeSlot)
 
         Column(modifier = GlanceModifier.fillMaxSize()) {
-            Text(text = headerText, style = TextStyle(color = textSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold))
-            Spacer(modifier = GlanceModifier.height(8.dp))
-
             Column(
                 modifier = GlanceModifier
                     .fillMaxSize() // Automatically stretches

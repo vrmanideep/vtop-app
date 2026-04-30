@@ -5,6 +5,7 @@ import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import com.mikepenz.markdown.m3.Markdown
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -29,13 +30,13 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.*
+import com.composables.icons.lucide.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -44,7 +45,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.net.toUri
 import com.vtop.BuildConfig
 import com.vtop.models.ExamScheduleModel
 import com.vtop.models.TimetableModel
@@ -59,7 +59,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
@@ -71,7 +70,6 @@ private fun formatReminderDate(dateStr: String): String {
         if (d != null) outFormat.format(d) else dateStr
     } catch (e: Exception) { dateStr }
 }
-
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -108,6 +106,14 @@ fun Profile(
     lastSyncTime: String,
     onSyncClick: () -> Unit
 ) {
+    var isViewingAcademicCalendar by remember { mutableStateOf(false) }
+
+    // If viewing the calendar, render it and stop rendering the rest of the profile screen
+    if (isViewingAcademicCalendar) {
+        AcademicCalendarScreen(onBack = { isViewingAcademicCalendar = false })
+        return
+    }
+
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
@@ -247,12 +253,7 @@ fun Profile(
                         .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), CircleShape)
                         .padding(8.dp)
                 ) {
-                    Icon(
-                        Icons.Default.Refresh,
-                        contentDescription = "Sync",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
+                    Icon(Icons.Default.Refresh, contentDescription = "Sync", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                 }
             }
 
@@ -280,6 +281,13 @@ fun Profile(
                         arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
                     )
                 }
+            )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+            SettingRow(
+                label = "Academic Calendar",
+                value = "View university schedule & holidays",
+                actionText = "Open",
+                onClick = { isViewingAcademicCalendar = true }
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
             SettingRow(
@@ -315,7 +323,7 @@ fun Profile(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Merge Consecutive Labs", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     Spacer(Modifier.height(2.dp))
-                    Text("Combine L26+L27 in Timetable", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Combine Lab slots in Timetable", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Switch(checked = mergeLabs, onCheckedChange = onMergeLabsChange)
             }
@@ -330,7 +338,7 @@ fun Profile(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Merge Marks Components", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     Spacer(Modifier.height(2.dp))
-                    Text("Group Theory & Lab marks together", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Group Theory & Lab/Project marks together", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Switch(checked = mergeMarks, onCheckedChange = onMergeMarksChange)
             }
@@ -523,7 +531,7 @@ fun Profile(
                 Text("Export to Google Calendar", fontSize = 20.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
 
                 Text("SELECT CALENDAR", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                Box(modifier = Modifier.fillMaxWidth().border(1.dp, getPremiumBorderColor(), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { calendarDropdownExpanded = true }.padding(16.dp)) {
+                Box(modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.2f), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { calendarDropdownExpanded = true }.padding(16.dp)) {
                     val selectedName = availableCalendars.find { it.id == selectedCalendarId }?.name ?: "None"
                     Text(selectedName, color = MaterialTheme.colorScheme.onSurface)
                     DropdownMenu(expanded = calendarDropdownExpanded, onDismissRequest = { calendarDropdownExpanded = false }) {
@@ -534,7 +542,7 @@ fun Profile(
                 }
 
                 Text("REMINDER", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                Box(modifier = Modifier.fillMaxWidth().border(1.dp, getPremiumBorderColor(), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { reminderDropdownExpanded = true }.padding(16.dp)) {
+                Box(modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.2f), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { reminderDropdownExpanded = true }.padding(16.dp)) {
                     Text(reminderOptions[reminderMins] ?: "None", color = MaterialTheme.colorScheme.onSurface)
                     DropdownMenu(expanded = reminderDropdownExpanded, onDismissRequest = { reminderDropdownExpanded = false }) {
                         reminderOptions.forEach { (mins, label) ->
@@ -544,7 +552,7 @@ fun Profile(
                 }
 
                 Text("END SYNC ON (LAST INSTRUCTIONAL DAY)", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                Row(modifier = Modifier.fillMaxWidth().border(1.dp, getPremiumBorderColor(), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { showDatePicker = true }.padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.2f), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { showDatePicker = true }.padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text(endDate, color = MaterialTheme.colorScheme.onSurface)
                     Icon(Icons.Outlined.Edit, "Edit", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                 }
@@ -607,8 +615,52 @@ fun Profile(
     if (updateInfo != null) {
         AlertDialog(
             onDismissRequest = { updateInfo = null },
-            title = { Text("Update Available", fontWeight = FontWeight.Bold) },
-            text = { Text("Version ${updateInfo?.latestVersion} is available. Do you want to download and install it now?") },
+            title = {
+                Column {
+                    Text("Update Available", fontWeight = FontWeight.Black, fontSize = 20.sp)
+                    if (!updateInfo?.releaseTitle.isNullOrBlank()) {
+                        Spacer(Modifier.height(4.dp))
+                        // FIX: Show the release TITLE here, not the Markdown notes
+                        Text(
+                            text = updateInfo!!.releaseTitle,
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 350.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Version ${updateInfo?.latestVersion} is ready to download. Do you want to install it now?",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 14.sp
+                    )
+
+                    if (!updateInfo?.releaseNotes.isNullOrBlank()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                        Text(
+                            text = "Release Notes:",
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp
+                        )
+                        // FIX: Use Markdown here to render the notes properly
+                        Markdown(
+                            content = updateInfo!!.releaseNotes,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            },
             confirmButton = {
                 Button(
                     onClick = {
@@ -705,7 +757,7 @@ fun Profile(
                         value = tempReg,
                         onValueChange = { tempReg = it },
                         label = { Text("Registration Number") },
-                        leadingIcon = { Icon(Icons.Outlined.Person, null) },
+                        leadingIcon = { Icon(Lucide.UserRound, null) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(

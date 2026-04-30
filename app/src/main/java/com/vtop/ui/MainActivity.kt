@@ -46,9 +46,14 @@ class MainActivity : ComponentActivity() {
 
         val sharedPrefs = getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
 
-        // 1. Load Theme Mode
+        // 1. Load Theme Mode (With safety catch for old deprecated themes)
         val savedThemeString = sharedPrefs.getString("APP_THEME", AppThemeMode.SYSTEM.name) ?: AppThemeMode.SYSTEM.name
-        ThemeManager.themeMode.value = AppThemeMode.valueOf(savedThemeString)
+        ThemeManager.themeMode.value = try {
+            AppThemeMode.valueOf(savedThemeString)
+        } catch (e: IllegalArgumentException) {
+            // If it finds "AMOLED" or any other removed theme, default to DARK
+            AppThemeMode.DARK
+        }
 
         // 2. Load Material You toggle (Defaults to true)
         ThemeManager.useDynamicColor.value = sharedPrefs.getBoolean("USE_DYNAMIC_COLOR", true)
@@ -66,12 +71,12 @@ class MainActivity : ComponentActivity() {
                 AppThemeMode.SYSTEM -> isSystemInDarkTheme()
             }
 
-            // THE FIX: Automatically switch status bar icons to dark when in Light Mode
+            // THE FIX: Use LaunchedEffect so this only fires once when the theme changes, not every frame
             val view = LocalView.current
+            val currentWindow = this.window
             if (!view.isInEditMode) {
-                SideEffect {
-                    val insetsController = WindowCompat.getInsetsController(window, view)
-                    // TRUE means "Background is light, make the icons dark"
+                androidx.compose.runtime.LaunchedEffect(isDark) {
+                    val insetsController = WindowCompat.getInsetsController(currentWindow, view)
                     insetsController.isAppearanceLightStatusBars = !isDark
                     insetsController.isAppearanceLightNavigationBars = !isDark
                 }

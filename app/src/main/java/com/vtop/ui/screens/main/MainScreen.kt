@@ -30,7 +30,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.pullrefresh.PullRefreshIndicator
 import androidx.compose.material.pullrefresh.pullRefresh
@@ -55,6 +54,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.core.content.edit
 import androidx.glance.appwidget.updateAll
+import androidx.compose.material.icons.filled.Refresh
+import com.composables.icons.lucide.*
 import com.vtop.models.*
 import com.vtop.ui.VtopAnalyticsTab
 import com.vtop.ui.core.*
@@ -205,12 +206,22 @@ fun MainScreen(
                         )
                         "OUTINGS" -> VtopOutingsTab(outingsData = AppBridge.outingsState.value, handler = outingHandler)
                         "PROFILE" -> {
-                            val semInfo = Vault.getSelectedSemester(context)
-                            val creds = Vault.getCredentials(context)
-                            val actualReminders = ReminderManager.loadReminders(context)
-                            val profileMap = AppBridge.profileState.value?.takeIf { it.isNotEmpty() } ?: Vault.getProfile(context)
-                            val semesterOptions = Vault.getSemesterOptions(context)
-                            val allSemesters = if (semesterOptions.isNotEmpty()) semesterOptions.map { it.name } else listOf(semInfo[1] ?: "Unknown Semester")
+                            // FIX: Cache Vault/JSON reads so they don't fire 60x a second during animations
+                            var semInfo by remember { mutableStateOf(Vault.getSelectedSemester(context)) }
+                            var creds by remember { mutableStateOf(Vault.getCredentials(context)) }
+                            var actualReminders by remember { mutableStateOf(ReminderManager.loadReminders(context)) }
+                            val semesterOptions = remember { Vault.getSemesterOptions(context) }
+                            val lastSyncTime = remember { Vault.getLastSyncTime(context) }
+
+                            // Watch the global AppBridge state, only read from Vault if it's empty
+                            val profileStateValue = AppBridge.profileState.value
+                            val profileMap = remember(profileStateValue) {
+                                profileStateValue?.takeIf { it.isNotEmpty() } ?: Vault.getProfile(context)
+                            }
+
+                            val allSemesters = remember(semesterOptions, semInfo) {
+                                if (semesterOptions.isNotEmpty()) semesterOptions.map { it.name } else listOf(semInfo[1] ?: "Unknown Semester")
+                            }
 
                             Profile(
                                 onBack = { coroutineScope.launch { pagerState.scrollToPage(0) } },
@@ -255,6 +266,7 @@ fun MainScreen(
                                     val selectedOption = semesterOptions.find { it.name == newSemName }
                                     if (selectedOption != null) {
                                         Vault.saveSelectedSemester(context, selectedOption.id, selectedOption.name)
+                                        semInfo = Vault.getSelectedSemester(context) // Update state
                                         handleSyncAndUpdateWidget("PROFILE")
                                     }
                                 },
@@ -262,16 +274,18 @@ fun MainScreen(
                                 currentPass = creds[1] ?: "",
                                 onCredentialsSave = { newReg, newPass ->
                                     Vault.saveCredentials(context, newReg, newPass)
+                                    creds = Vault.getCredentials(context) // Update state
                                     handleSyncAndUpdateWidget("PROFILE")
                                 },
                                 reminders = actualReminders,
                                 onDeleteReminder = { idToDelete ->
-                                    val updated = ReminderManager.loadReminders(context).filter { it.id != idToDelete }
+                                    val updated = actualReminders.filter { it.id != idToDelete }
                                     ReminderManager.saveReminders(context, updated)
+                                    actualReminders = updated // Update state instantly without re-reading disk
                                     handleSyncAndUpdateWidget("NONE")
                                 },
                                 onNavigateToAnalytics = { activeOverlay = "ANALYTICS" },
-                                lastSyncTime = Vault.getLastSyncTime(context),
+                                lastSyncTime = lastSyncTime,
                                 onSyncClick = { handleSyncAndUpdateWidget("PROFILE") }
                             )
                         }
@@ -404,7 +418,7 @@ fun GlobalTopBar(currentScreen: String, onProfileClick: () -> Unit) {
         }
         if (currentScreen != "PROFILE") {
             IconButton(onClick = onProfileClick, modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)) {
-                Icon(Icons.Default.Person, contentDescription = "Profile", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Icon(Lucide.User, contentDescription = "Profile", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -413,11 +427,11 @@ fun GlobalTopBar(currentScreen: String, onProfileClick: () -> Unit) {
 @Composable
 fun BottomNavigation(currentTab: String, availableTabs: List<String>, onSelect: (String) -> Unit) {
     val allTabs = listOf(
-        Triple("HOME", "Home", Icons.Default.Home),
-        Triple("ATTENDANCE", "Attendance", Icons.Default.CheckCircle),
-        Triple("EXAMS", "Exams", Icons.Default.Event),
-        Triple("MARKS", "Marks", Icons.Default.Assessment),
-        Triple("OUTINGS", "Outings", Icons.AutoMirrored.Filled.DirectionsRun)
+        Triple("HOME", "Home", Lucide.House),
+        Triple("ATTENDANCE", "Attendance", Lucide.CircleCheck),
+        Triple("EXAMS", "Exams", Lucide.CalendarDays),
+        Triple("MARKS", "Marks", Lucide.ChartNoAxesColumnIncreasing),
+        Triple("OUTINGS", "Outings", Lucide.ArrowUpRight)
     )
 
     val visibleTabs = allTabs.filter { availableTabs.contains(it.first) }
@@ -500,7 +514,7 @@ fun FloatingDockContainer(currentScreen: String, items: List<String>, offsetX: F
                             }
                             Spacer(Modifier.height(8.dp))
                             Button(onClick = { onSyncClick(currentScreen); expanded = false }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = AppColors.glassBg)) {
-                                Icon(imageVector = Icons.Default.Refresh, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.Refresh, contentDescription = "Profile", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(Modifier.width(8.dp))
                                 Text("Sync", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }

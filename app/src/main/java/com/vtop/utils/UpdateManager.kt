@@ -16,12 +16,13 @@ import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
-
+import androidx.core.content.ContextCompat
 data class UpdateInfo(
     val isUpdateAvailable: Boolean,
     val latestVersion: String,
     val downloadUrl: String,
-    val changelog: String
+    val releaseTitle: String = "",
+    val releaseNotes: String = ""
 )
 
 object UpdateManager {
@@ -35,7 +36,7 @@ object UpdateManager {
             connection.connectTimeout = 5000
 
             if (connection.responseCode != HttpURLConnection.HTTP_OK) {
-                return@withContext UpdateInfo(false, "", "", "")
+                return@withContext UpdateInfo(false, "", "", "", "")
             }
 
             val response = connection.inputStream.bufferedReader().use { it.readText() }
@@ -43,7 +44,10 @@ object UpdateManager {
 
             // Extract tag (e.g. "v1.0.0" becomes "1.0.0")
             val tagName = json.getString("tag_name").replace("v", "").trim()
-            val body = json.optString("body", "Bug fixes and performance improvements.")
+
+            // Extract the Release Title and Release Notes
+            val releaseTitle = json.optString("name", "New Update")
+            val releaseNotes = json.optString("body", "Bug fixes and performance improvements.")
 
             // Find the .apk file in the release assets
             var apkUrl = ""
@@ -57,16 +61,16 @@ object UpdateManager {
             }
 
             if (apkUrl.isEmpty()) {
-                return@withContext UpdateInfo(false, "", "", "")
+                return@withContext UpdateInfo(false, "", "", "", "")
             }
 
             val currentVersion = BuildConfig.VERSION_NAME.replace("v", "").trim()
             val isNewer = compareVersions(tagName, currentVersion) > 0
 
-            return@withContext UpdateInfo(isNewer, tagName, apkUrl, body)
+            return@withContext UpdateInfo(isNewer, tagName, apkUrl, releaseTitle, releaseNotes)
         } catch (e: Exception) {
             e.printStackTrace()
-            return@withContext UpdateInfo(false, "", "", "")
+            return@withContext UpdateInfo(false, "", "", "", "")
         }
     }
 
@@ -108,8 +112,12 @@ object UpdateManager {
                     }
                 }
             }
-            context.registerReceiver(onComplete, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), Context.RECEIVER_EXPORTED)
-
+            ContextCompat.registerReceiver(
+                context,
+                onComplete,
+                IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+                ContextCompat.RECEIVER_EXPORTED
+            )
         } catch (e: Exception) {
             Toast.makeText(context, "Failed to start download.", Toast.LENGTH_SHORT).show()
         }

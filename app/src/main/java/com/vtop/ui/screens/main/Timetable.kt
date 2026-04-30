@@ -461,12 +461,11 @@ fun TimetableRow(dateCal: Calendar, rawCourses: List<CourseSession>, allReminder
 @Composable
 fun ClassTile(course: ProcessedCourse, status: TimeStatus, reminderType: String?, onClick: () -> Unit) {
     val themePrimary = MaterialTheme.colorScheme.primary
-    val pulseAlpha by rememberInfiniteTransition(label = "pulse").animateFloat(initialValue = 0.4f, targetValue = 1f, animationSpec = infiniteRepeatable(animation = tween(800), repeatMode = RepeatMode.Reverse), label = "pulseAlpha")
 
     Card(
         modifier = Modifier.width(85.dp).height(110.dp).clickable { onClick() },
         shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = getPremiumSurfaceColor()),
-        border = when (status) { TimeStatus.ONGOING -> BorderStroke(1.5.dp, themePrimary.copy(alpha = pulseAlpha)); TimeStatus.NEXT -> BorderStroke(1.dp, themePrimary.copy(alpha = 0.5f)); else -> BorderStroke(1.dp, getPremiumBorderColor()) }
+        border = when (status) { TimeStatus.ONGOING -> BorderStroke(1.5.dp, themePrimary); TimeStatus.NEXT -> BorderStroke(1.dp, themePrimary.copy(alpha = 0.5f)); else -> BorderStroke(1.dp, getPremiumBorderColor()) }
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.padding(8.dp).fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
@@ -477,10 +476,6 @@ fun ClassTile(course: ProcessedCourse, status: TimeStatus, reminderType: String?
                 }
                 Spacer(modifier = Modifier.weight(1f))
                 Text(course.mergedSlot.clean(), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (status == TimeStatus.ONGOING) Text("LIVE NOW", fontSize = 8.sp, fontWeight = FontWeight.Black, color = themePrimary, modifier = Modifier.alpha(pulseAlpha))
-                else if (!reminderType.isNullOrEmpty()) Text(reminderType.uppercase(), fontSize = 8.sp, fontWeight = FontWeight.Black, color = ColorDanger)
-                else if (status == TimeStatus.NEXT) Text("NEXT UP", fontSize = 8.sp, fontWeight = FontWeight.Black, color = themePrimary.copy(alpha = 0.8f))
-                else Spacer(modifier = Modifier.height(12.dp))
             }
         }
     }
