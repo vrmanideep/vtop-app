@@ -26,6 +26,9 @@ object AppBridge {
     var historySummaryState = mutableStateOf<CGPASummary?>(null)
     var historyItemsState = mutableStateOf<List<GradeHistoryItem>>(emptyList())
 
+    // --- NEW: Semester Transition State ---
+    var isSemesterCompleted = mutableStateOf(false)
+
     var appError = mutableStateOf<String?>(null)
     var onMarksDataRequest: ((String, Boolean) -> Unit)? = null
     var syncStatus = mutableStateOf("IDLE")

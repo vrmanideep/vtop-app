@@ -651,6 +651,7 @@ public class VtopClient {
                 .add("x", getGmtTimestamp())
                 .build();
 
+
         return executeWafFetch("/processViewStudentAttendance", body, "/academics/common/StudentAttendance");
     }
 
@@ -717,7 +718,7 @@ public class VtopClient {
             );
 
             // 🔥 DEBUG (VERY IMPORTANT)
-            Log.d(TAG, "[HISTORY_HTML] " + html.substring(0, Math.min(300, html.length())));
+            //Log.d(TAG, "[HISTORY_HTML] " + html.substring(0, Math.min(300, html.length())));
 
             return html;
 

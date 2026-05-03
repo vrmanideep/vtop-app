@@ -26,6 +26,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import java.util.concurrent.TimeUnit
+import com.vtop.utils.NotificationHelper
+import com.vtop.ui.core.VtopSyncWorker
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,6 +69,16 @@ class MainActivity : ComponentActivity() {
         val savedAccentInt = sharedPrefs.getInt("CUSTOM_ACCENT", defaultAccentInt)
         ThemeManager.customAccent.value = androidx.compose.ui.graphics.Color(savedAccentInt)
 
+        NotificationHelper.createNotificationChannel(this)
+
+
+        val syncRequest = PeriodicWorkRequestBuilder<VtopSyncWorker>(4, TimeUnit.HOURS).build()
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "VTOP_BACKGROUND_SYNC",
+            ExistingPeriodicWorkPolicy.KEEP,
+            syncRequest
+        )
+
         setContent {
             val themeMode = ThemeManager.themeMode.value
             val isDark = when (themeMode) {
@@ -81,9 +97,15 @@ class MainActivity : ComponentActivity() {
                     insetsController.isAppearanceLightNavigationBars = !isDark
                 }
             }
+            // Register the dynamic shortcuts with the OS
+            com.vtop.utils.AppShortcuts.setupDynamicShortcuts(this)
+
+            // Capture the intent if the app was launched via a shortcut
+            val shortcutAction = intent?.action
 
             AppTheme(themeMode = themeMode) {
                 MainScreen(
+                    initialShortcutAction = shortcutAction,
                     timetable = AppBridge.timetableState.value ?: TimetableModel(),
                     attendanceData = AppBridge.attendanceState.value,
                     examsData = AppBridge.examsState.value,

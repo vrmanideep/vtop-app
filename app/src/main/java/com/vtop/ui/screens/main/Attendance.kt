@@ -4,12 +4,14 @@ import android.annotation.SuppressLint
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -34,7 +36,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vtop.models.AttendanceModel
 import java.util.Locale
-import androidx.compose.foundation.shape.CircleShape
 
 // --- STRICT PREMIUM COLORS (Bypasses Material You Tint) ---
 @Composable
@@ -42,6 +43,23 @@ fun premiumSurfaceColor(): Color = if (MaterialTheme.colorScheme.background.lumi
 
 @Composable
 fun premiumBorderColor(): Color = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.08f)
+
+// --- TRUE COUNT ENGINE: Ignores VTOP's raw lab hours and counts physical history rows ---
+fun getRealAttendanceCounts(item: AttendanceModel): Pair<Int, Int> {
+    val history = item.history
+    if (!history.isNullOrEmpty()) {
+        val total = history.size
+        val attended = history.count { h ->
+            val status = h.status?.uppercase(Locale.getDefault()) ?: ""
+            status.contains("PRESENT") || status.contains("DUTY") || status.contains("ON DUTY")
+        }
+        return Pair(attended, total)
+    }
+    // Fallback ONLY if the history array failed to load entirely
+    val rawAttended = item.attendedClasses?.toString()?.toIntOrNull() ?: 0
+    val rawTotal = item.totalClasses?.toString()?.toIntOrNull() ?: 0
+    return Pair(rawAttended, rawTotal)
+}
 
 // --- RESTORED BUNK LOGIC ---
 sealed class BunkState {
@@ -72,9 +90,10 @@ fun calculateBunkBudget(attended: Int, total: Int, target: Float = 0.75f): BunkS
 
 @Composable
 fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
-    val pString = item.attendancePercentage ?: "0"
-    val percentage = pString.filter { it.isDigit() }.toIntOrNull() ?: 0
-    val progress = percentage / 100f
+    // Override raw API percentages with our True Count engine
+    val (attended, total) = getRealAttendanceCounts(item)
+    val percentage = if (total > 0) ((attended.toFloat() / total) * 100).toInt() else 0
+    val progress = if (total > 0) attended.toFloat() / total else 0f
 
     val statusColor = when {
         percentage < 75 -> MaterialTheme.colorScheme.error
@@ -82,8 +101,6 @@ fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
         else -> Color(0xFF4CAF50) // Success Green
     }
 
-    val attended = item.attendedClasses?.toString()?.toIntOrNull() ?: 0
-    val total = item.totalClasses?.toString()?.toIntOrNull() ?: 0
     val bunkState = calculateBunkBudget(attended, total)
 
     val cType = item.courseType ?: ""
@@ -170,9 +187,13 @@ fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> U
         return
     }
 
-    val atRiskCount = attendanceData.count {
-        val p = it.attendancePercentage?.filter { char -> char.isDigit() }?.toIntOrNull() ?: 100
-        p < 75
+    // Evaluate Risk using our True Count engine, not VTOP's percentages
+    val atRiskCount = attendanceData.count { item ->
+        val (_, total) = getRealAttendanceCounts(item)
+        if (total == 0) false else {
+            val (attended, _) = getRealAttendanceCounts(item)
+            ((attended.toFloat() / total) * 100) < 75
+        }
     }
 
     val sortedCourses = remember(attendanceData) {
@@ -263,18 +284,18 @@ fun AttendanceBottomSheetContent(course: AttendanceModel, onSimulateClick: () ->
 // --- SHARED CORE EXPORTED FOR TIMETABLE ---
 @Composable
 fun AttendanceDetailCore(course: AttendanceModel, onSimulateClick: (() -> Unit)? = null) {
-    val pString = course.attendancePercentage ?: "0"
-    val percentage = pString.filter { it.isDigit() }.toIntOrNull() ?: 0
+    // Override raw API percentages with our True Count engine
+    val (attended, total) = getRealAttendanceCounts(course)
+    val percentage = if (total > 0) ((attended.toFloat() / total) * 100).toInt() else 0
     val isSafe = percentage >= 75
+
     val statusColor = if (isSafe) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
-    val attended = course.attendedClasses?.toString()?.toIntOrNull() ?: 0
-    val total = course.totalClasses?.toString()?.toIntOrNull() ?: 0
     val bunkState = calculateBunkBudget(attended, total)
 
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
         Box(modifier = Modifier.size(100.dp), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(
-                progress = { percentage / 100f },
+                progress = { if (total > 0) attended.toFloat() / total else 0f },
                 modifier = Modifier.fillMaxSize(),
                 color = statusColor,
                 trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f),
@@ -340,7 +361,79 @@ fun AttendanceDetailCore(course: AttendanceModel, onSimulateClick: (() -> Unit)?
                     Icon(imageVector = if (showHistory) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = "Toggle History", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 AnimatedVisibility(visible = showHistory) {
-                    Column { Spacer(Modifier.height(8.dp)); DetailedAttendanceTable(course) }
+                    Column {
+                        Spacer(Modifier.height(8.dp))
+                        DetailedAttendanceHistoryView(course)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Filterable History View ──────────────────────────────────────────────
+@Composable
+fun DetailedAttendanceHistoryView(item: AttendanceModel) {
+    val history = item.history ?: return
+
+    var selectedFilter by remember { mutableStateOf("ALL") } // "ALL", "PRESENT", "ABSENT", "DUTY"
+
+    val filteredHistory = remember(history, selectedFilter) {
+        history.filter { h ->
+            val statusUpper = h.status?.uppercase(Locale.getDefault()) ?: ""
+            when (selectedFilter) {
+                "PRESENT" -> statusUpper.contains("PRESENT")
+                "ABSENT" -> !statusUpper.contains("PRESENT") && !statusUpper.contains("DUTY")
+                "DUTY" -> statusUpper.contains("DUTY") || statusUpper.contains("ON DUTY")
+                else -> true
+            }
+        }
+    }
+
+    Column {
+        // ── Filter Chips ──
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            AttendanceFilterChip("All", selectedFilter == "ALL") { selectedFilter = "ALL" }
+            AttendanceFilterChip("Present", selectedFilter == "PRESENT") { selectedFilter = "PRESENT" }
+            AttendanceFilterChip("Absent", selectedFilter == "ABSENT") { selectedFilter = "ABSENT" }
+            AttendanceFilterChip("On Duty", selectedFilter == "DUTY") { selectedFilter = "DUTY" }
+        }
+
+        // ── Table Header ──
+        Row(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+            Text(text = "DATE", modifier = Modifier.weight(0.35f), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text(text = "TIME/SLOT", modifier = Modifier.weight(0.4f), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text(text = "STATUS", modifier = Modifier.weight(0.25f), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, textAlign = TextAlign.End, fontWeight = FontWeight.Bold)
+        }
+
+        // ── Table Body ──
+        if (filteredHistory.isEmpty()) {
+            Box(modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
+                Text("No records found.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+            }
+        } else {
+            filteredHistory.forEach { h ->
+                val statusUpper = h.status?.uppercase(Locale.getDefault()) ?: ""
+                val (bgColor, textColor) = when {
+                    statusUpper.contains("PRESENT") -> Color(0xFF4CAF50).copy(alpha = 0.2f) to Color(0xFF4CAF50)
+                    statusUpper.contains("DUTY") -> Color(0xFF2196F3).copy(alpha = 0.2f) to Color(0xFF2196F3)
+                    else -> MaterialTheme.colorScheme.error.copy(alpha = 0.2f) to MaterialTheme.colorScheme.error
+                }
+
+                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = h.date ?: "--", modifier = Modifier.weight(0.35f), color = MaterialTheme.colorScheme.onSurface, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                    Text(text = "${h.time ?: "--"} / ${h.slot ?: "--"}", modifier = Modifier.weight(0.4f), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
+                    Box(modifier = Modifier.weight(0.25f), contentAlignment = Alignment.CenterEnd) {
+                        Box(modifier = Modifier.background(bgColor, RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                            Text(text = h.status ?: "--", color = textColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
         }
@@ -348,30 +441,19 @@ fun AttendanceDetailCore(course: AttendanceModel, onSimulateClick: (() -> Unit)?
 }
 
 @Composable
-private fun DetailedAttendanceTable(item: AttendanceModel) {
-    Column {
-        Row(Modifier.fillMaxWidth()) {
-            Text(text = "DATE", modifier = Modifier.weight(0.35f), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
-            Text(text = "TIME/SLOT", modifier = Modifier.weight(0.4f), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
-            Text(text = "STATUS", modifier = Modifier.weight(0.25f), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, textAlign = TextAlign.End)
-        }
-        item.history?.forEach { h ->
-            val statusUpper = h.status?.uppercase(Locale.getDefault()) ?: ""
-            val (bgColor, textColor) = when {
-                statusUpper.contains("PRESENT") -> Color(0xFF4CAF50).copy(alpha = 0.2f) to Color(0xFF4CAF50)
-                statusUpper.contains("DUTY") -> Color(0xFF2196F3).copy(alpha = 0.2f) to Color(0xFF2196F3)
-                else -> MaterialTheme.colorScheme.error.copy(alpha = 0.2f) to MaterialTheme.colorScheme.error
-            }
+fun AttendanceFilterChip(label: String, isSelected: Boolean, onClick: () -> Unit) {
+    val bgColor = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent
+    val contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+    val borderColor = if (isSelected) MaterialTheme.colorScheme.primary else premiumBorderColor()
 
-            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(text = h.date ?: "", modifier = Modifier.weight(0.35f), color = MaterialTheme.colorScheme.onSurface, fontSize = 11.sp)
-                Text(text = "${h.time ?: "--"} / ${h.slot ?: "--"}", modifier = Modifier.weight(0.4f), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
-                Box(modifier = Modifier.weight(0.25f), contentAlignment = Alignment.CenterEnd) {
-                    Box(modifier = Modifier.background(bgColor, RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                        Text(text = h.status ?: "", color = textColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
+    Box(
+        modifier = Modifier
+            .background(bgColor, RoundedCornerShape(16.dp))
+            .border(1.dp, borderColor, RoundedCornerShape(16.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(text = label, color = contentColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
     }
 }

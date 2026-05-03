@@ -62,7 +62,7 @@ fun getPremiumSurfaceColor(): Color = if (MaterialTheme.colorScheme.background.l
 fun getPremiumBorderColor(): Color = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.08f)
 
 private fun String?.clean(): String {
-    if (this == null || this.isBlank() || this.trim() == "-" || this.trim().equals("TBD", true) || this.trim().equals("N/A", true) || this.trim().equals("null", true)) {
+    if (this.isNullOrBlank() || this.trim() == "-" || this.trim().equals("TBD", ignoreCase = true) || this.trim().equals("N/A", ignoreCase = true) || this.trim().equals("null", ignoreCase = true)) {
         return " "
     }
     return this.trim()
@@ -182,10 +182,39 @@ private fun findExamForDate(dateCal: Calendar, exams: List<ExamScheduleModel>): 
     }
 }
 
+private fun findHolidayForDate(dateCal: Calendar, holidays: Map<String, String>): String? {
+    val targetYear = dateCal.get(Calendar.YEAR)
+    val targetDayOfYear = dateCal.get(Calendar.DAY_OF_YEAR)
+
+    for ((dateStr, holidayName) in holidays) {
+        try {
+            val formats = listOf("dd-MMM-yyyy", "yyyy-MM-dd", "dd/MM/yyyy", "dd-MM-yyyy", "MMM dd, yyyy")
+            for (format in formats) {
+                try {
+                    val sdf = SimpleDateFormat(format, Locale.ENGLISH)
+                    val d = sdf.parse(dateStr.trim())
+                    if (d != null) {
+                        val c = Calendar.getInstance().apply { time = d }
+                        if (c.get(Calendar.YEAR) == targetYear && c.get(Calendar.DAY_OF_YEAR) == targetDayOfYear) {
+                            return holidayName
+                        }
+                    }
+                } catch (e: Exception) { }
+            }
+        } catch (e: Exception) { }
+    }
+    return null
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SimpleDateFormat")
 @Composable
-fun Timetable(timetable: TimetableModel, attendanceData: List<AttendanceModel>, examsData: List<ExamScheduleModel> = emptyList()) {
+fun Timetable(
+    timetable: TimetableModel,
+    attendanceData: List<AttendanceModel>,
+    examsData: List<ExamScheduleModel> = emptyList(),
+    holidays: Map<String, String> = emptyMap()
+) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = 30)
@@ -208,7 +237,7 @@ fun Timetable(timetable: TimetableModel, attendanceData: List<AttendanceModel>, 
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
-            NextClassCard(timetable, allReminders, tick, examsData)
+            NextClassCard(timetable, allReminders, tick, examsData, holidays)
             LazyColumn(
                 state = listState, modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(top = 8.dp, bottom = 120.dp), verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -219,14 +248,19 @@ fun Timetable(timetable: TimetableModel, attendanceData: List<AttendanceModel>, 
                     val dayShort = sdfDayShort.format(dateCal.time)
                     val isToday = dateStr == todayDateStr
                     val isWeekend = dayName == "Saturday" || dayName == "Sunday"
+
                     val examToday = findExamForDate(dateCal, examsData)
-                    val rawCourses = if (examToday != null) emptyList() else timetable.scheduleMap[dayName] ?: emptyList()
+                    val holidayToday = findHolidayForDate(dateCal, holidays)
+
+                    val rawCourses = if (examToday != null || holidayToday != null) emptyList() else timetable.scheduleMap[dayName] ?: emptyList()
                     val isExpanded = expandedDateStr == dateStr
                     val daysOffset = abs(index - 30)
                     val rowAlpha = when (daysOffset) { 0 -> 1f; 1, 2 -> 0.85f; in 3..5 -> 0.6f; in 6..14 -> 0.35f; else -> 0.15f }
 
                     if (examToday != null) {
                         ExamRow(dateCal, examToday, isToday, isExpanded, rowAlpha, onExpandToggle = { expandedDateStr = if (isExpanded) "" else dateStr })
+                    } else if (holidayToday != null) {
+                        HolidayRow(dateCal, holidayToday, isToday, rowAlpha)
                     } else if (rawCourses.isEmpty() && isWeekend && !isExpanded) {
                         WeekendSeparator(dayShort, dateCal.get(Calendar.DAY_OF_MONTH), rowAlpha)
                     } else {
@@ -241,7 +275,7 @@ fun Timetable(timetable: TimetableModel, attendanceData: List<AttendanceModel>, 
         }
         AnimatedVisibility(
             visible = showJumpToToday, enter = fadeIn() + slideInVertically { it }, exit = fadeOut() + slideOutVertically { it },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = 40.dp)
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = 110.dp)
         ) {
             Button(
                 onClick = { coroutineScope.launch { listState.animateScrollToItem(30) } },
@@ -264,29 +298,45 @@ fun Timetable(timetable: TimetableModel, attendanceData: List<AttendanceModel>, 
 }
 
 @Composable
-fun NextClassCard(timetable: TimetableModel, allReminders: List<CourseReminder>, tick: Int, exams: List<ExamScheduleModel>) {
+fun NextClassCard(
+    timetable: TimetableModel,
+    allReminders: List<CourseReminder>,
+    tick: Int,
+    exams: List<ExamScheduleModel>,
+    holidays: Map<String, String>
+) {
     val context = LocalContext.current
     val sharedPrefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
     val themePrimary = MaterialTheme.colorScheme.primary
     val themeOnSurface = MaterialTheme.colorScheme.onSurface
     val themeOnSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
 
-    val nextEvent = remember(timetable, tick, exams) {
+    val nextEvent: Pair<Any, Pair<String, Color>>? = remember(timetable, tick, exams, holidays) {
         val mergeLabs = sharedPrefs.getBoolean("MERGE_LABS", true)
         val cal = Calendar.getInstance()
+
         val examToday = findExamForDate(cal, exams)
         if (examToday != null) return@remember Pair(examToday, "EXAM TODAY" to themePrimary)
-        val todayStr = SimpleDateFormat("EEEE", Locale.getDefault()).format(cal.time)
-        val todayCourses = processAndMergeCourses(timetable.scheduleMap[todayStr] ?: emptyList(), mergeLabs)
-        val nextToday = todayCourses.firstOrNull { course ->
-            val status = getCourseTimeStatus(course.mergedTimeSlot, true, true)
-            status == TimeStatus.NEXT || status == TimeStatus.ONGOING
+
+        val holidayToday = findHolidayForDate(cal, holidays)
+        if (holidayToday == null) {
+            val todayStr = SimpleDateFormat("EEEE", Locale.getDefault()).format(cal.time)
+            val todayCourses = processAndMergeCourses(timetable.scheduleMap[todayStr] ?: emptyList(), mergeLabs)
+            val nextToday = todayCourses.firstOrNull { course ->
+                val status = getCourseTimeStatus(course.mergedTimeSlot, true, true)
+                status == TimeStatus.NEXT || status == TimeStatus.ONGOING
+            }
+            if (nextToday != null) return@remember Pair(nextToday, "NEXT UP" to themePrimary.copy(alpha = 0.8f))
         }
-        if (nextToday != null) return@remember Pair(nextToday, "NEXT UP" to themePrimary.copy(alpha = 0.8f))
+
         for (i in 1..7) {
             cal.add(Calendar.DAY_OF_YEAR, 1)
             val examFuture = findExamForDate(cal, exams)
             if (examFuture != null) return@remember Pair(examFuture, "UPCOMING EXAM" to themePrimary)
+
+            val holidayFuture = findHolidayForDate(cal, holidays)
+            if (holidayFuture != null) continue
+
             val futureDayStr = SimpleDateFormat("EEEE", Locale.getDefault()).format(cal.time)
             val futureCourses = processAndMergeCourses(timetable.scheduleMap[futureDayStr] ?: emptyList(), mergeLabs)
             if (futureCourses.isNotEmpty()) return@remember Pair(futureCourses.first(), (if (i == 1) "TOMORROW" else futureDayStr.uppercase()) to themeOnSurfaceVariant)
@@ -318,9 +368,14 @@ fun NextClassCard(timetable: TimetableModel, allReminders: List<CourseReminder>,
                         val v = event.venue.clean()
                         val sl = event.seatLocation.clean()
                         val sn = event.seatNumber.clean()
-                        val rightStr = if (v == " " && sl == " " && sn == " ") " " else "$v - $sl ($sn)"
 
-                        Text(rightStr, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = themePrimary)
+                        if (v != " ") {
+                            Text(v, fontSize = 14.sp, fontWeight = FontWeight.Black, color = themeOnSurface)
+                        }
+                        val seatStr = if (sl == " " && sn == " ") " " else "$sl ($sn)"
+                        if (seatStr != " ") {
+                            Text(seatStr, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = themePrimary, modifier = Modifier.padding(top = 2.dp))
+                        }
                     } else if (event is ProcessedCourse) {
                         val activeReminder = allReminders.find { it.classId == event.classId }
                         Text(event.mergedSlot.clean(), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = themeOnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -328,6 +383,31 @@ fun NextClassCard(timetable: TimetableModel, allReminders: List<CourseReminder>,
                         else Text(event.venue.clean(), fontSize = 12.sp, color = themeOnSurfaceVariant)
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun HolidayRow(dateCal: Calendar, holidayName: String, isToday: Boolean, alpha: Float) {
+    val sdfDayShort = remember { SimpleDateFormat("EEE", Locale.ENGLISH) }
+    val emeraldGreen = Color(0xFF10B981)
+
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).alpha(alpha).clip(RoundedCornerShape(14.dp))
+            .background(Brush.horizontalGradient(listOf(emeraldGreen.copy(0.15f), Color.Transparent)))
+            .border(1.5.dp, emeraldGreen.copy(0.3f), RoundedCornerShape(14.dp))
+    ) {
+        Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(end = 16.dp)) {
+                Text(if (isToday) "TODAY" else dateCal.get(Calendar.DAY_OF_MONTH).toString(), fontSize = 14.sp, fontWeight = FontWeight.Black, color = emeraldGreen)
+                Text(sdfDayShort.format(dateCal.time), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Box(modifier = Modifier.width(1.dp).height(30.dp).background(emeraldGreen.copy(0.3f)))
+            Column(modifier = Modifier.padding(start = 16.dp)) {
+                Text("🌴 HOLIDAY", fontSize = 10.sp, fontWeight = FontWeight.Black, color = emeraldGreen, letterSpacing = 1.sp)
+                Spacer(Modifier.height(2.dp))
+                Text(holidayName, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
             }
         }
     }
@@ -366,16 +446,29 @@ fun ExamRow(dateCal: Calendar, exam: ExamScheduleModel, isToday: Boolean, isExpa
                     val v = exam.venue.clean()
                     val sl = exam.seatLocation.clean()
                     val sn = exam.seatNumber.clean()
-                    val rightStr = if (v == " " && sl == " " && sn == " ") " " else "$v and $sl ($sn)"
 
-                    Text(
-                        text = rightStr,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        textAlign = TextAlign.End,
-                        modifier = Modifier.padding(start = 8.dp)
-                    )
+                    Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(start = 8.dp)) {
+                        if (v != " ") {
+                            Text(
+                                text = v,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Black,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.End
+                            )
+                        }
+                        val seatStr = if (sl == " " && sn == " ") " " else "$sl ($sn)"
+                        if (seatStr != " ") {
+                            Text(
+                                text = seatStr,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = themePrimary,
+                                textAlign = TextAlign.End,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                    }
                 }
             }
 

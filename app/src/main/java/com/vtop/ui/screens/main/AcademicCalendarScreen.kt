@@ -71,7 +71,7 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
     val semesters = remember {
         val list = mutableListOf<SemesterCalendar>()
         try {
-            val jsonString = context.assets.open("bunk_cache.json").bufferedReader().use { it.readText() }
+            val jsonString = context.assets.open("academic_calendar.json").bufferedReader().use { it.readText() }
             val root = JSONObject(jsonString)
             val activeSemName = Vault.getSelectedSemester(context)[1] ?: "Current Semester"
 
@@ -225,12 +225,16 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
             TopAppBar(
                 title = { Text("Academic Calendar", fontSize = 20.sp, fontWeight = FontWeight.Medium) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier.padding(start = 4.dp) // Slight padding adjustment for touch target
+                    ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
+                    containerColor = Color.Transparent, // Transparent to blend with scaffold
+                    scrolledContainerColor = MaterialTheme.colorScheme.background, // Match background when scrolled
                     titleContentColor = MaterialTheme.colorScheme.onBackground,
                     navigationIconContentColor = MaterialTheme.colorScheme.onBackground
                 )

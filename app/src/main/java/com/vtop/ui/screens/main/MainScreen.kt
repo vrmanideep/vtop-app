@@ -54,7 +54,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.core.content.edit
 import androidx.glance.appwidget.updateAll
-import androidx.compose.material.icons.filled.Refresh
 import com.composables.icons.lucide.*
 import com.vtop.models.*
 import com.vtop.ui.VtopAnalyticsTab
@@ -75,6 +74,7 @@ import kotlin.math.roundToInt
 @SuppressLint("NewApi")
 @Composable
 fun MainScreen(
+    initialShortcutAction: String? = null,
     timetable: TimetableModel,
     attendanceData: List<AttendanceModel>,
     examsData: List<ExamScheduleModel>,
@@ -84,6 +84,13 @@ fun MainScreen(
 ) {
     val context = LocalContext.current
     val sharedPrefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
+
+    // INSTANT EVALUATION: Check if the semester is over the second the app opens
+    LaunchedEffect(examsData) {
+        if (examsData.isNotEmpty()) {
+            AppBridge.isSemesterCompleted.value = com.vtop.utils.SemesterTransitionEngine.checkIfLastFatIsOver(examsData)
+        }
+    }
 
     LaunchedEffect(Unit) {
         if (sharedPrefs.contains("CUSTOM_ACCENT")) {
@@ -98,7 +105,6 @@ fun MainScreen(
         }
     }
 
-    // Explicitly defaulting to "STATIC" if not defined
     var navStyle by remember {
         mutableStateOf(
             Vault.getNavStyle(context).let {
@@ -118,10 +124,16 @@ fun MainScreen(
         list
     }
 
-    val pagerState = rememberPagerState(pageCount = { navItems.size })
+    val initialPage = if (initialShortcutAction == "com.vtop.SHORTCUT_OUTINGS" && navItems.contains("OUTINGS")) {
+        navItems.indexOf("OUTINGS")
+    } else 0
+
+    val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { navItems.size })
     val coroutineScope = rememberCoroutineScope()
 
-    var activeOverlay by remember { mutableStateOf<String?>(null) }
+    var activeOverlay by remember {
+        mutableStateOf<String?>(if (initialShortcutAction == "com.vtop.SHORTCUT_SIMULATOR") "SIMULATOR" else null)
+    }
 
     val currentTab = navItems.getOrNull(pagerState.currentPage) ?: navItems.last()
 
@@ -190,30 +202,74 @@ fun MainScreen(
 
                     when (pageName) {
                         "HOME" -> {
-                            if (timetable.scheduleMap.isNotEmpty() || examsData.isNotEmpty()) {
-                                Timetable(timetable, attendanceData, examsData)
+                            if (AppBridge.isSemesterCompleted.value) {
+                                SemesterCompletedView()
+                            } else if (timetable.scheduleMap.isNotEmpty() || examsData.isNotEmpty()) {
+                                val holidaysMap = remember {
+                                    val map = mutableMapOf<String, String>()
+                                    try {
+                                        val jsonString = context.assets.open("academic_calendar.json").bufferedReader().use { it.readText() }
+                                        val jsonObject = org.json.JSONObject(jsonString)
+                                        val semesters = jsonObject.keys()
+
+                                        while (semesters.hasNext()) {
+                                            val semObj = jsonObject.getJSONObject(semesters.next())
+                                            if (semObj.has("holidays")) {
+                                                val hObj = semObj.getJSONObject("holidays")
+                                                val hKeys = hObj.keys()
+                                                while (hKeys.hasNext()) {
+                                                    val dateStr = hKeys.next()
+                                                    map[dateStr] = hObj.getString(dateStr)
+                                                }
+                                            }
+                                        }
+                                    } catch (e: Exception) { e.printStackTrace() }
+                                    map
+                                }
+
+                                Timetable(
+                                    timetable = timetable,
+                                    attendanceData = attendanceData,
+                                    examsData = examsData,
+                                    holidays = holidaysMap
+                                )
                             } else {
-                                Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No Timetable Data Found", color = MaterialTheme.colorScheme.onBackground) }
+                                Box(Modifier.fillMaxSize(), Alignment.Center) {
+                                    Text("No Timetable Data Found", color = MaterialTheme.colorScheme.onBackground)
+                                }
                             }
                         }
-                        "ATTENDANCE" -> Attendance(attendanceData = attendanceData, onLaunchSimulator = { activeOverlay = "SIMULATOR" })
-                        "EXAMS" -> Exams(exams = examsData)
-                        "MARKS" -> Marks(
-                            marksData = AppBridge.marksState.value,
-                            historySummary = AppBridge.historySummaryState.value,
-                            historyData = AppBridge.historyItemsState.value,
-                            onHistoryLoad = { handleSyncAndUpdateWidget("MARKS") }
-                        )
+                        "ATTENDANCE" -> {
+                            if (AppBridge.isSemesterCompleted.value) {
+                                SemesterCompletedView()
+                            } else {
+                                Attendance(attendanceData = attendanceData, onLaunchSimulator = { activeOverlay = "SIMULATOR" })
+                            }
+                        }
+                        "EXAMS" -> {
+                            if (AppBridge.isSemesterCompleted.value) {
+                                SemesterCompletedView()
+                            } else {
+                                Exams(exams = examsData)
+                            }
+                        }
+                        "MARKS" -> {
+                            // Marks remains visible even if semester is completed so users can see FAT results
+                            Marks(
+                                marksData = AppBridge.marksState.value,
+                                historySummary = AppBridge.historySummaryState.value,
+                                historyData = AppBridge.historyItemsState.value,
+                                onHistoryLoad = { handleSyncAndUpdateWidget("MARKS") }
+                            )
+                        }
                         "OUTINGS" -> VtopOutingsTab(outingsData = AppBridge.outingsState.value, handler = outingHandler)
                         "PROFILE" -> {
-                            // FIX: Cache Vault/JSON reads so they don't fire 60x a second during animations
                             var semInfo by remember { mutableStateOf(Vault.getSelectedSemester(context)) }
                             var creds by remember { mutableStateOf(Vault.getCredentials(context)) }
                             var actualReminders by remember { mutableStateOf(ReminderManager.loadReminders(context)) }
                             val semesterOptions = remember { Vault.getSemesterOptions(context) }
                             val lastSyncTime = remember { Vault.getLastSyncTime(context) }
 
-                            // Watch the global AppBridge state, only read from Vault if it's empty
                             val profileStateValue = AppBridge.profileState.value
                             val profileMap = remember(profileStateValue) {
                                 profileStateValue?.takeIf { it.isNotEmpty() } ?: Vault.getProfile(context)
@@ -266,7 +322,7 @@ fun MainScreen(
                                     val selectedOption = semesterOptions.find { it.name == newSemName }
                                     if (selectedOption != null) {
                                         Vault.saveSelectedSemester(context, selectedOption.id, selectedOption.name)
-                                        semInfo = Vault.getSelectedSemester(context) // Update state
+                                        semInfo = Vault.getSelectedSemester(context)
                                         handleSyncAndUpdateWidget("PROFILE")
                                     }
                                 },
@@ -274,14 +330,14 @@ fun MainScreen(
                                 currentPass = creds[1] ?: "",
                                 onCredentialsSave = { newReg, newPass ->
                                     Vault.saveCredentials(context, newReg, newPass)
-                                    creds = Vault.getCredentials(context) // Update state
+                                    creds = Vault.getCredentials(context)
                                     handleSyncAndUpdateWidget("PROFILE")
                                 },
                                 reminders = actualReminders,
                                 onDeleteReminder = { idToDelete ->
                                     val updated = actualReminders.filter { it.id != idToDelete }
                                     ReminderManager.saveReminders(context, updated)
-                                    actualReminders = updated // Update state instantly without re-reading disk
+                                    actualReminders = updated
                                     handleSyncAndUpdateWidget("NONE")
                                 },
                                 onNavigateToAnalytics = { activeOverlay = "ANALYTICS" },
@@ -361,6 +417,19 @@ fun MainScreen(
                     onCancel = { otpResolver.cancel(); AppBridge.currentOtpResolver.value = null }
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun SemesterCompletedView() {
+    Box(Modifier.fillMaxSize(), Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Lucide.GraduationCap, contentDescription = "Semester Completed", modifier = Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
+            Spacer(Modifier.height(24.dp))
+            Text("Semester Completed", fontWeight = FontWeight.Black, fontSize = 24.sp, color = MaterialTheme.colorScheme.onBackground)
+            Spacer(Modifier.height(8.dp))
+            Text("Awaiting next semester registration...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
         }
     }
 }

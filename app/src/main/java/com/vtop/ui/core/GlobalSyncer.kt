@@ -153,6 +153,7 @@ object GlobalSyncer {
         val html = client.fetchExamScheduleRawHtml(semId, null)
         val data = ExamScheduleParser.parse(html)
         Vault.saveExamSchedule(context, data)
+        com.vtop.utils.ExamSeatScheduler.buildExamQueue(context, data)
         withContext(Dispatchers.Main) { AppBridge.examsState.value = data }
     }
 

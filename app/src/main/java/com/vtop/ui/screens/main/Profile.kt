@@ -158,6 +158,7 @@ fun Profile(
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
@@ -173,6 +174,19 @@ fun Profile(
                     Spacer(Modifier.width(6.dp))
                     Text("Go Back", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
+            }
+
+            // Academic Calendar Text Button
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { isViewingAcademicCalendar = true }
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Academic Calendar", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(4.dp))
+                Icon(Icons.AutoMirrored.Filled.ArrowForwardIos, contentDescription = "Open Calendar", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(10.dp))
             }
         }
 
@@ -281,13 +295,6 @@ fun Profile(
                         arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
                     )
                 }
-            )
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-            SettingRow(
-                label = "Academic Calendar",
-                value = "View university schedule & holidays",
-                actionText = "Open",
-                onClick = { isViewingAcademicCalendar = true }
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
             SettingRow(
@@ -620,7 +627,6 @@ fun Profile(
                     Text("Update Available", fontWeight = FontWeight.Black, fontSize = 20.sp)
                     if (!updateInfo?.releaseTitle.isNullOrBlank()) {
                         Spacer(Modifier.height(4.dp))
-                        // FIX: Show the release TITLE here, not the Markdown notes
                         Text(
                             text = updateInfo!!.releaseTitle,
                             fontSize = 14.sp,
@@ -653,7 +659,6 @@ fun Profile(
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 0.5.sp
                         )
-                        // FIX: Use Markdown here to render the notes properly
                         Markdown(
                             content = updateInfo!!.releaseNotes,
                             modifier = Modifier.fillMaxWidth()
