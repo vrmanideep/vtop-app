@@ -62,7 +62,6 @@ public class VtopClient {
     public String getCsrfToken() { return this.csrfToken; }
     public String getUsername() { return this.username; }
 
-    // ADD THIS GETTER:
     public OkHttpClient getClient() {
         return this.client;
     }
@@ -88,7 +87,6 @@ public class VtopClient {
         private final Map<String, Cookie> memory = new ConcurrentHashMap<>();
 
         private static String cookieKey(Cookie c) {
-            // Cookie name is NOT unique. Domain + path matter.
             return c.name() + "@" + c.domain() + c.path();
         }
 
@@ -230,7 +228,7 @@ public class VtopClient {
             }
         } catch (Exception e) {
             Log.e(TAG, "Network error during session check", e);
-            throw new Exception("Network error. Please try syncing again.");
+            throw new VtopException.SessionExpired("Network error. Please try syncing again.");
         }
 
         if (listener != null) listener.onStatusUpdate("SESSION_EXPIRED");
@@ -238,12 +236,12 @@ public class VtopClient {
         return performLogin(context, listener);
     }
 
+
     // ================= LOGIN =================
     private boolean performLogin(Context context, LoginListener listener) throws Exception {
         if (listener != null) listener.onStatusUpdate("Opening VTOP...");
         Log.d(TAG, "[LOGIN] Begin login. Aligning with Rust flow...");
 
-        // STEP 1: Fetch Initial Page (Match Rust: GET /vtop/open/page)
         Request initReq = new Request.Builder()
                 .url(BASE_URL + "/open/page")
                 .get()
@@ -252,16 +250,14 @@ public class VtopClient {
         String csrfToken;
         try (Response res = client.newCall(initReq).execute()) {
             String initHtml = res.body() != null ? res.body().string() : "";
-            if (!res.isSuccessful()) throw new Exception("VTOP Server Error on init");
+            if (!res.isSuccessful()) throw new VtopException.SessionExpired("VTOP Server Error on init");
             csrfToken = extractToken(initHtml);
-            if (csrfToken.isEmpty()) throw new Exception("CSRF token not found on open/page");
+            if (csrfToken.isEmpty()) throw new VtopException.SessionExpired("CSRF token not found on open/page");
             persistCsrf(context, csrfToken);
         }
 
         if (listener != null) listener.onStatusUpdate("Fetching captcha...");
 
-        // STEP 2: Prelogin Setup (NO XMLHttpRequest header here!)
-        // OkHttp will follow the redirects natively and return the final login page.
         RequestBody setupBody = new FormBody.Builder()
                 .add("_csrf", csrfToken)
                 .add("flag", "VTOP")
@@ -275,10 +271,9 @@ public class VtopClient {
         String loginHtml;
         try (Response res = client.newCall(setupReq).execute()) {
             loginHtml = res.body() != null ? res.body().string() : "";
-            if (!res.isSuccessful()) throw new Exception("Prelogin setup failed");
+            if (!res.isSuccessful()) throw new VtopException.SessionExpired("Prelogin setup failed");
         }
 
-        // STEP 3: Extract Captcha & New CSRF with Retry Logic
         String base64Captcha = "";
         String newCsrf = "";
         int attempts = 0;
@@ -295,9 +290,8 @@ public class VtopClient {
             attempts++;
             if (attempts < maxRetries) {
                 Log.d(TAG, "[LOGIN] Captcha not found. Retrying... (" + attempts + "/" + maxRetries + ")");
-                Thread.sleep(1000); // Brief pause to prevent spamming
+                Thread.sleep(1000);
 
-                // Re-fetch the login page to get a fresh captcha and CSRF
                 Request retryReq = new Request.Builder()
                         .url(BASE_URL + "/login")
                         .get()
@@ -310,27 +304,24 @@ public class VtopClient {
         }
 
         if (base64Captcha == null || base64Captcha.isEmpty()) {
-            throw new Exception("Captcha not found after setup redirect (" + maxRetries + " attempts)");
+            throw new VtopException.SessionExpired("Captcha not found after setup redirect (" + maxRetries + " attempts)");
         }
 
         if (newCsrf != null && !newCsrf.isEmpty()) {
-            csrfToken = newCsrf;
-            persistCsrf(context, csrfToken);
+            this.csrfToken = newCsrf;
+            persistCsrf(context, this.csrfToken);
         }
 
-        // STEP 4: Solve Captcha
         byte[] captchaBytes = android.util.Base64.decode(base64Captcha, android.util.Base64.DEFAULT);
         android.graphics.Bitmap bitmap = android.graphics.BitmapFactory.decodeByteArray(captchaBytes, 0, captchaBytes.length);
         String captchaAnswer = new com.vtop.logic.CaptchaSolver(context).solve(bitmap);
         if (listener != null) listener.onStatusUpdate("Captcha solved");
 
-        // STEP 5: Login POST (Match Rust exact parameters)
         RequestBody loginBody = new FormBody.Builder()
-                .add("_csrf", csrfToken)
+                .add("_csrf", this.csrfToken)
                 .add("username", username)
                 .add("password", password)
                 .add("captchaStr", captchaAnswer)
-                // Note: loginMethod=V is removed to match Rust
                 .build();
 
         Request loginReq = new Request.Builder()
@@ -346,12 +337,12 @@ public class VtopClient {
 
             Log.d(TAG, "[LOGIN][5] POST /login http=" + res.code() + " finalUrl=" + finalUrl);
 
-            // SUCCESS CHECK (DIRECT)
+            // SUCCESS CHECK
             if (finalUrl.contains("/content") || resp.contains("Sign out")) {
                 if (resp.contains("Unable to process") || resp.length() < 1500) {
                     Log.e(TAG, "WAF Block detected. Printing HTML...");
                     printLargeLog(TAG, resp);
-                    throw new Exception("Session blocked by VTOP Firewall (Unidentified Browser)");
+                    throw new VtopException.WafBlocked("Session blocked by VTOP Firewall (Unidentified Browser)");
                 }
 
                 persistCsrf(context, extractToken(resp));
@@ -359,12 +350,26 @@ public class VtopClient {
                 return true;
             }
 
-            // OTP REQUIRED CHECK
-            if (resp.contains("securityOtpPending")) {
+            // ==========================================================
+            // 1. CRITICAL ERROR PARSING (Checked before generic Captcha)
+            // ==========================================================
+            if (resp.contains("Invalid Login") || resp.contains("User Id Not Available")) {
+                throw new VtopException.InvalidCredentials("Invalid username or password");
+            }
+            if (resp.contains("maximum invalid log-in") || resp.contains("locked")) {
+                throw new VtopException.AuthenticationFailed("Account locked due to maximum invalid attempts");
+            }
+
+            // ==========================================================
+            // 2. OTP REQUIRED CHECK
+            // ==========================================================
+            boolean isOtpActive = Pattern.compile("var\\s+securityOtpPending\\s*=\\s*'?true'?").matcher(resp).find();
+
+            if (isOtpActive) {
                 if (listener != null) listener.onStatusUpdate("OTP_REQUIRED");
                 Log.d(TAG, "[LOGIN][OTP] OTP required by server.");
 
-                if (listener == null) throw new Exception("OTP required but no UI listener is available");
+                if (listener == null) throw new VtopException.LoginOtpRequired("OTP required but no UI listener is available");
 
                 java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
                 final String[] otpHolder = new String[1];
@@ -375,13 +380,13 @@ public class VtopClient {
                 });
 
                 boolean received = latch.await(OTP_WAIT_TIMEOUT_SEC, java.util.concurrent.TimeUnit.SECONDS);
-                if (!received) throw new Exception("OTP timed out.");
+                if (!received) throw new VtopException.SessionExpired("OTP timed out.");
 
                 String otpCode = otpHolder[0];
-                if (otpCode == null || otpCode.trim().isEmpty()) throw new Exception("OTP cancelled");
+                if (otpCode == null || otpCode.trim().isEmpty()) throw new VtopException.SessionExpired("OTP cancelled");
 
                 String otpCsrf = extractToken(resp);
-                if (otpCsrf.isEmpty()) otpCsrf = csrfToken;
+                if (otpCsrf.isEmpty()) otpCsrf = this.csrfToken;
 
                 RequestBody otpBody = new FormBody.Builder()
                         .add("_csrf", otpCsrf)
@@ -400,7 +405,7 @@ public class VtopClient {
                     JSONObject json = new JSONObject(otpRespStr);
 
                     if (!"SUCCESS".equals(json.optString("status"))) {
-                        throw new Exception("OTP failed: " + json.optString("message"));
+                        throw new VtopException.LoginOtpIncorrect("OTP failed: " + json.optString("message"));
                     }
 
                     String redirectUrl = json.optString("redirectUrl");
@@ -413,7 +418,7 @@ public class VtopClient {
                     Request contentReq = new Request.Builder().url(redirectUrl).get().build();
                     try (Response finalRes = client.newCall(contentReq).execute()) {
                         String contentHtml = finalRes.body() != null ? finalRes.body().string() : "";
-                        if (!contentHtml.contains("Sign out")) throw new Exception("Session not established after OTP");
+                        if (!contentHtml.contains("Sign out")) throw new VtopException.SessionExpired("Session not established after OTP");
                         persistCsrf(context, extractToken(contentHtml));
                         if (listener != null) listener.onStatusUpdate("LOGIN_SUCCESS");
                         return true;
@@ -421,11 +426,13 @@ public class VtopClient {
                 }
             }
 
-            if (resp.toLowerCase().contains("captcha")) throw new Exception("Captcha incorrect");
-            if (resp.contains("Invalid Login") || resp.contains("User Id Not Available")) throw new Exception("Invalid credentials");
-
-            Log.e(TAG, "Unknown Login State.");
-            throw new Exception("Login failed: unknown state");
+            // ==========================================================
+            // 3. CAPTCHA / FALLBACK ERROR PARSING
+            // ==========================================================
+            // If the login wasn't successful, wasn't a bad password, and wasn't OTP...
+            // It is safe to assume the Captcha was rejected or the session disconnected mid-flight.
+            Log.e(TAG, "Captcha or unknown error. Final URL: " + finalUrl);
+            throw new VtopException.CaptchaFailed("Captcha incorrect or session expired");
         }
     }
 
@@ -451,7 +458,7 @@ public class VtopClient {
             }
             if (attempt < retries) Thread.sleep(1000);
         }
-        throw new Exception("Failed to fetch initial CSRF after " + retries + " attempts", lastError);
+        throw new VtopException.SessionExpired("Failed to fetch initial CSRF after " + retries + " attempts");
     }
 
     private void preLoginOrThrow(String csrfToken) throws Exception {
@@ -469,11 +476,11 @@ public class VtopClient {
             String resp = res.body() != null ? res.body().string() : "";
             Log.d(TAG, "[LOGIN][2] POST prelogin/setup http=" + res.code() + " bytes=" + resp.length() + " success=" + res.isSuccessful());
             if (!res.isSuccessful()) {
-                throw new Exception("Pre-login failed with status " + res.code());
+                throw new VtopException.SessionExpired("Pre-login failed with status " + res.code());
             }
         } catch (Exception e) {
             Log.e(TAG, "[LOGIN][2] Pre-login request failed: " + e.getMessage(), e);
-            throw new Exception("Pre-login request failed: " + e.getMessage(), e);
+            throw new VtopException.SessionExpired("Pre-login request failed: " + e.getMessage());
         }
     }
 
@@ -502,7 +509,7 @@ public class VtopClient {
             }
             if (attempt < retries) Thread.sleep(1000);
         }
-        throw new Exception("Failed to fetch captcha page after " + retries + " attempts", lastError);
+        throw new VtopException.SessionExpired("Failed to fetch captcha page after " + retries + " attempts");
     }
 
     private static class LoginPageData {
@@ -686,7 +693,6 @@ public class VtopClient {
         Log.d(TAG, "[FETCH] history");
 
         try {
-            // 🔥 STEP 1: Refresh CSRF from /content
             Request refreshReq = new Request.Builder()
                     .url(BASE_URL + "/content")
                     .get()
@@ -703,22 +709,17 @@ public class VtopClient {
                 }
             }
 
-            // 🔥 STEP 2: Build request with fresh CSRF
             RequestBody body = new FormBody.Builder()
                     .add("verifyMenu", "true")
                     .add("authorizedID", username)
                     .add("_csrf", csrfToken)
                     .build();
 
-            // 🔥 STEP 3: Execute
             String html = executeWafFetch(
                     "/examinations/examGradeView/StudentGradeHistory",
                     body,
                     "/content"
             );
-
-            // 🔥 DEBUG (VERY IMPORTANT)
-            //Log.d(TAG, "[HISTORY_HTML] " + html.substring(0, Math.min(300, html.length())));
 
             return html;
 
@@ -956,8 +957,6 @@ public class VtopClient {
             RequestBody body = formBuilder.build();
             String res = executeWafFetch(endpoint, body, "/content?");
 
-            // VTOP responds with the refreshed HTML of the table on success.
-            // If executeWafFetch didn't return null (session expired), it went through.
             if (res != null) {
                 Log.d(TAG, "VTOP Accepted Delete Request");
                 return true;
@@ -1040,7 +1039,6 @@ public class VtopClient {
                     }
             };
 
-            // FIX 1: Change "SSL" to "TLS" to negotiate modern TLS 1.2/1.3 matching modern Chrome
             final javax.net.ssl.SSLContext sslContext = javax.net.ssl.SSLContext.getInstance("TLS");
             sslContext.init(null, trustAllCerts, new java.security.SecureRandom());
 
@@ -1048,7 +1046,6 @@ public class VtopClient {
             builder.sslSocketFactory(sslContext.getSocketFactory(), (javax.net.ssl.X509TrustManager) trustAllCerts[0]);
             builder.hostnameVerifier((hostname, session) -> true);
 
-            // FIX 2: Refined interceptor
             builder.addNetworkInterceptor(chain -> {
                 Request original = chain.request();
                 Request.Builder rb = original.newBuilder()
@@ -1056,7 +1053,6 @@ public class VtopClient {
                         .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
                         .addHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
                         .addHeader("Accept-Language", "en-US,en;q=0.9")
-                        // Note: Intentionally leaving out Accept-Encoding so OkHttp handles GZIP natively
                         .addHeader("Upgrade-Insecure-Requests", "1")
                         .addHeader("sec-ch-ua", "\"Google Chrome\";v=\"123\", \"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"123\"")
                         .addHeader("sec-ch-ua-mobile", "?0")

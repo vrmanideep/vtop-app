@@ -8,9 +8,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import com.mikepenz.markdown.m3.Markdown
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -71,7 +73,7 @@ private fun formatReminderDate(dateStr: String): String {
     } catch (e: Exception) { dateStr }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun Profile(
     onBack: () -> Unit,
@@ -104,11 +106,10 @@ fun Profile(
     onDeleteReminder: (String) -> Unit,
     onNavigateToAnalytics: () -> Unit,
     lastSyncTime: String,
-    onSyncClick: () -> Unit
+    onSyncClick: (Boolean) -> Unit
 ) {
     var isViewingAcademicCalendar by remember { mutableStateOf(false) }
 
-    // If viewing the calendar, render it and stop rendering the rest of the profile screen
     if (isViewingAcademicCalendar) {
         AcademicCalendarScreen(onBack = { isViewingAcademicCalendar = false })
         return
@@ -176,7 +177,6 @@ fun Profile(
                 }
             }
 
-            // Academic Calendar Text Button
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
@@ -252,7 +252,10 @@ fun Profile(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onSyncClick() }
+                    .combinedClickable(
+                        onClick = { onSyncClick(false) },
+                        onLongClick = { onSyncClick(true) }
+                    )
                     .padding(16.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically

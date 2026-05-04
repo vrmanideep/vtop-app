@@ -2,7 +2,7 @@
     "Winter Semester 2025-26": {
         "id": "WIN 2025-26",
         "is_current": "true",
-        "start_date": "2026- 12- 09",
+        "start_date": "2026-01-05",
         "week_off": [
             "Sunday",
             "Monday"
@@ -109,8 +109,8 @@
             ]
         }
     },
-    "Fall Semester 2026-27": {
-        "id": "FALL 2026-27",
+    "FALL 2026-27": {
+        "id": "AP2026271",
         "is_current": "false",
         "start_date": "2026-07-21",
         "week_off": [

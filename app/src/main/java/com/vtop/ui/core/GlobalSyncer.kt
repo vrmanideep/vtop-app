@@ -7,6 +7,8 @@ import androidx.glance.appwidget.updateAll
 import com.vtop.widget.NextClassWidget
 import androidx.compose.runtime.mutableStateOf
 import com.vtop.network.VtopClient
+import com.vtop.network.VtopException
+import com.vtop.utils.NotificationHelper
 import com.vtop.utils.Vault
 import com.vtop.logic.*
 import com.vtop.widget.*
@@ -24,7 +26,8 @@ object GlobalSyncer {
     private const val TAG = "GLOBAL_SYNC"
     @Volatile private var activeSyncJob: kotlinx.coroutines.Job? = null
 
-    fun performSync(context: Context, priorityTab: String? = null) {
+    // ---> FIX: Added forceNewSession parameter here <---
+    fun performSync(context: Context, priorityTab: String? = null, forceNewSession: Boolean = false) {
         // Prevent double-tapping the sync button
         if (isSyncing.value) {
             Log.w(TAG, "performSync ignored: already syncing")
@@ -48,6 +51,14 @@ object GlobalSyncer {
                 val client = VtopClient(context, regNo, pass)
 
                 // ==========================================
+                // FORCE FRESH SESSION OVERRIDE
+                // ==========================================
+                if (forceNewSession) {
+                    Log.i(TAG, "Force Refresh Requested: Wiping existing session cookies.")
+                    client.reinitializeSession(context)
+                }
+
+                // ==========================================
                 // TASK 10: SMART CAPTCHA RETRY LOGIC
                 // ==========================================
                 var loginSuccess = false
@@ -56,24 +67,40 @@ object GlobalSyncer {
                 while (attempts < MAX_RETRY && !loginSuccess) {
                     Log.d(TAG, "Login Attempt ${attempts + 1} of $MAX_RETRY")
 
-                    loginSuccess = client.autoLogin(context, object : VtopClient.LoginListener {
-                        override fun onStatusUpdate(message: String) {
-                            Log.d(TAG, "Status update: $message")
-                        }
-                        override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
-                            syncScope.launch(Dispatchers.Main) { AppBridge.currentOtpResolver.value = resolver }
-                        }
-                    })
+                    try {
+                        loginSuccess = client.autoLogin(context, object : VtopClient.LoginListener {
+                            override fun onStatusUpdate(message: String) {
+                                Log.d(TAG, "Status update: $message")
+                            }
+                            override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
+                                syncScope.launch(Dispatchers.Main) { AppBridge.currentOtpResolver.value = resolver }
+                            }
+                        })
+                    } catch (e: VtopException.InvalidCredentials) {
+                        throw e // Rethrow to outer catch to wipe creds and notify user
+                    } catch (e: VtopException.AuthenticationFailed) {
+                        throw e // Rethrow to outer catch to notify user
+                    } catch (e: VtopException.CaptchaFailed) {
+                        // Explicitly catch CaptchaFailed so it triggers a retry
+                        Log.w(TAG, "Attempt ${attempts + 1} failed: Captcha incorrect")
+                        loginSuccess = false
+                    } catch (e: Exception) {
+                        // Catch network timeouts or unknown errors to allow retries
+                        Log.w(TAG, "Attempt ${attempts + 1} failed: ${e.message}")
+                        loginSuccess = false
+                    }
 
                     if (!loginSuccess) {
                         attempts++
-                        Log.e(TAG, "Login or Captcha failed. Retrying... ($attempts/$MAX_RETRY)")
-                        client.reinitializeSession(context) // Wipes old cookies for a fresh try
+                        if (attempts < MAX_RETRY) {
+                            Log.e(TAG, "Login or Captcha failed. Retrying... ($attempts/$MAX_RETRY)")
+                            client.reinitializeSession(context) // Wipes old cookies for a fresh try
+                        }
                     }
                 }
 
                 if (!loginSuccess) {
-                    throw Exception("Failed to bypass Captcha after $MAX_RETRY attempts. VTOP might be blocking requests.")
+                    throw Exception("Failed to login after $MAX_RETRY attempts. VTOP might be blocking requests.")
                 }
 
                 withContext(Dispatchers.Main) { AppBridge.syncStatus.value = "SYNCING" }
@@ -115,9 +142,31 @@ object GlobalSyncer {
                 }
                 withContext(Dispatchers.Main) { Toast.makeText(context, "Sync Complete!", Toast.LENGTH_SHORT).show() }
 
+            } catch (e: VtopException.InvalidCredentials) {
+                Log.e(TAG, "Sync Error: Invalid credentials", e)
+                //Vault.saveCredentials(context, "", "") // Wipe credentials
+                NotificationHelper.showNotification(
+                    context = context,
+                    title = "VTOP Sync Failed",
+                    message = "Your password may have changed. Please open the app and log in again.",
+                    notificationId = 999
+                )
+                withContext(Dispatchers.Main) { Toast.makeText(context, "Sync Error: Invalid Credentials", Toast.LENGTH_LONG).show() }
+
+            } catch (e: VtopException.AuthenticationFailed) {
+                Log.e(TAG, "Sync Error: Account locked", e)
+                NotificationHelper.showNotification(
+                    context = context,
+                    title = "VTOP Account Locked",
+                    message = "Max attempts reached. Please login in VTOP manually and re-enable sync before syncing.",
+                    notificationId = 998
+                )
+                withContext(Dispatchers.Main) { Toast.makeText(context, "Sync Error: Account Locked", Toast.LENGTH_LONG).show() }
+
             } catch (e: Exception) {
                 Log.e(TAG, "Sync Error", e)
                 withContext(Dispatchers.Main) { Toast.makeText(context, "Sync Error: ${e.message}", Toast.LENGTH_LONG).show() }
+
             } finally {
                 withContext(Dispatchers.Main) {
                     AppBridge.syncStatus.value = "IDLE"

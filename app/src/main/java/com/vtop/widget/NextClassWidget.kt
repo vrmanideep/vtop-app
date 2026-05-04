@@ -30,6 +30,7 @@ import com.vtop.ui.screens.main.ProcessedCourse
 import com.vtop.ui.screens.main.processAndMergeCourses
 import com.vtop.models.ExamScheduleModel
 import com.vtop.utils.Vault
+import com.vtop.utils.SemesterTransitionEngine
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
@@ -44,7 +45,6 @@ class NextClassWidgetReceiver : GlanceAppWidgetReceiver() {
     @OptIn(DelicateCoroutinesApi::class)
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
-        // Instantly catches the Smart Tick or a time change to redraw the UI
         if (intent.action == "com.vtop.widget.SMART_TICK" ||
             intent.action == Intent.ACTION_TIME_CHANGED ||
             intent.action == Intent.ACTION_TIMEZONE_CHANGED ||
@@ -174,8 +174,9 @@ class NextClassWidget : GlanceAppWidget() {
                 }
             }
 
-            var semesterEnded = false
-            if (bunkCache.lastInstructionalDay.isNotEmpty()) {
+            // --- SEMESTER TRANSITION ALIGNED WITH VTOP SYNC WORKER ---
+            var semesterEnded = SemesterTransitionEngine.checkIfLastFatIsOver(exams)
+            if (!semesterEnded && bunkCache.lastInstructionalDay.isNotEmpty() && exams.isEmpty()) {
                 try {
                     val endMs = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).parse(bunkCache.lastInstructionalDay)?.time ?: 0L
                     if (cal.timeInMillis > endMs + 86400000L) semesterEnded = true
@@ -188,7 +189,7 @@ class NextClassWidget : GlanceAppWidget() {
             var finalExam: ExamScheduleModel? = null
             var finalCourse: ProcessedCourse? = null
 
-            // 3. EXAM EVALUATION
+            // 3. EXAM EVALUATION (WITH TARGETED RELEASE TIME OVERRIDE)
             val todayExams = exams.filter { isDateMatching(it.examDate, cal) }
             val validExams = mutableListOf<Pair<ExamScheduleModel, Pair<Long, Long>>>()
             for (exam in todayExams) {
@@ -198,14 +199,54 @@ class NextClassWidget : GlanceAppWidget() {
                     validExams.add(Pair(exam, parsed))
                     eventTimes.add(parsed.first) // Alarm at Start
                     eventTimes.add(parsed.second) // Alarm at End
-                    eventTimes.add(parsed.first - (35 * 60 * 1000L)) // Alarm at T-35
+
+                    val examStr = exam.toString().uppercase()
+                    val releaseCal = Calendar.getInstance().apply { timeInMillis = parsed.first }
+                    if (examStr.contains("CAT2")) {
+                        releaseCal.set(Calendar.HOUR_OF_DAY, 12)
+                        releaseCal.set(Calendar.MINUTE, 1)
+                    } else { // FAT, CAT1, and fallback
+                        releaseCal.set(Calendar.HOUR_OF_DAY, 7)
+                        releaseCal.set(Calendar.MINUTE, 1)
+                    }
+                    releaseCal.set(Calendar.SECOND, 0)
+                    releaseCal.set(Calendar.MILLISECOND, 0)
+
+                    eventTimes.add(releaseCal.timeInMillis) // Alarm at Release Time
                 }
             }
 
-            for ((exam, times) in validExams) {
-                if (times.second > now) {
-                    finalExam = exam
+            var candidateExamIndex = -1
+            for (i in validExams.indices) {
+                if (validExams[i].second.second > now) {
+                    candidateExamIndex = i
                     break
+                }
+            }
+
+            if (candidateExamIndex != -1) {
+                finalExam = validExams[candidateExamIndex].first
+
+                // THE TARGETED TIME OVERRIDE FOR EXAMS
+                if (candidateExamIndex + 1 < validExams.size) {
+                    val nextExamPair = validExams[candidateExamIndex + 1]
+                    val nextStartMs = nextExamPair.second.first
+                    val nextExamStr = nextExamPair.first.toString().uppercase()
+
+                    val releaseCal = Calendar.getInstance().apply { timeInMillis = nextStartMs }
+                    if (nextExamStr.contains("CAT2")) {
+                        releaseCal.set(Calendar.HOUR_OF_DAY, 12)
+                        releaseCal.set(Calendar.MINUTE, 1)
+                    } else {
+                        releaseCal.set(Calendar.HOUR_OF_DAY, 7)
+                        releaseCal.set(Calendar.MINUTE, 1)
+                    }
+                    releaseCal.set(Calendar.SECOND, 0)
+                    releaseCal.set(Calendar.MILLISECOND, 0)
+
+                    if (now >= releaseCal.timeInMillis && now < nextStartMs) {
+                        finalExam = nextExamPair.first
+                    }
                 }
             }
 
@@ -236,7 +277,7 @@ class NextClassWidget : GlanceAppWidget() {
                 if (candidateIndex != -1) {
                     finalCourse = validCourses[candidateIndex].first
 
-                    // THE 35-MIN OVERRIDE
+                    // THE 35-MIN OVERRIDE FOR CLASSES
                     if (candidateIndex + 1 < validCourses.size) {
                         val nextCoursePair = validCourses[candidateIndex + 1]
                         val nextStartMs = nextCoursePair.second.first
@@ -269,7 +310,7 @@ class NextClassWidget : GlanceAppWidget() {
                 ) {
                     when {
                         semesterEnded -> EmptyWidgetContent("Semester Completed")
-                        finalExam != null -> ExamWidgetContent(context, finalExam)
+                        finalExam != null -> ExamWidgetContent(context, finalExam!!)
                         finalCourse != null -> {
                             val activeReminder = reminders.find { it.classId == finalCourse!!.classId }
                             ClassWidgetContent(context, finalCourse!!, activeReminder)

@@ -9,6 +9,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.ExistingWorkPolicy
 import com.vtop.network.VtopClient
+import com.vtop.network.VtopException
 import com.vtop.utils.NotificationHelper
 import com.vtop.utils.Vault
 import com.vtop.logic.ExamScheduleParser
@@ -43,24 +44,48 @@ class VtopSyncWorker(
 
             val client = VtopClient(context, regNo, password)
 
-            // --- 0. SMART LOGIN LOGIC ---
+            // --- 0. SMART LOGIN & ERROR TRAFFIC COP ---
             var loginSuccess = false
             var attempts = 0
             while (attempts < MAX_RETRY && !loginSuccess) {
-                loginSuccess = client.autoLogin(context, object : VtopClient.LoginListener {
-                    override fun onStatusUpdate(message: String) {}
-                    override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
-                        Log.w(TAG, "OTP Required during background sync. Aborting.")
+                try {
+                    loginSuccess = client.autoLogin(context, object : VtopClient.LoginListener {
+                        override fun onStatusUpdate(message: String) {}
+                        override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
+                            Log.w(TAG, "OTP Required during background sync. Aborting.")
+                        }
+                    })
+                    if (!loginSuccess) {
+                        attempts++
+                        client.reinitializeSession(context)
                     }
-                })
-                if (!loginSuccess) {
+                } catch (e: VtopException.InvalidCredentials) {
+                    Log.e(TAG, "Invalid credentials. Wiping saved creds and aborting worker.")
+                    Vault.saveCredentials(context, "", "") // Wipe credentials
+                    NotificationHelper.showNotification(
+                        context = context,
+                        title = "VTOP Sync Failed",
+                        message = "Your password may have changed. Please open the app and log in again.",
+                        notificationId = 999
+                    )
+                    return@withContext Result.failure() // Do not retry
+                } catch (e: VtopException.AuthenticationFailed) {
+                    Log.e(TAG, "Account locked. Aborting sync to prevent further locks.")
+                    NotificationHelper.showNotification(
+                        context = context,
+                        title = "VTOP Account Locked",
+                        message = "Max attempts reached. Please login in VTOP manually and re-enable sync before syncing.",
+                        notificationId = 998
+                    )
+                    return@withContext Result.failure() // Do not retry
+                } catch (e: Exception) {
                     attempts++
                     client.reinitializeSession(context)
                 }
             }
 
             if (!loginSuccess) {
-                return@withContext Result.retry()
+                return@withContext Result.retry() // Standard timeout, allow Android to schedule a retry
             }
 
             // --- 1. CHECK ATTENDANCE (RAW DATA ONLY) ---
@@ -82,11 +107,9 @@ class VtopSyncWorker(
                         !it.seatNumber.isNullOrBlank() && !it.seatNumber.contains("TBD", ignoreCase = true)
                     }
 
-                    val messageText = if (updatedExam != null) {
-                        "Exam details: ${updatedExam.courseCode}, ${updatedExam.examType}, ${updatedExam.venue}, ${updatedExam.seatLocation} and ${updatedExam.seatNumber}."
-                    } else {
-                        "Your exam seating allotment has been updated."
-                    }
+                    val messageText = updatedExam?.let {
+                        " ${it.venue}  |   Seat ${it.seatLocation} (${it.seatNumber})  |  📚${it.courseCode} ${it.examType}"
+                    } ?: "Your exam seating allotment has been updated."
 
                     NotificationHelper.showNotification(
                         context = context,
@@ -125,14 +148,10 @@ class VtopSyncWorker(
             // --- 4. SEMESTER TRANSITION ENGINE PIPELINE ---
             val savedExams = Vault.getExamSchedule(context)
             if (SemesterTransitionEngine.checkIfLastFatIsOver(savedExams)) {
-                // 4A. Trigger the "Semester Completed" UI immediately
                 withContext(Dispatchers.Main) { AppBridge.isSemesterCompleted.value = true }
-
-                // 4B. Attempt to find the user's enrollment for the next chronological semester
                 val successfullySwitched = SemesterTransitionEngine.attemptAutoSwitch(context)
 
                 if (successfullySwitched) {
-                    // 4C. If they are enrolled, instantly queue another sync worker to pull the new timetable
                     val transitionRequest = OneTimeWorkRequestBuilder<VtopSyncWorker>().build()
                     WorkManager.getInstance(context).enqueueUniqueWork(
                         "TRANSITION_SYNC",

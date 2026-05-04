@@ -2,8 +2,10 @@ package com.vtop.ui.screens.main
 
 import android.annotation.SuppressLint
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -11,6 +13,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -18,10 +22,12 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -30,6 +36,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vtop.utils.Vault
+import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -49,6 +56,9 @@ data class AcademicEvent(
 
 data class SemesterCalendar(
     val semesterName: String,
+    val startDateFormatted: String,
+    val lastInstructionalDayFormatted: String,
+    val weekOffs: String,
     val events: List<AcademicEvent>,
     val isCurrent: Boolean
 )
@@ -167,24 +177,40 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
             }
 
             val semesterKeys = root.keys()
+            val sdfDisplay = SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH)
+            val sdfParse = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
+
             while (semesterKeys.hasNext()) {
                 val semKey = semesterKeys.next()
+                if (semKey == "blocked_dates") continue // Ignore legacy array structure
+
                 val semObj = root.optJSONObject(semKey)
 
                 if (semObj != null) {
                     val semesterEvents = mutableListOf<AcademicEvent>()
                     if (semObj.has("holidays")) semesterEvents.addAll(parseCategory(semObj.getJSONObject("holidays"), "Holiday"))
                     if (semObj.has("exams")) semesterEvents.addAll(parseCategory(semObj.getJSONObject("exams"), "Exam"))
+                    if (semObj.has("events")) semesterEvents.addAll(parseCategory(semObj.getJSONObject("events"), "Event"))
 
                     semesterEvents.sortBy { it.sortIndex }
-                    val isCurrent = semKey.equals(activeSemName, ignoreCase = true)
-                    list.add(SemesterCalendar(semKey, semesterEvents, isCurrent))
-                }
-            }
+                    val isCurrent = semKey.equals(activeSemName, ignoreCase = true) || semObj.optString("is_current") == "true"
 
-            if (list.isEmpty() && root.has("blocked_dates")) {
-                val blocked = root.getJSONObject("blocked_dates")
-                list.add(SemesterCalendar(activeSemName, parseCategory(blocked, "Event"), isCurrent = true))
+                    // Extract and format new metadata fields
+                    val startDateRaw = semObj.optString("start_date", "")
+                    val lastDayRaw = semObj.optString("last_instructional_day", "")
+
+                    val startDateFmt = try { sdfDisplay.format(sdfParse.parse(startDateRaw)!!) } catch(e: Exception) { startDateRaw }
+                    val lastDayFmt = try { sdfDisplay.format(sdfParse.parse(lastDayRaw)!!) } catch(e: Exception) { lastDayRaw }
+
+                    val weekOffArr = semObj.optJSONArray("week_off")
+                    val weekOffs = if (weekOffArr != null) {
+                        (0 until weekOffArr.length()).map { weekOffArr.getString(it) }.joinToString(", ")
+                    } else {
+                        "Sunday" // Fallback
+                    }
+
+                    list.add(SemesterCalendar(semKey, startDateFmt, lastDayFmt, weekOffs, semesterEvents, isCurrent))
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -205,7 +231,7 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
     }
 
     var selectedFilter by remember { mutableStateOf("All") }
-    val filterOptions = listOf("All", "Exams", "Holidays")
+    val filterOptions = listOf("All", "Exams", "Holidays", "Events")
 
     // Filter the semesters based on chip selection
     val filteredSemesters = remember(semesters, selectedFilter) {
@@ -213,11 +239,17 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
             val filteredEvents = if (selectedFilter == "All") {
                 sem.events
             } else {
-                val targetCategory = if (selectedFilter == "Exams") "Exam" else "Holiday"
+                val targetCategory = if (selectedFilter == "Exams") "Exam" else if (selectedFilter == "Holidays") "Holiday" else "Event"
                 sem.events.filter { it.category.equals(targetCategory, ignoreCase = true) }
             }
-            if (filteredEvents.isEmpty()) null else sem.copy(events = filteredEvents)
+            if (filteredEvents.isEmpty() && selectedFilter != "All") null else sem.copy(events = filteredEvents)
         }
+    }
+
+    // Find the index of the "Current" semester for dimming calculations
+    val currentSemIndex = remember(filteredSemesters) {
+        val idx = filteredSemesters.indexOfFirst { it.isCurrent }
+        if (idx >= 0) idx else 0
     }
 
     Scaffold(
@@ -227,14 +259,14 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                 navigationIcon = {
                     IconButton(
                         onClick = onBack,
-                        modifier = Modifier.padding(start = 4.dp) // Slight padding adjustment for touch target
+                        modifier = Modifier.padding(start = 4.dp)
                     ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent, // Transparent to blend with scaffold
-                    scrolledContainerColor = MaterialTheme.colorScheme.background, // Match background when scrolled
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onBackground,
                     navigationIconContentColor = MaterialTheme.colorScheme.onBackground
                 )
@@ -280,8 +312,12 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                         )
                     }
                 } else {
-                    items(filteredSemesters) { semester ->
-                        SemesterTimelineCard(semester, todayDate)
+                    itemsIndexed(filteredSemesters) { index, semester ->
+                        // Calculate opacity based on distance from current semester
+                        val distance = kotlin.math.abs(index - currentSemIndex)
+                        val baseOpacity = (1f - (distance * 0.25f)).coerceIn(0.35f, 1f)
+
+                        SemesterTimelineCard(semester, todayDate, baseOpacity)
                     }
                 }
             }
@@ -390,9 +426,28 @@ fun CountdownCard(modifier: Modifier, label: String, event: AcademicEvent, today
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun SemesterTimelineCard(semester: SemesterCalendar, todayDate: Date) {
+fun SemesterTimelineCard(semester: SemesterCalendar, todayDate: Date, baseOpacity: Float = 1f) {
     var expanded by remember { mutableStateOf(semester.isCurrent) }
+
+    // If user expands a past/dimmed semester, animate it to full opacity (1f) so it's readable
+    val targetOpacity = if (expanded) 1f else baseOpacity
+    val animatedOpacity by animateFloatAsState(targetValue = targetOpacity, label = "opacityAnim")
+
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+
+    // When the card expands, wait a split second for the animation to finish, then auto-scroll to the TODAY marker
+    LaunchedEffect(expanded) {
+        if (expanded) {
+            delay(350)
+            try {
+                bringIntoViewRequester.bringIntoView()
+            } catch (e: Exception) {
+                // Ignore if the user interrupts the scroll manually
+            }
+        }
+    }
 
     Card(
         shape = RoundedCornerShape(16.dp),
@@ -400,6 +455,7 @@ fun SemesterTimelineCard(semester: SemesterCalendar, todayDate: Date) {
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
         modifier = Modifier
             .fillMaxWidth()
+            .alpha(animatedOpacity) // Applied the dimming/fade effect here!
             .animateContentSize(animationSpec = tween(300))
     ) {
         Column {
@@ -437,24 +493,69 @@ fun SemesterTimelineCard(semester: SemesterCalendar, todayDate: Date) {
             }
 
             if (expanded) {
+                if (semester.startDateFormatted.isNotBlank() && semester.lastInstructionalDayFormatted.isNotBlank()) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                    ) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column {
+                                Text("COMMENCEMENT", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+                                Spacer(Modifier.height(2.dp))
+                                Text(semester.startDateFormatted, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text("LAST INSTRUCTIONAL DAY", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+                                Spacer(Modifier.height(2.dp))
+                                Text(semester.lastInstructionalDayFormatted, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        if (semester.weekOffs.isNotBlank()) {
+                            Spacer(Modifier.height(10.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Outlined.Info, contentDescription = "Info", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(12.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Regular Week Offs: ${semester.weekOffs}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+                }
+
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp)
                 ) {
                     var todayMarkerPlaced = false
 
-                    semester.events.forEachIndexed { index, event ->
-                        if (!todayMarkerPlaced && !event.startDate.before(todayDate)) {
-                            TodayDividerMarker()
-                            todayMarkerPlaced = true
+                    if (semester.events.isEmpty()) {
+                        Text(
+                            text = "No events matched the filter for this semester.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(16.dp)
+                        )
+                    } else {
+                        semester.events.forEachIndexed { index, event ->
+                            if (!todayMarkerPlaced && !event.startDate.before(todayDate)) {
+                                // Attach the scroll requester to the TODAY marker
+                                TodayDividerMarker(Modifier.bringIntoViewRequester(bringIntoViewRequester))
+                                todayMarkerPlaced = true
+                            }
+
+                            val isLast = index == semester.events.lastIndex && todayMarkerPlaced
+                            TimelineEventRow(event, isLast)
                         }
 
-                        val isLast = index == semester.events.lastIndex && todayMarkerPlaced
-                        TimelineEventRow(event, isLast)
-                    }
-
-                    if (!todayMarkerPlaced) {
-                        TodayDividerMarker()
+                        if (!todayMarkerPlaced) {
+                            // If all events are in the past, place TODAY at the very end
+                            TodayDividerMarker(Modifier.bringIntoViewRequester(bringIntoViewRequester))
+                        }
                     }
                 }
             }
@@ -463,9 +564,9 @@ fun SemesterTimelineCard(semester: SemesterCalendar, todayDate: Date) {
 }
 
 @Composable
-fun TodayDividerMarker() {
+fun TodayDividerMarker(modifier: Modifier = Modifier) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -485,7 +586,11 @@ fun TodayDividerMarker() {
 
 @Composable
 fun TimelineEventRow(event: AcademicEvent, isLast: Boolean) {
-    val indicatorColor = if (event.category.equals("Exam", ignoreCase = true)) Color(0xFF8B5CF6) else Color(0xFF4ADE80)
+    val indicatorColor = when {
+        event.category.equals("Exam", ignoreCase = true) -> Color(0xFF8B5CF6) // Purple
+        event.category.equals("Event", ignoreCase = true) -> Color(0xFF3B82F6) // Blue
+        else -> Color(0xFF4ADE80) // Green
+    }
 
     Row(
         modifier = Modifier

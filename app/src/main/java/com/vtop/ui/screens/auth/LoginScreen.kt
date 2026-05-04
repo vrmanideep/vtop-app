@@ -38,6 +38,7 @@ import com.vtop.ui.theme.*
 import com.vtop.logic.*
 import kotlinx.coroutines.delay
 import org.json.JSONObject
+import java.io.FileNotFoundException
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -228,6 +229,20 @@ private fun SemesterPickerView(semesters: List<Map<String, String>>, isDownloadi
     val context = LocalContext.current
     val activeKeys = remember { getActiveSemesterKeysFromCache(context) }
 
+    // First, find the index of the officially "current" semester
+    val currentSemIndex = remember(semesters, activeKeys) {
+        val idx = semesters.indexOfFirst { sem ->
+            val semName = sem["name"] ?: ""
+            val semId = sem["id"] ?: ""
+            if (activeKeys.isNotEmpty()) {
+                activeKeys.any { it.equals(semName, ignoreCase = true) || it.equals(semId, ignoreCase = true) }
+            } else {
+                sem["isCurrent"] == "true"
+            }
+        }
+        if (idx >= 0) idx else 0
+    }
+
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp).systemBarsPadding(),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -249,14 +264,11 @@ private fun SemesterPickerView(semesters: List<Map<String, String>>, isDownloadi
                     val semName = sem["name"] ?: ""
                     val semId = sem["id"] ?: ""
 
-                    // Prioritize exact date math from bunk_cache.json. Fallback to API/Index if empty.
-                    val isCurrent = if (activeKeys.isNotEmpty()) {
-                        activeKeys.any { it.equals(semName, ignoreCase = true) || it.equals(semId, ignoreCase = true) }
-                    } else {
-                        sem["isCurrent"] == "true" || (sem["isCurrent"] == null && index == 0)
-                    }
+                    val isCurrent = index == currentSemIndex
 
-                    val opacity = if (isCurrent) 1f else 0.6f
+                    // Calculate distance from the current semester to dim gradually (drops by 0.25 opacity per step away)
+                    val distance = kotlin.math.abs(index - currentSemIndex)
+                    val opacity = (1f - (distance * 0.25f)).coerceIn(0.35f, 1f)
 
                     Card(
                         shape = RoundedCornerShape(16.dp),
@@ -302,7 +314,7 @@ private fun SemesterPickerView(semesters: List<Map<String, String>>, isDownloadi
 private fun getActiveSemesterKeysFromCache(context: Context): List<String> {
     val activeKeys = mutableListOf<String>()
     try {
-        val jsonStr = context.assets.open("bunk_cache.json").bufferedReader().use { it.readText() }
+        val jsonStr = context.assets.open("academic_calendar.json").bufferedReader().use { it.readText() }
         val root = JSONObject(jsonStr)
         val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
         val now = System.currentTimeMillis()
@@ -344,6 +356,8 @@ private fun getActiveSemesterKeysFromCache(context: Context): List<String> {
                 }
             }
         }
+    } catch (e: FileNotFoundException) {
+        // Silently ignore if the cache file hasn't been created yet
     } catch (e: Exception) {
         e.printStackTrace()
     }
@@ -353,7 +367,7 @@ private fun getActiveSemesterKeysFromCache(context: Context): List<String> {
 private fun loadSemestersFromCache(context: Context): List<Map<String, String>> {
     val sems = mutableListOf<Map<String, String>>()
     try {
-        val jsonStr = context.assets.open("bunk_cache.json").bufferedReader().use { it.readText() }
+        val jsonStr = context.assets.open("academic_calendar.json").bufferedReader().use { it.readText() }
         val root = JSONObject(jsonStr)
 
         if (root.has("semester")) {
@@ -373,6 +387,8 @@ private fun loadSemestersFromCache(context: Context): List<Map<String, String>> 
                 }
             }
         }
+    } catch (e: FileNotFoundException) {
+        // Silently ignore if the cache file hasn't been created yet
     } catch (e: Exception) {
         e.printStackTrace()
     }

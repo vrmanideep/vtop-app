@@ -288,7 +288,7 @@ object CalendarSync {
         var lastDay = ""
 
         try {
-            val jsonStr = context.assets.open("bunk_cache.json").bufferedReader().use { it.readText() }
+            val jsonStr = context.assets.open("academic_calendar.json").bufferedReader().use { it.readText() }
             val root = JSONObject(jsonStr)
 
             if (root.has("semester")) {

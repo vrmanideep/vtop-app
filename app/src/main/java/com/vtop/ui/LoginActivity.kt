@@ -32,6 +32,10 @@ import java.util.Calendar
 import java.util.Locale
 
 class LoginActivity : ComponentActivity() {
+
+    // THIS IS THE FIX: We store the active session here after the first login succeeds
+    private var activeVtopClient: VtopClient? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -102,6 +106,9 @@ class LoginActivity : ComponentActivity() {
                                     }
 
                                     if (loginSuccess) {
+                                        // SAVE THE ACTIVE CLIENT SO WE DON'T LOSE THE SESSION COOKIES
+                                        activeVtopClient = client
+
                                         val semestersList = client.fetchSemesters()
                                         val firstSemName = semestersList.firstOrNull()?.get("name") ?: ""
                                         val currentIndex = getActiveSemesterIndex(this@LoginActivity, firstSemName)
@@ -140,79 +147,82 @@ class LoginActivity : ComponentActivity() {
 
                                 val currentCreds = Vault.getCredentials(this@LoginActivity)
                                 val reg = currentCreds[0] ?: ""
-                                val pwd = currentCreds[1] ?: ""
+
+                                // GRAB THE SAVED CLIENT INSTEAD OF CREATING A NEW ONE
+                                val client = activeVtopClient
+                                if (client == null) {
+                                    Log.e("LOGIN_SYNC", "Critical Error: Session client was lost between screens.")
+                                    withContext(Dispatchers.Main) {
+                                        LoginBridge.loginError.value = "Session lost. Please try logging in again."
+                                        LoginBridge.currentState.value = AuthState.FORM
+                                    }
+                                    return@launch
+                                }
 
                                 try {
-                                    val client = VtopClient(this@LoginActivity, reg, pwd)
+                                    val profileHtml = client.fetchProfileRawHtml(null)
+                                    val timetableHtml = client.fetchTimetableRawHtml(semId, null)
+                                    val attendanceHtml = client.fetchAttendanceRawHtml(semId, null)
+                                    val examsHtml = client.fetchExamScheduleRawHtml(semId, null)
+                                    val marksHtml = client.fetchMarksRawHtml(semId, null)
+                                    val gradesHtml = client.fetchGradesRawHtml(semId, null)
+                                    val historyHtml = client.fetchHistoryRawHtml(null)
+                                    val generalOutingHtml = client.fetchGeneralOutingRawHtml(reg, null)
+                                    val weekendOutingHtml = client.fetchWeekendOutingRawHtml(reg, null)
 
-                                    var loginSuccess = false
-                                    var attempts = 0
-                                    val maxAttempts = 3
+                                    val timetableData = try { TimetableParser.parse(timetableHtml) } catch (e: Exception) { Log.e("LOGIN_SYNC", "Timetable parse failed", e); com.vtop.models.TimetableModel() }
+                                    val examsData = try { ExamScheduleParser.parse(examsHtml) } catch (e: Exception) { Log.e("LOGIN_SYNC", "Exams parse failed", e); emptyList() }
+                                    val attendanceData = try { AttendanceParser.parseSummary(attendanceHtml) } catch (e: Exception) { Log.e("LOGIN_SYNC", "Attendance parse failed", e); emptyList() }
+                                    val marksData = try { MarksParser.parseMarks(marksHtml) } catch (e: Exception) { Log.e("LOGIN_SYNC", "Marks parse failed", e); emptyList() }
+                                    val gradesData = try { MarksParser.parseGrades(gradesHtml) } catch (e: Exception) { Log.e("LOGIN_SYNC", "Grades parse failed", e); emptyList() }
+                                    val historyPair = try { MarksParser.parseHistory(historyHtml) } catch (e: Exception) { Log.e("LOGIN_SYNC", "History parse failed", e); Pair(com.vtop.models.CGPASummary("", "", ""), emptyList()) }
+                                    val allOutings = try { OutingParser.parseGeneral(generalOutingHtml ?: "") + OutingParser.parseWeekend(weekendOutingHtml ?: "") } catch (e: Exception) { Log.e("LOGIN_SYNC", "Outings parse failed", e); emptyList() }
+                                    val profileData = try { ProfileParser.parse(profileHtml) } catch (e: Exception) { Log.e("LOGIN_SYNC", "Profile parse failed", e); emptyMap() }
 
-                                    // --- CAPTCHA AUTO-RETRY LOOP FOR SYNC ---
-                                    while (!loginSuccess && attempts < maxAttempts) {
-                                        attempts++
-                                        if (attempts > 1) {
-                                            delay(1000)
-                                        }
-
-                                        loginSuccess = client.autoLogin(this@LoginActivity, object : VtopClient.LoginListener {
-                                            override fun onStatusUpdate(message: String) { /* silent sync */ }
-                                            override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
-                                                lifecycleScope.launch(Dispatchers.Main) {
-                                                    AppBridge.currentOtpResolver.value = resolver
-                                                }
-                                            }
-                                        })
-                                    }
-
-                                    if (loginSuccess) {
-                                        val profileHtml = client.fetchProfileRawHtml(null)
-                                        val timetableHtml = client.fetchTimetableRawHtml(semId, null)
-                                        val attendanceHtml = client.fetchAttendanceRawHtml(semId, null)
-                                        val examsHtml = client.fetchExamScheduleRawHtml(semId, null)
-                                        val marksHtml = client.fetchMarksRawHtml(semId, null)
-                                        val gradesHtml = client.fetchGradesRawHtml(semId, null)
-                                        val historyHtml = client.fetchHistoryRawHtml(null)
-                                        val generalOutingHtml = client.fetchGeneralOutingRawHtml(reg, null)
-                                        val weekendOutingHtml = client.fetchWeekendOutingRawHtml(reg, null)
-
-                                        val timetableData = TimetableParser.parse(timetableHtml)
-                                        val examsData = ExamScheduleParser.parse(examsHtml)
-                                        val attendanceData = AttendanceParser.parseSummary(attendanceHtml)
-                                        val marksData = MarksParser.parseMarks(marksHtml)
-                                        val gradesData = MarksParser.parseGrades(gradesHtml)
-                                        val historyPair = MarksParser.parseHistory(historyHtml)
-                                        val allOutings = OutingParser.parseGeneral(generalOutingHtml ?: "") +
-                                                OutingParser.parseWeekend(weekendOutingHtml ?: "")
-                                        val profileData = ProfileParser.parse(profileHtml)
-
-                                        for (course in attendanceData) {
+                                    for (course in attendanceData) {
+                                        try {
                                             val cId = course.courseId ?: continue
                                             val cType = course.courseType ?: continue
                                             val detailHtml = client.fetchAttendanceDetailRawHtml(semId, cId, cType, reg, null)
                                             AttendanceParser.parseDetailAndUpdate(detailHtml, course)
-                                        }
-
-                                        Vault.saveTimetable(this@LoginActivity, timetableData)
-                                        Vault.saveAttendance(this@LoginActivity, attendanceData)
-                                        Vault.saveExamSchedule(this@LoginActivity, examsData)
-                                        Vault.saveMarks(this@LoginActivity, marksData)
-                                        Vault.saveGrades(this@LoginActivity, gradesData)
-                                        Vault.saveHistory(this@LoginActivity, historyPair.second)
-                                        Vault.saveCGPASummary(this@LoginActivity, historyPair.first)
-                                        Vault.saveOutings(this@LoginActivity, allOutings)
-                                        Vault.saveProfile(this@LoginActivity, profileData)
-                                        Vault.saveLastSyncTime(this@LoginActivity)
-
-                                        try {
-                                            NextClassWidget().updateAll(this@LoginActivity)
                                         } catch (e: Exception) {
-                                            Log.e("WIDGET_UPDATE", "Failed to update widget: ${e.message}")
+                                            Log.e("LOGIN_SYNC", "Detail parse failed for course", e)
                                         }
                                     }
+
+                                    // 1. SAVE TO VAULT
+                                    Vault.saveTimetable(this@LoginActivity, timetableData)
+                                    Vault.saveAttendance(this@LoginActivity, attendanceData)
+                                    Vault.saveExamSchedule(this@LoginActivity, examsData)
+                                    Vault.saveMarks(this@LoginActivity, marksData)
+                                    Vault.saveGrades(this@LoginActivity, gradesData)
+                                    Vault.saveHistory(this@LoginActivity, historyPair.second)
+                                    Vault.saveCGPASummary(this@LoginActivity, historyPair.first)
+                                    Vault.saveOutings(this@LoginActivity, allOutings)
+                                    Vault.saveProfile(this@LoginActivity, profileData)
+                                    Vault.saveLastSyncTime(this@LoginActivity)
+
+                                    // 2. LIVE UPDATE THE APP BRIDGE SO MAIN SCREEN SEES IT IMMEDIATELY
+                                    withContext(Dispatchers.Main) {
+                                        AppBridge.timetableState.value = timetableData
+                                        AppBridge.attendanceState.value = attendanceData
+                                        AppBridge.examsState.value = examsData
+                                        AppBridge.marksState.value = marksData
+                                        AppBridge.gradesState.value = gradesData
+                                        AppBridge.historyItemsState.value = historyPair.second
+                                        AppBridge.historySummaryState.value = historyPair.first
+                                        AppBridge.outingsState.value = allOutings
+                                        AppBridge.profileState.value = profileData
+                                    }
+
+                                    try {
+                                        NextClassWidget().updateAll(this@LoginActivity)
+                                    } catch (e: Exception) {
+                                        Log.e("WIDGET_UPDATE", "Failed to update widget: ${e.message}")
+                                    }
+
                                 } catch (e: Exception) {
-                                    Log.e("LOGIN_SYNC", "Error: ${e.message}")
+                                    Log.e("LOGIN_SYNC", "Parsing loop failed catastrophically: ${e.message}", e)
                                 }
 
                                 withContext(Dispatchers.Main) {
@@ -230,7 +240,7 @@ class LoginActivity : ComponentActivity() {
     private fun getActiveSemesterIndex(context: Context, topSemesterName: String): Int {
         if (topSemesterName.isEmpty()) return 0
         try {
-            val jsonString = context.assets.open("bunk_cache.json").bufferedReader().use { it.readText() }
+            val jsonString = context.assets.open("academic_calendar.json").bufferedReader().use { it.readText() }
             val jsonObject = JSONObject(jsonString)
             if (!jsonObject.has("blocked_dates")) return 0
 

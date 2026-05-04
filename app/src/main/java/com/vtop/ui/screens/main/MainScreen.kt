@@ -2,10 +2,14 @@
 
 package com.vtop.ui.screens.main
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
@@ -69,6 +73,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.roundToInt
+import android.util.Log
 
 @OptIn(ExperimentalMaterialApi::class)
 @SuppressLint("NewApi")
@@ -78,12 +83,19 @@ fun MainScreen(
     timetable: TimetableModel,
     attendanceData: List<AttendanceModel>,
     examsData: List<ExamScheduleModel>,
-    onSyncClick: (String) -> Unit,
+    onSyncClick: (String, Boolean) -> Unit, // Just defines the type
     onLogoutClick: Runnable,
     outingHandler: OutingActionHandler
 ) {
     val context = LocalContext.current
     val sharedPrefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = { isGranted ->
+            if (!isGranted) Log.w("PERMISSIONS", "Notification permission denied by user.")
+        }
+    )
 
     // INSTANT EVALUATION: Check if the semester is over the second the app opens
     LaunchedEffect(examsData) {
@@ -93,6 +105,9 @@ fun MainScreen(
     }
 
     LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         if (sharedPrefs.contains("CUSTOM_ACCENT")) {
             ThemeManager.customAccent.value = Color(sharedPrefs.getInt("CUSTOM_ACCENT", 0))
         }
@@ -137,8 +152,8 @@ fun MainScreen(
 
     val currentTab = navItems.getOrNull(pagerState.currentPage) ?: navItems.last()
 
-    val handleSyncAndUpdateWidget = { screen: String ->
-        onSyncClick(screen)
+    val handleSyncAndUpdateWidget = { screen: String, forceNewSession: Boolean ->
+        onSyncClick(screen, forceNewSession)
         coroutineScope.launch {
             try { NextClassWidget().updateAll(context) } catch (_: Exception) {}
         }
@@ -165,7 +180,7 @@ fun MainScreen(
         refreshing = isRefreshing,
         onRefresh = {
             isRefreshing = true
-            handleSyncAndUpdateWidget(currentTab)
+            handleSyncAndUpdateWidget(currentTab, false)
             coroutineScope.launch {
                 delay(1500)
                 isRefreshing = false
@@ -259,7 +274,7 @@ fun MainScreen(
                                 marksData = AppBridge.marksState.value,
                                 historySummary = AppBridge.historySummaryState.value,
                                 historyData = AppBridge.historyItemsState.value,
-                                onHistoryLoad = { handleSyncAndUpdateWidget("MARKS") }
+                                onHistoryLoad = { handleSyncAndUpdateWidget("MARKS", false) }
                             )
                         }
                         "OUTINGS" -> VtopOutingsTab(outingsData = AppBridge.outingsState.value, handler = outingHandler)
@@ -323,7 +338,7 @@ fun MainScreen(
                                     if (selectedOption != null) {
                                         Vault.saveSelectedSemester(context, selectedOption.id, selectedOption.name)
                                         semInfo = Vault.getSelectedSemester(context)
-                                        handleSyncAndUpdateWidget("PROFILE")
+                                        handleSyncAndUpdateWidget("PROFILE", false)
                                     }
                                 },
                                 currentRegNo = creds[0] ?: "",
@@ -331,18 +346,18 @@ fun MainScreen(
                                 onCredentialsSave = { newReg, newPass ->
                                     Vault.saveCredentials(context, newReg, newPass)
                                     creds = Vault.getCredentials(context)
-                                    handleSyncAndUpdateWidget("PROFILE")
+                                    handleSyncAndUpdateWidget("PROFILE", true) // Force sync on new creds
                                 },
                                 reminders = actualReminders,
                                 onDeleteReminder = { idToDelete ->
                                     val updated = actualReminders.filter { it.id != idToDelete }
                                     ReminderManager.saveReminders(context, updated)
                                     actualReminders = updated
-                                    handleSyncAndUpdateWidget("NONE")
+                                    handleSyncAndUpdateWidget("NONE", false)
                                 },
                                 onNavigateToAnalytics = { activeOverlay = "ANALYTICS" },
                                 lastSyncTime = lastSyncTime,
-                                onSyncClick = { handleSyncAndUpdateWidget("PROFILE") }
+                                onSyncClick = { forceNewSession -> handleSyncAndUpdateWidget("PROFILE", forceNewSession) }
                             )
                         }
                     }
@@ -532,7 +547,7 @@ fun BottomNavigation(currentTab: String, availableTabs: List<String>, onSelect: 
 }
 
 @Composable
-fun FloatingDockContainer(currentScreen: String, items: List<String>, offsetX: Float, offsetY: Float, screenWidthPx: Float, screenHeightPx: Float, onSyncClick: (String) -> Unit, onSelect: (String) -> Unit) {
+fun FloatingDockContainer(currentScreen: String, items: List<String>, offsetX: Float, offsetY: Float, screenWidthPx: Float, screenHeightPx: Float, onSyncClick: (String, Boolean) -> Unit, onSelect: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     val position = when {
         offsetX < -(screenWidthPx * 0.35f) -> DockPosition.LEFT
@@ -582,7 +597,7 @@ fun FloatingDockContainer(currentScreen: String, items: List<String>, offsetX: F
                                 if (items.last() != item) HorizontalDivider(color = AppColors.glassBorder.copy(alpha = 0.2f))
                             }
                             Spacer(Modifier.height(8.dp))
-                            Button(onClick = { onSyncClick(currentScreen); expanded = false }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = AppColors.glassBg)) {
+                            Button(onClick = { onSyncClick(currentScreen, false); expanded = false }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = AppColors.glassBg)) {
                                 Icon(Icons.Default.Refresh, contentDescription = "Profile", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(Modifier.width(8.dp))
                                 Text("Sync", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
