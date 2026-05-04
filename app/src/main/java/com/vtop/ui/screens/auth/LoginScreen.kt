@@ -316,24 +316,31 @@ private fun getActiveSemesterKeysFromCache(context: Context): List<String> {
     try {
         val jsonStr = context.assets.open("academic_calendar.json").bufferedReader().use { it.readText() }
         val root = JSONObject(jsonStr)
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
         val now = System.currentTimeMillis()
+
+        // THE FIX: Helper function to safely parse dates, stripping accidental spaces
+        fun parseDateSafely(dateStr: String): Long {
+            val cleanStr = dateStr.replace(" ", "")
+            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
+            return try { sdf.parse(cleanStr)?.time ?: 0L } catch (e: Exception) { 0L }
+        }
 
         if (root.has("semester")) {
             val semInfo = root.getJSONObject("semester")
             val startStr = semInfo.optString("start_date", "")
             val endStr = semInfo.optString("last_instructional_day", "")
             val name = semInfo.optString("name", "")
-            if (startStr.isNotEmpty() && endStr.isNotEmpty()) {
-                val startMs = sdf.parse(startStr)?.time ?: 0L
-                val endMs = sdf.parse(endStr)?.time ?: 0L
-                // Add 30 days to the last instructional day to cover FAT exams and grading
-                val extendedEndMs = endMs + (30L * 24 * 60 * 60 * 1000)
 
-                if (now in startMs..extendedEndMs) {
-                    activeKeys.add(name)
-                    activeKeys.add(semInfo.optString("id", ""))
-                }
+            val startMs = parseDateSafely(startStr)
+            val endMs = parseDateSafely(endStr)
+            val extendedEndMs = endMs + (30L * 24 * 60 * 60 * 1000)
+
+            val isExplicitlyCurrent = semInfo.optString("is_current", "false") == "true"
+
+            // Fallback: If date math is true OR the JSON explicitly marks it as true
+            if ((startMs > 0L && now in startMs..extendedEndMs) || isExplicitlyCurrent) {
+                activeKeys.add(name)
+                activeKeys.add(semInfo.optString("id", ""))
             }
         } else if (!root.has("blocked_dates")) {
             val keys = root.keys()
@@ -343,15 +350,16 @@ private fun getActiveSemesterKeysFromCache(context: Context): List<String> {
                 if (semBlock != null) {
                     val startStr = semBlock.optString("start_date", "")
                     val endStr = semBlock.optString("last_instructional_day", "")
-                    if (startStr.isNotEmpty() && endStr.isNotEmpty()) {
-                        val startMs = sdf.parse(startStr)?.time ?: 0L
-                        val endMs = sdf.parse(endStr)?.time ?: 0L
-                        val extendedEndMs = endMs + (30L * 24 * 60 * 60 * 1000)
 
-                        if (now in startMs..extendedEndMs) {
-                            activeKeys.add(key)
-                            activeKeys.add(semBlock.optString("id", ""))
-                        }
+                    val startMs = parseDateSafely(startStr)
+                    val endMs = parseDateSafely(endStr)
+                    val extendedEndMs = endMs + (30L * 24 * 60 * 60 * 1000)
+
+                    val isExplicitlyCurrent = semBlock.optString("is_current", "false") == "true"
+
+                    if ((startMs > 0L && now in startMs..extendedEndMs) || isExplicitlyCurrent) {
+                        activeKeys.add(key)
+                        activeKeys.add(semBlock.optString("id", ""))
                     }
                 }
             }

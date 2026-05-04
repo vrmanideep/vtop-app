@@ -4,8 +4,15 @@ package com.vtop.ui.screens.main
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.AlarmManager
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -56,6 +63,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.glance.appwidget.updateAll
 import com.composables.icons.lucide.*
@@ -73,7 +81,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.roundToInt
-import android.util.Log
 
 @OptIn(ExperimentalMaterialApi::class)
 @SuppressLint("NewApi")
@@ -87,15 +94,11 @@ fun MainScreen(
     onLogoutClick: Runnable,
     outingHandler: OutingActionHandler
 ) {
+    // 1. Fire the Sequential Permission Handler instantly
+    HomepagePermissionHandler()
+
     val context = LocalContext.current
     val sharedPrefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
-
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-        onResult = { isGranted ->
-            if (!isGranted) Log.w("PERMISSIONS", "Notification permission denied by user.")
-        }
-    )
 
     // INSTANT EVALUATION: Check if the semester is over the second the app opens
     LaunchedEffect(examsData) {
@@ -105,9 +108,6 @@ fun MainScreen(
     }
 
     LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
         if (sharedPrefs.contains("CUSTOM_ACCENT")) {
             ThemeManager.customAccent.value = Color(sharedPrefs.getInt("CUSTOM_ACCENT", 0))
         }
@@ -618,6 +618,82 @@ fun FloatingDockContainer(currentScreen: String, items: List<String>, offsetX: F
                 DockPosition.BOTTOM -> menuPlaceable.place(x = (handlePlaceable.width - menuPlaceable.width) / 2, y = -menuPlaceable.height - spacing)
                 DockPosition.LEFT -> menuPlaceable.place(x = handlePlaceable.width + spacing, y = (handlePlaceable.height - menuPlaceable.height) / 2)
                 DockPosition.RIGHT -> menuPlaceable.place(x = -menuPlaceable.width - spacing, y = (handlePlaceable.height - menuPlaceable.height) / 2)
+            }
+        }
+    }
+}
+
+@Composable
+fun HomepagePermissionHandler() {
+    val context = LocalContext.current
+
+    // State to track which permission we are currently asking for
+    var currentStep by remember { mutableIntStateOf(0) }
+
+    // 1. Launcher for Android 13+ Notifications
+    val notificationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {
+        // Move to the next permission regardless of whether they approved or denied
+        currentStep = 1
+    }
+
+    // 2. Launcher for Battery Optimization (Takes user to settings)
+    val batteryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        currentStep = 2
+    }
+
+    // 3. Launcher for Exact Alarms (Takes user to settings)
+    val alarmLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        currentStep = 3
+    }
+
+    // Sequentially evaluate and trigger permissions
+    LaunchedEffect(currentStep) {
+        when (currentStep) {
+            0 -> { // Step 0: Notifications (Android 13+)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    val status = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+                    if (status != PackageManager.PERMISSION_GRANTED) {
+                        notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    } else {
+                        currentStep = 2 // Already granted, skip to next
+                    }
+                } else {
+                    currentStep = 2// Not required for Android 12 and below
+                }
+            }
+            /*
+            1 -> { // Step 1: Battery Optimization
+                val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !powerManager.isIgnoringBatteryOptimizations(context.packageName)) {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:${context.packageName}")
+                    }
+                    batteryLauncher.launch(intent)
+                } else {
+                    currentStep = 2 // Already ignored or unsupported, skip to next
+                }
+            }
+            */
+            2 -> { // Step 2: Exact Alarms (Android 12+)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+                    if (!alarmManager.canScheduleExactAlarms()) {
+                        val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                            data = Uri.parse("package:${context.packageName}")
+                        }
+                        alarmLauncher.launch(intent)
+                    } else {
+                        currentStep = 3
+                    }
+                } else {
+                    currentStep = 3
+                }
             }
         }
     }

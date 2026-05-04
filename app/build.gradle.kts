@@ -1,7 +1,6 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    // This actually applies it to your app
     id("com.google.gms.google-services")
 }
 
@@ -14,7 +13,7 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = 1
-        versionName = "1.1.2"
+        versionName = "1.1.1"
 
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
