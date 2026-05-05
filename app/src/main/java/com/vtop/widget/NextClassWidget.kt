@@ -36,7 +36,6 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Date
 import java.util.Locale
 
 class NextClassWidgetReceiver : GlanceAppWidgetReceiver() {
@@ -251,7 +250,8 @@ class NextClassWidget : GlanceAppWidget() {
             }
 
             // 4. CLASS EVALUATION (WITH 35 MIN OVERRIDE)
-            if (finalExam == null && todayHoliday == null) {
+            // THE FIX: Only evaluate timetable classes if there are NO EXAMS scheduled for today at all.
+            if (todayExams.isEmpty() && todayHoliday == null) {
                 val todayStr = SimpleDateFormat("EEEE", Locale.getDefault()).format(cal.time)
                 val todayCourses = processAndMergeCourses(timetable?.scheduleMap?.get(todayStr) ?: emptyList(), mergeLabs)
 
@@ -316,6 +316,10 @@ class NextClassWidget : GlanceAppWidget() {
                             ClassWidgetContent(context, finalCourse!!, activeReminder)
                         }
                         todayHoliday != null && !todayHoliday.lowercase(Locale.getDefault()).contains("exam") -> HolidayWidgetContent(todayHoliday)
+
+                        // THE FIX: If there are exams today but they are all in the past, show this instead of falling back to classes.
+                        todayExams.isNotEmpty() -> EmptyWidgetContent("No more exams today")
+
                         else -> EmptyWidgetContent("No more classes today")
                     }
                 }
