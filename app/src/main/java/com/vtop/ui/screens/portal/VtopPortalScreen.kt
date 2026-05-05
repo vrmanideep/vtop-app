@@ -32,7 +32,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.vtop.network.VtopClient
+import com.vtop.ui.core.AppBridge
 import com.vtop.utils.Vault
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -63,12 +65,37 @@ fun VtopPortalScreen(
         sessionError = null
         try {
             val success = withContext(Dispatchers.IO) {
-                vtopClient.autoLogin(context, object : VtopClient.LoginListener {
-                    override fun onStatusUpdate(message: String) {}
-                    override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
-                        resolver.cancel()
+                var loginSuccess = false
+                var attempts = 0
+                val maxRetries = 3
+
+                // THE FIX: Added the 3-attempt retry loop for Captcha failures
+                while (attempts < maxRetries && !loginSuccess) {
+                    try {
+                        loginSuccess = vtopClient.autoLogin(context, object : VtopClient.LoginListener {
+                            override fun onStatusUpdate(message: String) {}
+
+                            override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
+                                scope.launch(Dispatchers.Main) {
+                                    AppBridge.currentOtpResolver.value = resolver
+                                }
+                            }
+                        })
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e // Don't trap coroutine cancellations
+                        // Captcha failed or network blip
+                        loginSuccess = false
                     }
-                })
+
+                    if (!loginSuccess) {
+                        attempts++
+                        if (attempts < maxRetries) {
+                            // Wipe the dead session and request a fresh Captcha image
+                            vtopClient.reinitializeSession(context)
+                        }
+                    }
+                }
+                loginSuccess // return final status
             }
 
             if (success) {
@@ -77,10 +104,12 @@ fun VtopPortalScreen(
                     webViewRef?.loadUrl(VTOP_OPEN_PAGE)
                 }
             } else {
-                sessionError = "Session expired. Please sync from settings."
+                sessionError = "Failed to bypass Captcha after 3 attempts or OTP cancelled. Please retry."
             }
         } catch (e: Exception) {
-            sessionError = e.message
+            if (e !is CancellationException) {
+                sessionError = e.message ?: "Unknown error occurred"
+            }
         } finally {
             isLoading = false
         }
@@ -227,8 +256,7 @@ fun VtopPortalScreen(
                                 else if (url?.contains("content") == true) {
                                     pageTitle = view.title?.take(30) ?: "VTOP Dashboard"
                                 }
-                                // THE FIX: Ensure we ONLY auto-login on the bare login page, NOT when an OTP is pending
-                                else if (url?.endsWith("vtop/login") == true) {
+                                else if (url?.endsWith("vtop/login") == true || url?.contains("vtop/login/error") == true) {
                                     scope.launch { forceLogin() }
                                 }
                             }

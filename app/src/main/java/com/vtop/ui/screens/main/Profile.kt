@@ -247,7 +247,13 @@ fun Profile(
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(4.dp))
-                                    .clickable { onOpenPortal() }
+                                    .combinedClickable(
+                                        onClick = { onOpenPortal() },
+                                        onLongClick = {
+                                            onSyncClick(true) // Force a new session
+                                            onOpenPortal()
+                                        }
+                                    )
                             )
                         }
                     }

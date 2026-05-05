@@ -424,12 +424,57 @@ fun MainScreen(
             }
         }
 
+        // Replace the bottom block in MainScreen.kt with this:
+
         val otpResolver = AppBridge.currentOtpResolver.value
         if (otpResolver != null) {
+            var showCancelConfirm by remember { mutableStateOf(false) }
+
+            if (showCancelConfirm) {
+                if (showCancelConfirm) {
+                    AlertDialog(
+                        onDismissRequest = { showCancelConfirm = false },
+                        title = { Text("Cancel Sync?", fontWeight = FontWeight.Bold) },
+                        text = { Text("Do you want to cancel the synchronization process?") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                showCancelConfirm = false
+                                otpResolver.cancel()
+                                AppBridge.currentOtpResolver.value = null
+                                GlobalSyncer.cancelActiveSync() // Immediately aborts the background loop
+
+                                // --- NEW: Close portal and jump to profile ---
+                                if (activeOverlay == "PORTAL") {
+                                    activeOverlay = null
+                                }
+                                coroutineScope.launch {
+                                    val profileIndex = navItems.indexOf("PROFILE")
+                                    if (profileIndex != -1) pagerState.scrollToPage(profileIndex)
+                                }
+                                // ---------------------------------------------
+                            }) {
+                                Text("Yes")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showCancelConfirm = false }) {
+                                Text("No")
+                            }
+                        },
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface,
+                        textContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
             Box(modifier = Modifier.fillMaxSize().zIndex(100f)) {
                 OtpForm(
-                    onVerify = { otp -> otpResolver.submit(otp); AppBridge.currentOtpResolver.value = null },
-                    onCancel = { otpResolver.cancel(); AppBridge.currentOtpResolver.value = null }
+                    onVerify = { otp ->
+                        otpResolver.submit(otp)
+                        AppBridge.currentOtpResolver.value = null
+                    },
+                    onCancel = { showCancelConfirm = true } // Triggers the dialog instead of instantly closing
                 )
             }
         }
