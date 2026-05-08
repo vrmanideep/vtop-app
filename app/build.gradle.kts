@@ -8,11 +8,23 @@ android {
     namespace = "com.vtop"
     compileSdk = 36
 
+    // 1. Define the signing configuration using your retrieved password
+    signingConfigs {
+        create("release") {
+            // Replace with your actual .jks file path.
+            // Tip: Use forward slashes (/) even on Windows to avoid escape character errors.
+            storeFile = file("C:/Users/manid/Downloads/vtopbs/vtop_keystore.jks")
+            storePassword = "M@nideep14"
+            keyAlias = "key0" // Or your specific alias
+            keyPassword = "M@nideep14"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.vtop"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
+        versionCode = 2 // Incremented for the new update
         versionName = "1.1.3"
 
         ndk {
@@ -26,18 +38,26 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = false
+            // 2. Link the release build to the signing config defined above
+            signingConfig = signingConfigs.getByName("release")
+
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
-
-
             )
         }
+
+        debug {
+            // Optional: Use release signing for debug to test Google Login while developing
+            signingConfig = signingConfigs.getByName("release")
+        }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+
     buildFeatures {
         compose = true
         buildConfig = true
@@ -56,22 +76,19 @@ dependencies {
     implementation(libs.androidx.appcompat)
 
     // Firebase
-    // 1. Add the BoM (Bill of Materials) to manage versions automatically
     implementation(platform("com.google.firebase:firebase-bom:32.8.0"))
-
-    // 2. Add the libraries WITHOUT specifying version numbers
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-config")
     implementation("com.google.firebase:firebase-messaging-ktx")
 
-    // Play Services (Not part of Firebase BoM, keep the version number)
+    // Play Services
     implementation("com.google.android.gms:play-services-auth:21.0.0")
+
     // UI & Icons
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.37.0")
     implementation("com.composables:icons-lucide:1.0.0")
     implementation("androidx.compose.material:material:1.6.0")
     implementation("androidx.compose.material:material-icons-extended:1.6.0")
-    // The missing classic Material Components library
     implementation("com.google.android.material:material:1.11.0")
 
     // Networking & Logic
@@ -86,7 +103,6 @@ dependencies {
 
     // Background Tasks
     implementation("androidx.work:work-runtime-ktx:2.9.0")
-
 
     // Testing
     testImplementation(libs.junit)

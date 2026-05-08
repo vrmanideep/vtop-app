@@ -12,6 +12,7 @@ object AuthHelper {
         // PASTE YOUR EXACT CLIENT ID HERE FOR NOW
         val hardcodedClientId = "1006105677727-utmqc9263kj1cfmupvpk2tv6vi8nus10.apps.googleusercontent.com"
 
+
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestEmail()
             .requestScopes(Scope("https://www.googleapis.com/auth/gmail.readonly"))

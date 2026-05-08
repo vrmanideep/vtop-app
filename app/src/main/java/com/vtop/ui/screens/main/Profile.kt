@@ -169,7 +169,8 @@ fun Profile(
                 Toast.makeText(context, "Must use @vitapstudent.ac.in email", Toast.LENGTH_LONG).show()
             }
         } catch (e: Exception) {
-            Toast.makeText(context, "Sign-in failed", Toast.LENGTH_SHORT).show()
+            val statusCode = if (e is com.google.android.gms.common.api.ApiException) e.statusCode.toString() else "Unknown"
+            Toast.makeText(context, "Sign-in failed: Code $statusCode", Toast.LENGTH_LONG).show()
         }
     }
 

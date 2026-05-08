@@ -39,8 +39,7 @@
             ]
         },
         "events":{
-            "2026-05-20": "Commencement of Short Summer-I 2025-26 Semester",
-            "2026-05-20": "Commencement of Long Summer 2025-26 Semester",
+            "2026-05-20": "Commencement of Long Summer & Short Summer-I 2025-26 Semester",
             "2026-06-22": "Commencement of Short Summer-II 2025-26 Semester"
         }
     },
@@ -179,8 +178,8 @@
             ]
         },
         "events": {
-            "2026-07-21": "Commencement of FALL 2026-27 Semester",
-            "2026-11-06": "Engineering Clinics Expo",
+            "2026-07-14": "Commencement of FALL 2026-27 Semester",
+            "2026-11-14": "Engineering Clinics Expo",
             "2026-12-02": "Tentative Commencement of WIN 2026-27 Semester"
         }
     }
