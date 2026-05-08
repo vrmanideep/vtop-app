@@ -13,7 +13,7 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = 1
-        versionName = "1.1.1"
+        versionName = "1.1.2"
 
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
@@ -29,6 +29,8 @@ android {
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
+
+
             )
         }
     }
@@ -54,8 +56,16 @@ dependencies {
     implementation(libs.androidx.appcompat)
 
     // Firebase
-    implementation("com.google.firebase:firebase-messaging-ktx:23.4.1")
+    // 1. Add the BoM (Bill of Materials) to manage versions automatically
+    implementation(platform("com.google.firebase:firebase-bom:32.8.0"))
 
+    // 2. Add the libraries WITHOUT specifying version numbers
+    implementation("com.google.firebase:firebase-auth")
+    implementation("com.google.firebase:firebase-config")
+    implementation("com.google.firebase:firebase-messaging-ktx")
+
+    // Play Services (Not part of Firebase BoM, keep the version number)
+    implementation("com.google.android.gms:play-services-auth:21.0.0")
     // UI & Icons
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.37.0")
     implementation("com.composables:icons-lucide:1.0.0")
@@ -76,6 +86,7 @@ dependencies {
 
     // Background Tasks
     implementation("androidx.work:work-runtime-ktx:2.9.0")
+
 
     // Testing
     testImplementation(libs.junit)
