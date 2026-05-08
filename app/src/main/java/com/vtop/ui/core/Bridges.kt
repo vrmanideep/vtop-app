@@ -12,8 +12,11 @@ import com.vtop.models.SemesterOption
 import com.vtop.models.TimetableModel
 import com.vtop.network.VtopClient
 import com.vtop.ui.theme.AuthState
+import kotlinx.coroutines.CompletableDeferred
 
 object AppBridge {
+    var isAppInForeground = false
+    var pendingOtpDeferred: CompletableDeferred<String?>? = null
     val profileState = mutableStateOf<Map<String, Map<String, String>>?>(null)
     var timetableState = mutableStateOf<TimetableModel?>(null)
     var attendanceState = mutableStateOf<List<AttendanceModel>>(emptyList())

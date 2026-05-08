@@ -65,6 +65,14 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.GoogleAuthProvider
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInAccount
+import com.google.android.gms.auth.api.signin.GoogleSignInClient
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.tasks.Task
 
 private fun formatReminderDate(dateStr: String): String {
     return try {
@@ -131,6 +139,37 @@ fun Profile(
             showCalendarSheet = true
         } else {
             Toast.makeText(context, "Calendar permissions are required to export schedule", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    var googleEmail by remember { mutableStateOf(com.vtop.utils.Vault.getGoogleEmail(context)) }
+    val googleSignInLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val task = com.google.android.gms.auth.api.signin.GoogleSignIn.getSignedInAccountFromIntent(result.data)
+        try {
+            val account = task.getResult(com.google.android.gms.common.api.ApiException::class.java)
+            val email = account?.email ?: ""
+
+            if (email.endsWith("@vitapstudent.ac.in")) {
+                val credential = GoogleAuthProvider.getCredential(account?.idToken, null)
+                FirebaseAuth.getInstance().signInWithCredential(credential)
+                    .addOnCompleteListener { authTask ->
+                        if (authTask.isSuccessful) {
+                            com.vtop.utils.Vault.saveGoogleEmail(context, email)
+                            googleEmail = email
+                            Toast.makeText(context, "Email linked successfully!", Toast.LENGTH_SHORT).show()
+                        } else {
+                            val client = com.vtop.utils.AuthHelper.getGoogleSignInClient(context, context.getString(context.resources.getIdentifier("default_web_client_id", "string", context.packageName)))
+                            client.signOut()
+                            Toast.makeText(context, "Firebase Auth Failed", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+            } else {
+                val client = com.vtop.utils.AuthHelper.getGoogleSignInClient(context, context.getString(context.resources.getIdentifier("default_web_client_id", "string", context.packageName)))
+                client.signOut()
+                Toast.makeText(context, "Must use @vitapstudent.ac.in email", Toast.LENGTH_LONG).show()
+            }
+        } catch (e: Exception) {
+            Toast.makeText(context, "Sign-in failed", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -250,7 +289,7 @@ fun Profile(
                                     .combinedClickable(
                                         onClick = { onOpenPortal() },
                                         onLongClick = {
-                                            onSyncClick(true) // Force a new session
+                                            onSyncClick(true)
                                             onOpenPortal()
                                         }
                                     )
@@ -303,6 +342,42 @@ fun Profile(
                 actionText = "Edit",
                 onClick = { showCredDialog = true }
             )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
+            // GOOGLE OAUTH ROW
+            if (googleEmail.isNotBlank()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Linked Gmail for OTP", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(2.dp))
+                        Text(googleEmail, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    IconButton(onClick = {
+                        val client = com.vtop.utils.AuthHelper.getGoogleSignInClient(context, context.getString(context.resources.getIdentifier("default_web_client_id", "string", context.packageName)))
+                        client.signOut().addOnCompleteListener {
+                            com.vtop.utils.Vault.saveGoogleEmail(context, "")
+                            googleEmail = ""
+                            Toast.makeText(context, "Google Account Unlinked", Toast.LENGTH_SHORT).show()
+                        }
+                    }) {
+                        Icon(Lucide.LogOut, contentDescription = "Logout Google", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                    }
+                }
+            } else {
+                SettingRow(
+                    label = "Linked Gmail for OTP",
+                    value = "Link @vitapstudent.ac.in email",
+                    actionText = "Link",
+                    onClick = {
+                        val client = com.vtop.utils.AuthHelper.getGoogleSignInClient(context, context.getString(context.resources.getIdentifier("default_web_client_id", "string", context.packageName)))
+                        googleSignInLauncher.launch(client.signInIntent)
+                    }
+                )
+            }
         }
 
         // --- THE "MORE" ACCORDION ---
@@ -356,8 +431,7 @@ fun Profile(
             }
         }
 
-        // --- PREFERENCES ACCORDION ---
-        //SectionHeader("PREFERENCES")
+        // --- PREFERENCES & APPEARANCE ACCORDION ---
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -374,9 +448,9 @@ fun Profile(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
-                        Text("App Preferences", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                        Text("Preferences & Appearance", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                         Spacer(Modifier.height(2.dp))
-                        Text("Outings, Timetable, Marks settings", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Theme, Accent, Outings, Timetable", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Icon(
                         imageVector = if (isPreferencesExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
@@ -430,6 +504,58 @@ fun Profile(
                         }
                         Switch(checked = mergeMarks, onCheckedChange = onMergeMarksChange)
                     }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
+                    SettingRow(
+                        label = "App Theme",
+                        value = "Current: ${currentTheme.name.lowercase(Locale.getDefault()).replaceFirstChar { it.uppercase() }}",
+                        actionText = "Change",
+                        onClick = { showThemeDialog = true }
+                    )
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("Accent Color", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                        Spacer(Modifier.height(12.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(Brush.sweepGradient(listOf(Color.Red, Color.Yellow, Color.Green, Color.Blue, Color.Magenta, Color.Red)), CircleShape)
+                                    .border(
+                                        width = if (useDynamicColor) 3.dp else 0.dp,
+                                        color = if (useDynamicColor) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                        shape = CircleShape
+                                    )
+                                    .clickable { onDynamicColorChange(true) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Box(modifier = Modifier.size(28.dp).background(MaterialTheme.colorScheme.surface, CircleShape), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
+                                }
+                            }
+
+                            com.vtop.ui.theme.AccentColors.forEach { color ->
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .background(color, CircleShape)
+                                        .border(
+                                            width = if (!useDynamicColor && customAccent == color) 3.dp else 0.dp,
+                                            color = if (!useDynamicColor && customAccent == color) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                            shape = CircleShape
+                                        )
+                                        .clickable {
+                                            onDynamicColorChange(false)
+                                            onAccentChange(color)
+                                        }
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -474,60 +600,6 @@ fun Profile(
             }
         }
 
-        // --- APPEARANCE ---
-        SectionHeader("APPEARANCE")
-        CardGroup {
-            SettingRow(
-                label = "App Theme",
-                value = "Current: ${currentTheme.name.lowercase(Locale.getDefault()).replaceFirstChar { it.uppercase() }}",
-                actionText = "Change",
-                onClick = { showThemeDialog = true }
-            )
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Accent Color", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                Spacer(Modifier.height(12.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .background(Brush.sweepGradient(listOf(Color.Red, Color.Yellow, Color.Green, Color.Blue, Color.Magenta, Color.Red)), CircleShape)
-                            .border(
-                                width = if (useDynamicColor) 3.dp else 0.dp,
-                                color = if (useDynamicColor) MaterialTheme.colorScheme.onSurface else Color.Transparent,
-                                shape = CircleShape
-                            )
-                            .clickable { onDynamicColorChange(true) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Box(modifier = Modifier.size(28.dp).background(MaterialTheme.colorScheme.surface, CircleShape), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
-                        }
-                    }
-
-                    com.vtop.ui.theme.AccentColors.forEach { color ->
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .background(color, CircleShape)
-                                .border(
-                                    width = if (!useDynamicColor && customAccent == color) 3.dp else 0.dp,
-                                    color = if (!useDynamicColor && customAccent == color) MaterialTheme.colorScheme.onSurface else Color.Transparent,
-                                    shape = CircleShape
-                                )
-                                .clickable {
-                                    onDynamicColorChange(false)
-                                    onAccentChange(color)
-                                }
-                        )
-                    }
-                }
-            }
-        }
-
         // --- SYSTEM (UPDATES) ---
         SectionHeader("SYSTEM")
         CardGroup {
@@ -539,7 +611,7 @@ fun Profile(
 
                         isCheckingUpdate = true
                         coroutineScope.launch {
-                            val info = UpdateManager.checkForGitHubUpdates()
+                            val info = UpdateManager.checkForUpdates() // <--- FIXED HERE
                             if (info.isUpdateAvailable) {
                                 updateInfo = info
                             } else {
@@ -686,14 +758,6 @@ fun Profile(
                         Text("Sync Now", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Black)
                     }
                 }
-
-                Text(
-                    text = "Google Calendar may take a few minutes to fully sync and display these changes across your devices.",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                )
             }
         }
 

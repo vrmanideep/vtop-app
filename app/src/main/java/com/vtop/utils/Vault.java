@@ -50,7 +50,9 @@ public class Vault {
     private static final String KEY_HISTORY_ITEMS = "OFFLINE_HISTORY_ITEMS";
     private static final String KEY_HISTORY_SUMMARY = "OFFLINE_HISTORY_SUMMARY";
 
-    // --- FIXED: Native Java implementation for Nav Style ---
+    private static final String KEY_GOOGLE_EMAIL = "GOOGLE_EMAIL";
+    private static final String KEY_PROMPTED_GOOGLE = "PROMPTED_GOOGLE_SIGNIN";
+
     public static void saveNavStyle(Context context, String style) {
         SharedPreferences prefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE);
         prefs.edit().putString("NAV_STYLE", style).apply();
@@ -60,16 +62,30 @@ public class Vault {
         SharedPreferences prefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE);
         return prefs.getString("NAV_STYLE", "DOCK");
     }
-    // --------------------------------------------------------
+
+    public static void saveGoogleEmail(Context context, String email) {
+        context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE).edit().putString(KEY_GOOGLE_EMAIL, email).apply();
+    }
+
+    public static String getGoogleEmail(Context context) {
+        return context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE).getString(KEY_GOOGLE_EMAIL, "");
+    }
+
+    public static void setHasPromptedGoogleSignIn(Context context, boolean prompted) {
+        context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_PROMPTED_GOOGLE, prompted).apply();
+    }
+
+    public static boolean hasPromptedGoogleSignIn(Context context) {
+        return context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE).getBoolean(KEY_PROMPTED_GOOGLE, false);
+    }
+
     public static void saveCredentials(Context context, String regNo, String password) {
-        // 1. ALWAYS save to the fallback as a reliable backup
         context.getSharedPreferences("vtop_fallback", Context.MODE_PRIVATE)
                 .edit()
                 .putString("reg_no", regNo.toUpperCase().trim())
                 .putString("password", password.trim())
                 .apply();
 
-        // 2. Try to save to the Encrypted vault
         try {
             MasterKey masterKey = new MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build();
             SharedPreferences prefs = EncryptedSharedPreferences.create(context, SECRET_PREFS, masterKey,
@@ -90,7 +106,6 @@ public class Vault {
             String reg = prefs.getString("reg_no", null);
             String pwd = prefs.getString("password", null);
 
-            // If encrypted read is successful and not empty, return it
             if (reg != null && pwd != null && !reg.trim().isEmpty()) {
                 return new String[]{reg, pwd};
             }
@@ -98,7 +113,6 @@ public class Vault {
             Log.e(TAG, "Encryption failed on read, triggering fallback", e);
         }
 
-        // THE FIX: If the try block fails, throws an error, or returns null, we safely catch it and read from the fallback
         SharedPreferences fall = context.getSharedPreferences("vtop_fallback", Context.MODE_PRIVATE);
         return new String[]{fall.getString("reg_no", null), fall.getString("password", null)};
     }
@@ -175,7 +189,6 @@ public class Vault {
             List<ExamScheduleModel> list = new Gson().fromJson(json, new TypeToken<ArrayList<ExamScheduleModel>>(){}.getType());
             return list != null ? list : new ArrayList<>();
         } catch (Exception e) {
-            // THE FIX: If VTOP changes the schema, clear the corrupted data to prevent persistent crashing
             context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE).edit().remove(KEY_EXAMS).apply();
             return new ArrayList<>();
         }

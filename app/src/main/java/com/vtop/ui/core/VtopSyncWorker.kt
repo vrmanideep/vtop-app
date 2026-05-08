@@ -1,6 +1,9 @@
 package com.vtop.ui.core
 
 import android.content.Context
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
@@ -10,7 +13,7 @@ import androidx.work.ExistingWorkPolicy
 import com.vtop.network.VtopClient
 import com.vtop.network.VtopException
 import com.vtop.utils.NotificationHelper
-import com.vtop.utils.Vault
+import com.vtop.utils.*
 import com.vtop.logic.ExamScheduleParser
 import com.vtop.logic.MarksParser
 import com.vtop.logic.AttendanceParser
@@ -49,22 +52,81 @@ class VtopSyncWorker(
 
             // --- 0. SMART LOGIN & ERROR TRAFFIC COP ---
             var loginSuccess = false
+            var otpTriggered = false
             var attempts = 0
-            while (attempts < maxRetry && !loginSuccess) {
+
+            while (attempts < maxRetry && !loginSuccess && !otpTriggered) {
                 try {
                     loginSuccess = client.autoLogin(context, object : VtopClient.LoginListener {
                         override fun onStatusUpdate(message: String) {}
+
                         override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
-                            Log.w(tag, "OTP Required during background sync. Aborting.")
+                            // Launch a background coroutine to handle the suspend functions safely
+                            CoroutineScope(Dispatchers.IO).launch {
+                                val savedEmail = Vault.getGoogleEmail(context)
+
+                                // 1. Attempt Silent Interception First
+                                if (savedEmail.isNotBlank()) {
+                                    val extractedOtp = GmailOtpExtractor.getLatestVtopOtp(context, savedEmail)
+                                    if (extractedOtp != null) {
+                                        Log.d("SYNC", "Silently intercepted OTP: $extractedOtp")
+                                        resolver.submit(extractedOtp)
+                                        return@launch // Exit coroutine, OTP is handled
+                                    }
+                                }
+
+                                // 2. Fallback to UI or Notification
+                                if (AppBridge.isAppInForeground) {
+                                    Log.d(tag, "OTP Required. App is in foreground, routing to UI.")
+                                    withContext(Dispatchers.Main) {
+                                        AppBridge.currentOtpResolver.value = resolver
+                                    }
+                                } else {
+                                    Log.w(tag, "OTP Required. App in background. Pushing Notification.")
+                                    otpTriggered = true
+
+                                    val deferredOtp = kotlinx.coroutines.CompletableDeferred<String?>()
+                                    AppBridge.pendingOtpDeferred = deferredOtp
+
+                                    NotificationHelper.showOtpNotification(context)
+
+                                    val userOtp = withTimeoutOrNull(180_000L) {
+                                        deferredOtp.await()
+                                    }
+
+                                    if (userOtp != null) {
+                                        Log.d(tag, "OTP received from notification. Resuming sync...")
+                                        resolver.submit(userOtp)
+                                    } else {
+                                        Log.w(tag, "OTP request timed out. Discarding safely.")
+                                        resolver.cancel()
+                                        AppBridge.pendingOtpDeferred = null
+
+                                        NotificationHelper.dismissNotification(context, NotificationHelper.OTP_NOTIFICATION_ID)
+                                        NotificationHelper.showNotification(
+                                            context = context,
+                                            title = "Sync Aborted",
+                                            message = "VTOP OTP request timed out while you were away.",
+                                            notificationId = 997
+                                        )
+                                    }
+                                }
+                            }
                         }
                     })
+
+                    if (otpTriggered) {
+                        Log.w(tag, "Halting background sync completely due to OTP lock.")
+                        return@withContext Result.failure()
+                    }
+
                     if (!loginSuccess) {
                         attempts++
                         client.reinitializeSession(context)
                     }
                 } catch (_: VtopException.InvalidCredentials) {
                     Log.e(tag, "Invalid credentials. Wiping saved creds and aborting worker.")
-                    Vault.saveCredentials(context, "", "") // Wipe credentials
+                    Vault.saveCredentials(context, "", "")
                     NotificationHelper.showNotification(
                         context = context,
                         title = "VTOP Sync Failed",
@@ -84,6 +146,11 @@ class VtopSyncWorker(
                 } catch (_: Exception) {
                     attempts++
                     client.reinitializeSession(context)
+                } finally {
+                    withContext(Dispatchers.Main) {
+                        AppBridge.currentOtpResolver.value = null
+                    }
+                    AppBridge.pendingOtpDeferred = null
                 }
             }
 
@@ -116,7 +183,6 @@ class VtopSyncWorker(
                         val hasSeat = !newExam.seatNumber.isNullOrBlank() && !newExam.seatNumber.contains("TBD", ignoreCase = true)
 
                         val isUpcoming = try {
-                            // Note: Change 'examDate' to your actual date property if it's named differently in ExamScheduleModel
                             val dateString = newExam.examDate
                             val examDate = sdf.parse(dateString)
                             examDate != null && !examDate.before(today)

@@ -8,6 +8,7 @@ import com.vtop.widget.NextClassWidget
 import androidx.compose.runtime.mutableStateOf
 import com.vtop.network.VtopClient
 import com.vtop.network.VtopException
+import com.vtop.utils.*
 import com.vtop.utils.NotificationHelper
 import com.vtop.utils.Vault
 import com.vtop.logic.*
@@ -17,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 object GlobalSyncer {
     private val syncScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -72,8 +74,58 @@ object GlobalSyncer {
                             override fun onStatusUpdate(message: String) {
                                 Log.d(TAG, "Status update: $message")
                             }
+
                             override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
-                                syncScope.launch(Dispatchers.Main) { AppBridge.currentOtpResolver.value = resolver }
+                                // Launch a background coroutine to handle the suspend functions safely
+                                syncScope.launch(Dispatchers.IO) {
+                                    val savedEmail = Vault.getGoogleEmail(context)
+
+                                    // 1. Attempt Silent Interception First
+                                    if (savedEmail.isNotBlank()) {
+                                        val extractedOtp = GmailOtpExtractor.getLatestVtopOtp(context, savedEmail)
+                                        if (extractedOtp != null) {
+                                            Log.d("SYNC", "Silently intercepted OTP: $extractedOtp")
+                                            resolver.submit(extractedOtp)
+                                            return@launch // Exit coroutine, OTP is handled
+                                        }
+                                    }
+
+                                    // 2. Fallback if interception fails or isn't set up
+                                    if (AppBridge.isAppInForeground) {
+                                        withContext(Dispatchers.Main) {
+                                            AppBridge.currentOtpResolver.value = resolver
+                                        }
+                                    } else {
+                                        Log.w(TAG, "OTP Required but app is in background. Pushing Interactive Notification.")
+
+                                        val deferredOtp = kotlinx.coroutines.CompletableDeferred<String?>()
+                                        AppBridge.pendingOtpDeferred = deferredOtp
+
+                                        NotificationHelper.showOtpNotification(context)
+
+                                        val userOtp = withTimeoutOrNull(180_000L) {
+                                            deferredOtp.await()
+                                        }
+
+                                        if (userOtp != null) {
+                                            Log.d(TAG, "OTP received from notification. Resuming sync...")
+                                            resolver.submit(userOtp)
+                                        } else {
+                                            Log.w(TAG, "OTP request timed out. Discarding safely.")
+                                            resolver.cancel()
+                                            AppBridge.pendingOtpDeferred = null
+
+                                            NotificationHelper.dismissNotification(context, NotificationHelper.OTP_NOTIFICATION_ID)
+                                            NotificationHelper.showNotification(
+                                                context = context,
+                                                title = "Sync Aborted",
+                                                message = "VTOP OTP request timed out while you were away.",
+                                                notificationId = 997
+                                            )
+                                            cancelActiveSync()
+                                        }
+                                    }
+                                }
                             }
                         })
                     } catch (e: VtopException.InvalidCredentials) {
@@ -84,16 +136,22 @@ object GlobalSyncer {
                         Log.w(TAG, "Attempt ${attempts + 1} failed: Captcha incorrect")
                         loginSuccess = false
                     } catch (e: Exception) {
-                        // CRITICAL: If the exception is a cancellation, throw it immediately to break the loop!
                         if (e is CancellationException) throw e
-
                         Log.w(TAG, "Attempt ${attempts + 1} failed: ${e.message}")
                         loginSuccess = false
+                    } finally {
+                        withContext(Dispatchers.Main) {
+                            AppBridge.currentOtpResolver.value = null
+                        }
+                        AppBridge.pendingOtpDeferred = null
                     }
 
                     if (!loginSuccess) {
                         attempts++
                         if (attempts < MAX_RETRY) {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "Login failed. Retrying...", Toast.LENGTH_SHORT).show()
+                            }
                             Log.e(TAG, "Login or Captcha failed. Retrying... ($attempts/$MAX_RETRY)")
                             client.reinitializeSession(context)
                         }
@@ -135,7 +193,6 @@ object GlobalSyncer {
                 withContext(Dispatchers.Main) { Toast.makeText(context, "Sync Complete!", Toast.LENGTH_SHORT).show() }
 
             } catch (e: CancellationException) {
-                // Silently catch the cancellation so we don't show an "Error" toast to the user
                 Log.i(TAG, "Sync aborted by CancellationException.")
                 withContext(Dispatchers.Main) { Toast.makeText(context, "Sync Cancelled", Toast.LENGTH_SHORT).show() }
             } catch (e: VtopException.InvalidCredentials) {
