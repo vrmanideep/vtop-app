@@ -3,6 +3,9 @@
 package com.vtop.ui.screens.auth
 
 import android.content.Context
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -41,6 +44,15 @@ import org.json.JSONObject
 import java.io.FileNotFoundException
 import java.text.SimpleDateFormat
 import java.util.Locale
+
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.GoogleAuthProvider
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInAccount
+import com.google.android.gms.auth.api.signin.GoogleSignInClient
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.tasks.Task
 
 @Composable
 fun LoginScreen(savedReg: String?, savedPass: String?, callback: AuthActionCallback) {
@@ -125,6 +137,17 @@ private fun LoginFormView(savedReg: String?, savedPass: String?, isLoading: Bool
     var password by remember { mutableStateOf(savedPass ?: "") }
     var passwordVisible by remember { mutableStateOf(false) }
 
+    val context = LocalContext.current
+
+    LaunchedEffect(Unit) {
+        val freshCreds = com.vtop.utils.Vault.getCredentials(context)
+        val freshReg = freshCreds[0]
+        val freshPass = freshCreds[1]
+
+        if (!freshReg.isNullOrBlank()) regNo = freshReg
+        if (!freshPass.isNullOrBlank()) password = freshPass
+    }
+
     Column(
         modifier = Modifier.fillMaxWidth(0.85f),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -159,7 +182,11 @@ private fun LoginFormView(savedReg: String?, savedPass: String?, isLoading: Bool
             label = { Text("Registration Number", fontSize = 12.sp) },
             singleLine = true,
             enabled = !isLoading,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Text,
+                imeAction = ImeAction.Next,
+                autoCorrect = false
+            ),
             modifier = Modifier.fillMaxWidth(),
             colors = colors,
             shape = RoundedCornerShape(12.dp)
@@ -173,7 +200,11 @@ private fun LoginFormView(savedReg: String?, savedPass: String?, isLoading: Bool
             label = { Text("Password", fontSize = 12.sp) },
             visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
             enabled = !isLoading,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Text,
+                imeAction = ImeAction.Done,
+                autoCorrect = false
+            ),
             trailingIcon = {
                 Text(
                     text = if (passwordVisible) "HIDE" else "SHOW",
@@ -229,7 +260,6 @@ private fun SemesterPickerView(semesters: List<Map<String, String>>, isDownloadi
     val context = LocalContext.current
     val activeKeys = remember { getActiveSemesterKeysFromCache(context) }
 
-    // First, find the index of the officially "current" semester
     val currentSemIndex = remember(semesters, activeKeys) {
         val idx = semesters.indexOfFirst { sem ->
             val semName = sem["name"] ?: ""
@@ -257,6 +287,20 @@ private fun SemesterPickerView(semesters: List<Map<String, String>>, isDownloadi
         )
 
         if (isDownloading) {
+            var showGoogleDialog by remember { mutableStateOf(!com.vtop.utils.Vault.hasPromptedGoogleSignIn(context) && com.vtop.utils.Vault.getGoogleEmail(context).isEmpty()) }
+
+            if (showGoogleDialog) {
+                GoogleSignInDialog(
+                    onDismiss = {
+                        com.vtop.utils.Vault.setHasPromptedGoogleSignIn(context, true)
+                        showGoogleDialog = false
+                    },
+                    onSuccess = {
+                        showGoogleDialog = false
+                    }
+                )
+            }
+
             CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -266,7 +310,6 @@ private fun SemesterPickerView(semesters: List<Map<String, String>>, isDownloadi
 
                     val isCurrent = index == currentSemIndex
 
-                    // Calculate distance from the current semester to dim gradually (drops by 0.25 opacity per step away)
                     val distance = kotlin.math.abs(index - currentSemIndex)
                     val opacity = (1f - (distance * 0.25f)).coerceIn(0.35f, 1f)
 
@@ -307,6 +350,63 @@ private fun SemesterPickerView(semesters: List<Map<String, String>>, isDownloadi
     }
 }
 
+@Composable
+fun GoogleSignInDialog(onDismiss: () -> Unit, onSuccess: (String) -> Unit) {
+    val context = LocalContext.current
+    val webClientId = context.getString(context.resources.getIdentifier("default_web_client_id", "string", context.packageName))
+    val signInClient = remember { com.vtop.utils.AuthHelper.getGoogleSignInClient(context, webClientId) }
+
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val task = com.google.android.gms.auth.api.signin.GoogleSignIn.getSignedInAccountFromIntent(result.data)
+        try {
+            val account = task.getResult(com.google.android.gms.common.api.ApiException::class.java)
+            val email = account?.email ?: ""
+
+            if (email.endsWith("@vitapstudent.ac.in")) {
+                val credential = GoogleAuthProvider.getCredential(account?.idToken, null)
+                FirebaseAuth.getInstance().signInWithCredential(credential)
+                    .addOnCompleteListener { authTask ->
+                        if (authTask.isSuccessful) {
+                            com.vtop.utils.Vault.saveGoogleEmail(context, email)
+                            com.vtop.utils.Vault.setHasPromptedGoogleSignIn(context, true)
+                            Toast.makeText(context, "Email linked successfully!", Toast.LENGTH_SHORT).show()
+                            onSuccess(email)
+                        } else {
+                            signInClient.signOut()
+                            Toast.makeText(context, "Firebase Auth Failed", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+            } else {
+                signInClient.signOut()
+                Toast.makeText(context, "Must use @vitapstudent.ac.in email", Toast.LENGTH_LONG).show()
+            }
+        } catch (e: Exception) {
+            Toast.makeText(context, "Sign-in failed", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Auto-Sync OTPs", fontWeight = FontWeight.Bold) },
+        text = { Text("Link your @vitapstudent.ac.in email to let the app automatically read VTOP OTPs in the background. You won't have to manually enter them anymore.") },
+        confirmButton = {
+            Button(
+                onClick = { launcher.launch(signInClient.signInIntent) },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+            ) { Text("Link Google Account", fontWeight = FontWeight.Bold) }
+        },
+        dismissButton = {
+            TextButton(onClick = {
+                com.vtop.utils.Vault.setHasPromptedGoogleSignIn(context, true)
+                onDismiss()
+            }) { Text("Skip for now", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        },
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        textContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
 // --------------------------------------------------------------------------------------
 // JSON PARSERS & HELPERS
 // --------------------------------------------------------------------------------------
@@ -318,7 +418,6 @@ private fun getActiveSemesterKeysFromCache(context: Context): List<String> {
         val root = JSONObject(jsonStr)
         val now = System.currentTimeMillis()
 
-        // THE FIX: Helper function to safely parse dates, stripping accidental spaces
         fun parseDateSafely(dateStr: String): Long {
             val cleanStr = dateStr.replace(" ", "")
             val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
@@ -337,7 +436,6 @@ private fun getActiveSemesterKeysFromCache(context: Context): List<String> {
 
             val isExplicitlyCurrent = semInfo.optString("is_current", "false") == "true"
 
-            // Fallback: If date math is true OR the JSON explicitly marks it as true
             if ((startMs > 0L && now in startMs..extendedEndMs) || isExplicitlyCurrent) {
                 activeKeys.add(name)
                 activeKeys.add(semInfo.optString("id", ""))
@@ -365,7 +463,6 @@ private fun getActiveSemesterKeysFromCache(context: Context): List<String> {
             }
         }
     } catch (e: FileNotFoundException) {
-        // Silently ignore if the cache file hasn't been created yet
     } catch (e: Exception) {
         e.printStackTrace()
     }
@@ -396,7 +493,6 @@ private fun loadSemestersFromCache(context: Context): List<Map<String, String>> 
             }
         }
     } catch (e: FileNotFoundException) {
-        // Silently ignore if the cache file hasn't been created yet
     } catch (e: Exception) {
         e.printStackTrace()
     }

@@ -671,30 +671,20 @@ fun FloatingDockContainer(currentScreen: String, items: List<String>, offsetX: F
 @Composable
 fun HomepagePermissionHandler() {
     val context = LocalContext.current
-
-    // State to track which permission we are currently asking for
     var currentStep by remember { mutableIntStateOf(0) }
 
     // 1. Launcher for Android 13+ Notifications
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) {
-        // Move to the next permission regardless of whether they approved or denied
-        currentStep = 1
+        currentStep = 1 // Move to Exact Alarms
     }
 
-    // 2. Launcher for Battery Optimization (Takes user to settings)
-    val batteryLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        currentStep = 2
-    }
-
-    // 3. Launcher for Exact Alarms (Takes user to settings)
+    // 2. Launcher for Exact Alarms
     val alarmLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
-        currentStep = 3
+        currentStep = 2 // Done
     }
 
     // Sequentially evaluate and trigger permissions
@@ -706,26 +696,13 @@ fun HomepagePermissionHandler() {
                     if (status != PackageManager.PERMISSION_GRANTED) {
                         notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     } else {
-                        currentStep = 2 // Already granted, skip to next
+                        currentStep = 1 // Already granted, skip to Exact Alarms
                     }
                 } else {
-                    currentStep = 2// Not required for Android 12 and below
+                    currentStep = 1 // Not required, skip to Exact Alarms
                 }
             }
-            /*
-            1 -> { // Step 1: Battery Optimization
-                val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !powerManager.isIgnoringBatteryOptimizations(context.packageName)) {
-                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                        data = Uri.parse("package:${context.packageName}")
-                    }
-                    batteryLauncher.launch(intent)
-                } else {
-                    currentStep = 2 // Already ignored or unsupported, skip to next
-                }
-            }
-            */
-            2 -> { // Step 2: Exact Alarms (Android 12+)
+            1 -> { // Step 1: Exact Alarms (Android 12+)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
                     if (!alarmManager.canScheduleExactAlarms()) {
@@ -734,10 +711,10 @@ fun HomepagePermissionHandler() {
                         }
                         alarmLauncher.launch(intent)
                     } else {
-                        currentStep = 3
+                        currentStep = 2 // Done
                     }
                 } else {
-                    currentStep = 3
+                    currentStep = 2 // Done
                 }
             }
         }

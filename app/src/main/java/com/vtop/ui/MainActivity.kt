@@ -12,13 +12,23 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -34,6 +44,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.mikepenz.markdown.m3.Markdown
 import com.vtop.models.TimetableModel
 import com.vtop.network.VtopClient
 import com.vtop.ui.core.AppBridge
@@ -42,8 +53,11 @@ import com.vtop.ui.core.VtopSyncWorker
 import com.vtop.ui.screens.main.FetchCallback
 import com.vtop.ui.screens.main.MainScreen
 import com.vtop.ui.screens.main.OutingActionHandler
+import com.vtop.ui.screens.auth.GoogleSignInDialog
 import com.vtop.ui.theme.*
 import com.vtop.utils.NotificationHelper
+import com.vtop.utils.UpdateInfo
+import com.vtop.utils.UpdateManager
 import com.vtop.utils.Vault
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -53,16 +67,23 @@ import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
 
-    // Track whether the background loading is finished
     private val isDataLoaded = mutableStateOf(false)
+
+    override fun onResume() {
+        super.onResume()
+        com.vtop.ui.core.AppBridge.isAppInForeground = true
+    }
+
+    override fun onPause() {
+        super.onPause()
+        com.vtop.ui.core.AppBridge.isAppInForeground = false
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Makes the status bar transparent
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
-        // 1. Load Theme Mode (With safety catch for old deprecated themes)
         val sharedPrefs = getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
         val savedThemeString = sharedPrefs.getString("APP_THEME", AppThemeMode.SYSTEM.name) ?: AppThemeMode.SYSTEM.name
         ThemeManager.themeMode.value = try {
@@ -71,24 +92,20 @@ class MainActivity : ComponentActivity() {
             AppThemeMode.DARK
         }
 
-        // 2. Load Material You toggle (Defaults to true)
         ThemeManager.useDynamicColor.value = sharedPrefs.getBoolean("USE_DYNAMIC_COLOR", true)
-
-        // 3. Load Custom Accent Color
         val defaultAccentInt = VtopPrimaryBlue.toArgb()
         val savedAccentInt = sharedPrefs.getInt("CUSTOM_ACCENT", defaultAccentInt)
         ThemeManager.customAccent.value = androidx.compose.ui.graphics.Color(savedAccentInt)
 
         NotificationHelper.createNotificationChannel(this)
 
-        val syncRequest = PeriodicWorkRequestBuilder<VtopSyncWorker>(4, TimeUnit.HOURS).build()
+        val syncRequest = PeriodicWorkRequestBuilder<VtopSyncWorker>(8, TimeUnit.HOURS).build()
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
             "VTOP_BACKGROUND_SYNC",
             ExistingPeriodicWorkPolicy.KEEP,
             syncRequest
         )
 
-        // Asynchronous Data Loading
         lifecycleScope.launch(Dispatchers.IO) {
             val timetable = Vault.getTimetable(this@MainActivity)
             val attendance = Vault.getAttendance(this@MainActivity) ?: emptyList()
@@ -109,7 +126,6 @@ class MainActivity : ComponentActivity() {
                 AppBridge.historySummaryState.value = historySummary
                 AppBridge.historyItemsState.value = historyItems
 
-                // Trigger the UI to transition from Splash to Dashboard
                 isDataLoaded.value = true
             }
         }
@@ -135,11 +151,28 @@ class MainActivity : ComponentActivity() {
             com.vtop.utils.AppShortcuts.setupDynamicShortcuts(this)
             val shortcutAction = intent?.action
 
+            var showOtaGooglePrompt by remember { mutableStateOf(!Vault.hasPromptedGoogleSignIn(this@MainActivity) && Vault.getGoogleEmail(this@MainActivity).isEmpty()) }
+
+            // --- FIREBASE OTA UPDATE STATE ---
+            var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
+            var isDownloadingUpdate by remember { mutableStateOf(false) }
+
+            // Silently check for updates on launch
+            LaunchedEffect(Unit) {
+                try {
+                    val info = UpdateManager.checkForUpdates()
+                    if (info.isUpdateAvailable) {
+                        updateInfo = info
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
             AppTheme(themeMode = themeMode) {
-                // Smoothly crossfade between the Splash Screen and the Main Dashboard
                 Crossfade(
                     targetState = isDataLoaded.value,
-                    animationSpec = tween(500), // Half-second smooth fade
+                    animationSpec = tween(500),
                     label = "DataLoadTransition"
                 ) { loaded ->
                     if (loaded) {
@@ -158,7 +191,6 @@ class MainActivity : ComponentActivity() {
                                 finish()
                             },
                             outingHandler = object : OutingActionHandler {
-
                                 @Suppress("SpellCheckingInspection")
                                 override fun onFetchGeneralFormData(callback: FetchCallback) {
                                     val creds = Vault.getCredentials(this@MainActivity)
@@ -283,13 +315,91 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }
                                 }
-
                             }
                         )
                     } else {
-                        // Display our custom loading screen instead of an empty dashboard
                         VtopSplashScreen()
                     }
+                }
+
+                if (showOtaGooglePrompt && isDataLoaded.value) {
+                    GoogleSignInDialog(
+                        onDismiss = { showOtaGooglePrompt = false },
+                        onSuccess = { showOtaGooglePrompt = false }
+                    )
+                }
+
+                // --- FIREBASE OTA UPDATE DIALOG ---
+                if (updateInfo != null) {
+                    AlertDialog(
+                        onDismissRequest = { updateInfo = null },
+                        title = {
+                            Column {
+                                Text("Update Available", fontWeight = FontWeight.Black, fontSize = 20.sp)
+                                if (!updateInfo?.releaseTitle.isNullOrBlank()) {
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        text = updateInfo!!.releaseTitle,
+                                        fontSize = 14.sp,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        },
+                        text = {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 350.dp)
+                                    .verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Text(
+                                    text = "Version ${updateInfo?.latestVersion} is ready to download. Do you want to install it now?",
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 14.sp
+                                )
+
+                                if (!updateInfo?.releaseNotes.isNullOrBlank()) {
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                                    Text(
+                                        text = "Release Notes:",
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 0.5.sp
+                                    )
+                                    Markdown(
+                                        content = updateInfo!!.releaseNotes,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    isDownloadingUpdate = true
+                                    UpdateManager.downloadAndInstallUpdate(
+                                        context = this@MainActivity,
+                                        downloadUrl = updateInfo!!.downloadUrl,
+                                        version = updateInfo!!.latestVersion
+                                    )
+                                    updateInfo = null
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                            ) {
+                                Text(if (isDownloadingUpdate) "Downloading..." else "Update Now", fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { updateInfo = null }) {
+                                Text("Later", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        },
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
                 }
             }
         }

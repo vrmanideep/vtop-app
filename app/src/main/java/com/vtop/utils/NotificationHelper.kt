@@ -10,11 +10,15 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
+import androidx.core.app.RemoteInput
 import com.vtop.ui.MainActivity
 
 object NotificationHelper {
     private const val CHANNEL_ID = "vtop_alerts_channel"
     private const val CHANNEL_NAME = "VTOP Academic Alerts"
+
+    // The fixed ID for the interactive OTP notification
+    const val OTP_NOTIFICATION_ID = 888
 
     // 1. Create the Channel (Required for Android 8.0+)
     fun createNotificationChannel(context: Context) {
@@ -24,7 +28,7 @@ object NotificationHelper {
                 CHANNEL_NAME,
                 NotificationManager.IMPORTANCE_HIGH // Makes it pop up on screen
             ).apply {
-                description = "Alerts for class cancellations and attendance risks"
+                description = "Alerts for class cancellations, attendance risks, and OTPs"
             }
 
             val notificationManager: NotificationManager =
@@ -33,9 +37,8 @@ object NotificationHelper {
         }
     }
 
-    // 2. Fire the Notification
+    // 2. Fire a Standard Notification
     fun showNotification(context: Context, title: String, message: String, notificationId: Int = 1) {
-        // This intent opens the app when the user taps the notification
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         }
@@ -53,6 +56,53 @@ object NotificationHelper {
 
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.notify(notificationId, builder.build())
+    }
+
+    // 3. Fire the Interactive OTP Notification
+    fun showOtpNotification(context: Context) {
+        // Create the RemoteInput (The text box that appears in the notification)
+        val remoteInput = RemoteInput.Builder("KEY_OTP_REPLY")
+            .setLabel("Enter VTOP OTP")
+            .build()
+
+        // Create the Intent that fires when the user hits "Send" on the keyboard
+        val replyIntent = Intent(context, OtpReceiver::class.java)
+
+        // FLAG_MUTABLE is strictly required here so Android can inject the typed text into the intent
+        val replyPendingIntent = PendingIntent.getBroadcast(
+            context,
+            0,
+            replyIntent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT else PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        // Attach the text input to an Action button
+        val replyAction = NotificationCompat.Action.Builder(
+            android.R.drawable.ic_menu_send,
+            "Enter OTP",
+            replyPendingIntent
+        ).addRemoteInput(remoteInput).build()
+
+        // Build and show the Notification
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info) // TODO: Replace with your app's icon
+            .setContentTitle("VTOP Sync Paused")
+            .setContentText("VTOP requires an OTP to continue syncing your data.")
+            .setColor(0xFF4ADE80.toInt()) // Standard green accent
+            .addAction(replyAction)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setVibrate(longArrayOf(0, 250, 250, 250)) // High priority vibration to wake the user
+            .setAutoCancel(false) // Don't let them dismiss it just by tapping the body
+            .build()
+
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(OTP_NOTIFICATION_ID, notification)
+    }
+
+    // 4. Safely dismiss a specific notification (Used when the 3-minute timer expires)
+    fun dismissNotification(context: Context, id: Int) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.cancel(id)
     }
 }
 
