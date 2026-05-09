@@ -9,10 +9,8 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.core.view.WindowCompat
-import androidx.glance.appwidget.updateAll
 import androidx.lifecycle.lifecycleScope
 import com.vtop.network.VtopClient
-import com.vtop.logic.*
 import com.vtop.ui.core.AppBridge
 import com.vtop.ui.core.LoginBridge
 import com.vtop.ui.screens.auth.LoginScreen
@@ -21,7 +19,6 @@ import com.vtop.ui.theme.AppThemeMode
 import com.vtop.ui.theme.AuthActionCallback
 import com.vtop.ui.theme.AuthState
 import com.vtop.utils.Vault
-import com.vtop.widget.NextClassWidget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -33,13 +30,9 @@ import java.util.Locale
 
 class LoginActivity : ComponentActivity() {
 
-    // THIS IS THE FIX: We store the active session here after the first login succeeds
-    private var activeVtopClient: VtopClient? = null
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 1. SESSION CHECK
         val sharedPrefs = getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
         val isExplicitlyLoggedOut = sharedPrefs.getBoolean("IS_EXPLICITLY_LOGGED_OUT", false)
 
@@ -82,45 +75,37 @@ class LoginActivity : ComponentActivity() {
                                     var attempts = 0
                                     val maxAttempts = 3
 
-                                    // --- CAPTCHA AUTO-RETRY LOOP ---
                                     while (!loginSuccess && attempts < maxAttempts) {
                                         attempts++
                                         if (attempts > 1) {
-                                            withContext(Dispatchers.Main) {
-                                                LoginBridge.loginError.value = "Retrying login ($attempts/$maxAttempts)..."
-                                            }
-                                            delay(1000) // Brief pause before retry
+                                            withContext(Dispatchers.Main) { LoginBridge.loginError.value = "Retrying login ($attempts/$maxAttempts)..." }
+                                            delay(1000)
                                         }
 
                                         loginSuccess = client.autoLogin(this@LoginActivity, object : VtopClient.LoginListener {
-                                            override fun onStatusUpdate(message: String) {
-                                                Log.d("VTOP_LOGIN", message)
-                                            }
-
+                                            override fun onStatusUpdate(message: String) { Log.d("VTOP_LOGIN", message) }
                                             override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
-                                                lifecycleScope.launch(Dispatchers.Main) {
-                                                    AppBridge.currentOtpResolver.value = resolver
-                                                }
+                                                lifecycleScope.launch(Dispatchers.Main) { AppBridge.currentOtpResolver.value = resolver }
                                             }
                                         })
                                     }
 
                                     if (loginSuccess) {
-                                        // SAVE THE ACTIVE CLIENT SO WE DON'T LOSE THE SESSION COOKIES
-                                        activeVtopClient = client
+                                        // Save the dynamically extracted ID securely to the vault!
+                                        if (client.authorizedId != null && !client.authorizedId.isEmpty() && !client.authorizedId.equals(regNo)) {
+                                            Vault.saveRegNo(this@LoginActivity, client.authorizedId)
+                                        }
 
                                         val semestersList = client.fetchSemesters()
                                         val firstSemName = semestersList.firstOrNull()?.get("name") ?: ""
                                         val currentIndex = getActiveSemesterIndex(this@LoginActivity, firstSemName)
 
                                         val processedSemesters = semestersList.mapIndexed { index, map ->
-                                            map.toMutableMap().apply {
-                                                this["isCurrent"] = (index == currentIndex).toString()
-                                            }
+                                            map.toMutableMap().apply { this["isCurrent"] = (index == currentIndex).toString() }
                                         }
 
                                         withContext(Dispatchers.Main) {
-                                            LoginBridge.loginError.value = null // Clear any retry messages
+                                            LoginBridge.loginError.value = null
                                             LoginBridge.fetchedSemesters.value = processedSemesters
                                             LoginBridge.currentState.value = AuthState.SELECT_SEMESTER
                                         }
@@ -145,88 +130,12 @@ class LoginActivity : ComponentActivity() {
                             lifecycleScope.launch(Dispatchers.IO) {
                                 Vault.saveSelectedSemester(this@LoginActivity, semId, semName)
 
-                                val currentCreds = Vault.getCredentials(this@LoginActivity)
-                                val reg = currentCreds[0] ?: ""
-
-                                // GRAB THE SAVED CLIENT INSTEAD OF CREATING A NEW ONE
-                                val client = activeVtopClient
-                                if (client == null) {
-                                    Log.e("LOGIN_SYNC", "Critical Error: Session client was lost between screens.")
-                                    withContext(Dispatchers.Main) {
-                                        LoginBridge.loginError.value = "Session lost. Please try logging in again."
-                                        LoginBridge.currentState.value = AuthState.FORM
-                                    }
-                                    return@launch
-                                }
-
-                                try {
-                                    val profileHtml = client.fetchProfileRawHtml(null)
-                                    val timetableHtml = client.fetchTimetableRawHtml(semId, null)
-                                    val attendanceHtml = client.fetchAttendanceRawHtml(semId, null)
-                                    val examsHtml = client.fetchExamScheduleRawHtml(semId, null)
-                                    val marksHtml = client.fetchMarksRawHtml(semId, null)
-                                    val gradesHtml = client.fetchGradesRawHtml(semId, null)
-                                    val historyHtml = client.fetchHistoryRawHtml(null)
-                                    val generalOutingHtml = client.fetchGeneralOutingRawHtml(reg, null)
-                                    val weekendOutingHtml = client.fetchWeekendOutingRawHtml(reg, null)
-
-                                    val timetableData = try { TimetableParser.parse(timetableHtml) } catch (e: Exception) { Log.e("LOGIN_SYNC", "Timetable parse failed", e); com.vtop.models.TimetableModel() }
-                                    val examsData = try { ExamScheduleParser.parse(examsHtml) } catch (e: Exception) { Log.e("LOGIN_SYNC", "Exams parse failed", e); emptyList() }
-                                    val attendanceData = try { AttendanceParser.parseSummary(attendanceHtml) } catch (e: Exception) { Log.e("LOGIN_SYNC", "Attendance parse failed", e); emptyList() }
-                                    val marksData = try { MarksParser.parseMarks(marksHtml) } catch (e: Exception) { Log.e("LOGIN_SYNC", "Marks parse failed", e); emptyList() }
-                                    val gradesData = try { MarksParser.parseGrades(gradesHtml) } catch (e: Exception) { Log.e("LOGIN_SYNC", "Grades parse failed", e); emptyList() }
-                                    val historyPair = try { MarksParser.parseHistory(historyHtml) } catch (e: Exception) { Log.e("LOGIN_SYNC", "History parse failed", e); Pair(com.vtop.models.CGPASummary("", "", ""), emptyList()) }
-                                    val allOutings = try { OutingParser.parseGeneral(generalOutingHtml ?: "") + OutingParser.parseWeekend(weekendOutingHtml ?: "") } catch (e: Exception) { Log.e("LOGIN_SYNC", "Outings parse failed", e); emptyList() }
-                                    val profileData = try { ProfileParser.parse(profileHtml) } catch (e: Exception) { Log.e("LOGIN_SYNC", "Profile parse failed", e); emptyMap() }
-
-                                    for (course in attendanceData) {
-                                        try {
-                                            val cId = course.courseId ?: continue
-                                            val cType = course.courseType ?: continue
-                                            val detailHtml = client.fetchAttendanceDetailRawHtml(semId, cId, cType, reg, null)
-                                            AttendanceParser.parseDetailAndUpdate(detailHtml, course)
-                                        } catch (e: Exception) {
-                                            Log.e("LOGIN_SYNC", "Detail parse failed for course", e)
-                                        }
-                                    }
-
-                                    // 1. SAVE TO VAULT
-                                    Vault.saveTimetable(this@LoginActivity, timetableData)
-                                    Vault.saveAttendance(this@LoginActivity, attendanceData)
-                                    Vault.saveExamSchedule(this@LoginActivity, examsData)
-                                    Vault.saveMarks(this@LoginActivity, marksData)
-                                    Vault.saveGrades(this@LoginActivity, gradesData)
-                                    Vault.saveHistory(this@LoginActivity, historyPair.second)
-                                    Vault.saveCGPASummary(this@LoginActivity, historyPair.first)
-                                    Vault.saveOutings(this@LoginActivity, allOutings)
-                                    Vault.saveProfile(this@LoginActivity, profileData)
-                                    Vault.saveLastSyncTime(this@LoginActivity)
-
-                                    // 2. LIVE UPDATE THE APP BRIDGE SO MAIN SCREEN SEES IT IMMEDIATELY
-                                    withContext(Dispatchers.Main) {
-                                        AppBridge.timetableState.value = timetableData
-                                        AppBridge.attendanceState.value = attendanceData
-                                        AppBridge.examsState.value = examsData
-                                        AppBridge.marksState.value = marksData
-                                        AppBridge.gradesState.value = gradesData
-                                        AppBridge.historyItemsState.value = historyPair.second
-                                        AppBridge.historySummaryState.value = historyPair.first
-                                        AppBridge.outingsState.value = allOutings
-                                        AppBridge.profileState.value = profileData
-                                    }
-
-                                    try {
-                                        NextClassWidget().updateAll(this@LoginActivity)
-                                    } catch (e: Exception) {
-                                        Log.e("WIDGET_UPDATE", "Failed to update widget: ${e.message}")
-                                    }
-
-                                } catch (e: Exception) {
-                                    Log.e("LOGIN_SYNC", "Parsing loop failed catastrophically: ${e.message}", e)
-                                }
-
                                 withContext(Dispatchers.Main) {
-                                    startActivity(Intent(this@LoginActivity, MainActivity::class.java))
+                                    // Start MainActivity and explicitly command it to Sync immediately!
+                                    val intent = Intent(this@LoginActivity, MainActivity::class.java).apply {
+                                        putExtra("TRIGGER_INITIAL_SYNC", true)
+                                    }
+                                    startActivity(intent)
                                     finish()
                                 }
                             }

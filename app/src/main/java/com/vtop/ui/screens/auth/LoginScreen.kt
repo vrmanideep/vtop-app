@@ -179,13 +179,13 @@ private fun LoginFormView(savedReg: String?, savedPass: String?, isLoading: Bool
         OutlinedTextField(
             value = regNo,
             onValueChange = { regNo = it.uppercase() },
-            label = { Text("Registration Number", fontSize = 12.sp) },
+            label = { Text("Username", fontSize = 12.sp) },
             singleLine = true,
             enabled = !isLoading,
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Text,
                 imeAction = ImeAction.Next,
-                autoCorrect = false
+                autoCorrectEnabled = false
             ),
             modifier = Modifier.fillMaxWidth(),
             colors = colors,

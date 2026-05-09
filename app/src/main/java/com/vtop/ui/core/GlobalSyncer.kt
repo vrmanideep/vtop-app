@@ -9,8 +9,6 @@ import androidx.compose.runtime.mutableStateOf
 import com.vtop.network.VtopClient
 import com.vtop.network.VtopException
 import com.vtop.utils.*
-import com.vtop.utils.NotificationHelper
-import com.vtop.utils.Vault
 import com.vtop.logic.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -28,7 +26,6 @@ object GlobalSyncer {
     private const val TAG = "GLOBAL_SYNC"
     @Volatile private var activeSyncJob: kotlinx.coroutines.Job? = null
 
-    // Instantly aborts the coroutine and resets the UI state
     fun cancelActiveSync() {
         Log.i(TAG, "User explicitly requested sync cancellation.")
         activeSyncJob?.cancel()
@@ -36,7 +33,21 @@ object GlobalSyncer {
         AppBridge.syncStatus.value = "IDLE"
     }
 
-    fun performSync(context: Context, priorityTab: String? = null, forceNewSession: Boolean = false) {
+    private fun extractAuthorizedIdFromContent(html: String?): String? {
+        if (html.isNullOrBlank()) return null
+
+        val regNoPattern = Regex("""\b\d{2}[a-zA-Z]{3}\d{4}\b""")
+        val match = regNoPattern.find(html)
+        if (match != null) return match.value.uppercase()
+
+        val jsPattern = Regex("""(?:let|var)\s+id\s*=\s*['"]([^'"]+)['"]""")
+        val jsMatch = jsPattern.find(html)
+        if (jsMatch != null) return jsMatch.groupValues[1].uppercase()
+
+        return null
+    }
+
+    suspend fun performSync(context: Context, priorityTab: String? = null, forceNewSession: Boolean = false) {
         if (isSyncing.value) {
             Log.w(TAG, "performSync ignored: already syncing")
             return
@@ -50,13 +61,10 @@ object GlobalSyncer {
                 }
 
                 val creds = Vault.getCredentials(context)
-                val regNo = creds[0] ?: throw Exception("No Registration Number")
-                val pass = creds[1] ?: throw Exception("No Password")
+                val username = creds[0] // Strictly used to log in
+                val password = creds[1]
 
-                val semInfo = Vault.getSelectedSemester(context)
-                val semId = semInfo[0] ?: ""
-
-                val client = VtopClient(context, regNo, pass)
+                val client = VtopClient(context, username, password)
 
                 if (forceNewSession) {
                     Log.i(TAG, "Force Refresh Requested: Wiping existing session cookies.")
@@ -65,6 +73,8 @@ object GlobalSyncer {
 
                 var loginSuccess = false
                 var attempts = 0
+
+                Log.d(TAG, "[SYNC STEP 1] Starting Login Process...")
 
                 while (attempts < MAX_RETRY && !loginSuccess) {
                     Log.d(TAG, "Login Attempt ${attempts + 1} of $MAX_RETRY")
@@ -76,52 +86,32 @@ object GlobalSyncer {
                             }
 
                             override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
-                                // Launch a background coroutine to handle the suspend functions safely
                                 syncScope.launch(Dispatchers.IO) {
                                     val savedEmail = Vault.getGoogleEmail(context)
 
-                                    // 1. Attempt Silent Interception First
                                     if (savedEmail.isNotBlank()) {
                                         val extractedOtp = GmailOtpExtractor.getLatestVtopOtp(context, savedEmail)
                                         if (extractedOtp != null) {
-                                            Log.d("SYNC", "Silently intercepted OTP: $extractedOtp")
+                                            Log.d(TAG, "Silently intercepted OTP: $extractedOtp")
                                             resolver.submit(extractedOtp)
-                                            return@launch // Exit coroutine, OTP is handled
+                                            return@launch
                                         }
                                     }
 
-                                    // 2. Fallback if interception fails or isn't set up
                                     if (AppBridge.isAppInForeground) {
-                                        withContext(Dispatchers.Main) {
-                                            AppBridge.currentOtpResolver.value = resolver
-                                        }
+                                        withContext(Dispatchers.Main) { AppBridge.currentOtpResolver.value = resolver }
                                     } else {
-                                        Log.w(TAG, "OTP Required but app is in background. Pushing Interactive Notification.")
-
                                         val deferredOtp = kotlinx.coroutines.CompletableDeferred<String?>()
                                         AppBridge.pendingOtpDeferred = deferredOtp
-
                                         NotificationHelper.showOtpNotification(context)
 
-                                        val userOtp = withTimeoutOrNull(180_000L) {
-                                            deferredOtp.await()
-                                        }
+                                        val userOtp = withTimeoutOrNull(180_000L) { deferredOtp.await() }
 
-                                        if (userOtp != null) {
-                                            Log.d(TAG, "OTP received from notification. Resuming sync...")
-                                            resolver.submit(userOtp)
-                                        } else {
-                                            Log.w(TAG, "OTP request timed out. Discarding safely.")
+                                        if (userOtp != null) resolver.submit(userOtp)
+                                        else {
                                             resolver.cancel()
                                             AppBridge.pendingOtpDeferred = null
-
                                             NotificationHelper.dismissNotification(context, NotificationHelper.OTP_NOTIFICATION_ID)
-                                            NotificationHelper.showNotification(
-                                                context = context,
-                                                title = "Sync Aborted",
-                                                message = "VTOP OTP request timed out while you were away.",
-                                                notificationId = 997
-                                            )
                                             cancelActiveSync()
                                         }
                                     }
@@ -132,27 +122,19 @@ object GlobalSyncer {
                         throw e
                     } catch (e: VtopException.AuthenticationFailed) {
                         throw e
-                    } catch (e: VtopException.CaptchaFailed) {
-                        Log.w(TAG, "Attempt ${attempts + 1} failed: Captcha incorrect")
-                        loginSuccess = false
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
                         Log.w(TAG, "Attempt ${attempts + 1} failed: ${e.message}")
                         loginSuccess = false
                     } finally {
-                        withContext(Dispatchers.Main) {
-                            AppBridge.currentOtpResolver.value = null
-                        }
+                        withContext(Dispatchers.Main) { AppBridge.currentOtpResolver.value = null }
                         AppBridge.pendingOtpDeferred = null
                     }
 
                     if (!loginSuccess) {
                         attempts++
                         if (attempts < MAX_RETRY) {
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "Login failed. Retrying...", Toast.LENGTH_SHORT).show()
-                            }
-                            Log.e(TAG, "Login or Captcha failed. Retrying... ($attempts/$MAX_RETRY)")
+                            withContext(Dispatchers.Main) { Toast.makeText(context, "Login failed. Retrying...", Toast.LENGTH_SHORT).show() }
                             client.reinitializeSession(context)
                         }
                     }
@@ -162,47 +144,82 @@ object GlobalSyncer {
                     throw Exception("Failed to login after $MAX_RETRY attempts. VTOP might be blocking requests.")
                 }
 
+                Log.d(TAG, "[SYNC STEP 2] Login Successful. Moving to ID Validation.")
+
+                var authorizedId = Vault.getRegNo(context)
+                val validRegNoRegex = Regex("""\b\d{2}[a-zA-Z]{3}\d{4}\b""")
+
+                if (authorizedId.isBlank() || authorizedId == "-" || !validRegNoRegex.matches(authorizedId)) {
+                    Log.w(TAG, "[SYNC STEP 3] Valid ID not found in Vault (Current: '$authorizedId'). Forcing /content scrape.")
+                    withContext(Dispatchers.Main) { AppBridge.syncStatus.value = "Establishing Session..." }
+
+                    Log.d(TAG, "[SYNC STEP 4] Fetching /content page...")
+                    val contentHtml = client.fetchContentPageRawHtml()
+                    Log.d(TAG, "[SYNC STEP 5] /content page fetched. Length: ${contentHtml?.length ?: 0}")
+
+                    val scrapedId = extractAuthorizedIdFromContent(contentHtml)
+
+                    if (!scrapedId.isNullOrBlank() && validRegNoRegex.matches(scrapedId)) {
+                        authorizedId = scrapedId
+                        Vault.saveRegNo(context, authorizedId)
+                        Log.d(TAG, "[SYNC STEP 6] Successfully scraped and locked Registration Number: $authorizedId")
+                    } else {
+                        Log.e(TAG, "[SYNC STEP 6] Failed to scrape valid Registration Number. Falling back to username.")
+                        authorizedId = username
+                    }
+                } else {
+                    Log.d(TAG, "[SYNC STEP 3] Valid Registration Number already locked in Vault: $authorizedId")
+                }
+
+                // =========================================================
+                // THE FIX: FORCING THE JAVA CLIENT TO USE THE SCRAPED ID
+                // =========================================================
+                Log.d(TAG, "[SYNC STEP 6.5] Injecting Authorized ID into Client: $authorizedId")
+                client.setAuthorizedId(authorizedId)
+
+                val semInfo = Vault.getSelectedSemester(context)
+                val semId = semInfo[0] ?: ""
+
                 withContext(Dispatchers.Main) { AppBridge.syncStatus.value = "SYNCING" }
 
                 val priority = priorityTab?.uppercase()
-                Log.d(TAG, "Executing Priority Fetch for: $priority")
+                Log.d(TAG, "[SYNC STEP 7] Executing Priority Fetch for: $priority using ID: $authorizedId")
 
                 when (priority) {
                     "HOME" -> syncTimetable(context, client, semId)
-                    "ATTENDANCE" -> syncAttendance(context, client, semId, regNo)
+                    "ATTENDANCE" -> syncAttendance(context, client, semId, authorizedId)
                     "EXAMS" -> syncExams(context, client, semId)
                     "MARKS" -> syncMarks(context, client, semId)
-                    "OUTINGS" -> syncOutings(context, client, regNo)
+                    "OUTINGS" -> syncOutings(context, client, authorizedId)
+                    "PROFILE" -> {
+                        Log.d(TAG, "[SYNC STEP 7.1] Fetching Profile...")
+                        val profileHtml = client.fetchProfileRawHtml(null)
+                        val profileData = ProfileParser.parse(profileHtml)
+                        Vault.saveProfile(context, profileData)
+                        withContext(Dispatchers.Main) { AppBridge.profileState.value = profileData }
+                    }
                 }
 
-                Log.d(TAG, "Priority fetch complete. Fetching remaining data in background...")
+                Log.d(TAG, "[SYNC STEP 8] Priority fetch complete. Fetching remaining data in background...")
+
                 if (priority != "HOME") syncTimetable(context, client, semId)
-                if (priority != "ATTENDANCE") syncAttendance(context, client, semId, regNo)
+                if (priority != "ATTENDANCE") syncAttendance(context, client, semId, authorizedId)
                 if (priority != "EXAMS") syncExams(context, client, semId)
                 if (priority != "MARKS") syncMarks(context, client, semId)
-                if (priority != "OUTINGS") syncOutings(context, client, regNo)
+                if (priority != "OUTINGS") syncOutings(context, client, authorizedId)
+                if (priority != "PROFILE") {
+                    val profileHtml = client.fetchProfileRawHtml(null)
+                    val profileData = ProfileParser.parse(profileHtml)
+                    Vault.saveProfile(context, profileData)
+                    withContext(Dispatchers.Main) { AppBridge.profileState.value = profileData }
+                }
 
-                val profileHtml = client.fetchProfileRawHtml(null)
-                val profileData = ProfileParser.parse(profileHtml)
-                Vault.saveProfile(context, profileData)
-                withContext(Dispatchers.Main) { AppBridge.profileState.value = profileData }
-
+                Log.d(TAG, "[SYNC STEP 9] All data fetched. Updating widgets & saving timestamps.")
                 Vault.saveLastSyncTime(context)
                 try { NextClassWidget().updateAll(context) } catch (e: Exception) { Log.e(TAG, "Widget update failed") }
 
                 withContext(Dispatchers.Main) { Toast.makeText(context, "Sync Complete!", Toast.LENGTH_SHORT).show() }
 
-            } catch (e: CancellationException) {
-                Log.i(TAG, "Sync aborted by CancellationException.")
-                withContext(Dispatchers.Main) { Toast.makeText(context, "Sync Cancelled", Toast.LENGTH_SHORT).show() }
-            } catch (e: VtopException.InvalidCredentials) {
-                Log.e(TAG, "Sync Error: Invalid credentials", e)
-                NotificationHelper.showNotification(context, "VTOP Sync Failed", "Your password may have changed. Please log in again.", 999)
-                withContext(Dispatchers.Main) { Toast.makeText(context, "Sync Error: Invalid Credentials", Toast.LENGTH_LONG).show() }
-            } catch (e: VtopException.AuthenticationFailed) {
-                Log.e(TAG, "Sync Error: Account locked", e)
-                NotificationHelper.showNotification(context, "VTOP Account Locked", "Max attempts reached. Please login in VTOP manually.", 998)
-                withContext(Dispatchers.Main) { Toast.makeText(context, "Sync Error: Account Locked", Toast.LENGTH_LONG).show() }
             } catch (e: Exception) {
                 Log.e(TAG, "Sync Error", e)
                 withContext(Dispatchers.Main) { Toast.makeText(context, "Sync Error: ${e.message}", Toast.LENGTH_LONG).show() }
@@ -215,7 +232,6 @@ object GlobalSyncer {
         }
     }
 
-    // --- MODULAR SYNC FUNCTIONS ---
     private suspend fun syncTimetable(context: Context, client: VtopClient, semId: String) {
         val html = client.fetchTimetableRawHtml(semId, null)
         val data = TimetableParser.parse(html)
@@ -223,13 +239,13 @@ object GlobalSyncer {
         withContext(Dispatchers.Main) { AppBridge.timetableState.value = data }
     }
 
-    private suspend fun syncAttendance(context: Context, client: VtopClient, semId: String, regNo: String) {
+    private suspend fun syncAttendance(context: Context, client: VtopClient, semId: String, authorizedId: String) {
         val html = client.fetchAttendanceRawHtml(semId, null)
         val data = AttendanceParser.parseSummary(html)
         for (course in data) {
             val cId = course.courseId ?: continue
             val cType = course.courseType ?: continue
-            val detailHtml = client.fetchAttendanceDetailRawHtml(semId, cId, cType, regNo, null)
+            val detailHtml = client.fetchAttendanceDetailRawHtml(semId, cId, cType, authorizedId, null)
             AttendanceParser.parseDetailAndUpdate(detailHtml, course)
         }
         Vault.saveAttendance(context, data)
@@ -271,9 +287,9 @@ object GlobalSyncer {
         }
     }
 
-    private suspend fun syncOutings(context: Context, client: VtopClient, regNo: String) {
-        val genHtml = client.fetchGeneralOutingRawHtml(regNo, null)
-        val weekHtml = client.fetchWeekendOutingRawHtml(regNo, null)
+    private suspend fun syncOutings(context: Context, client: VtopClient, authorizedId: String) {
+        val genHtml = client.fetchGeneralOutingRawHtml(authorizedId, null)
+        val weekHtml = client.fetchWeekendOutingRawHtml(authorizedId, null)
         val allOutings = OutingParser.parseGeneral(genHtml ?: "") + OutingParser.parseWeekend(weekHtml ?: "")
         Vault.saveOutings(context, allOutings)
         withContext(Dispatchers.Main) { AppBridge.outingsState.value = allOutings }

@@ -153,11 +153,20 @@ class MainActivity : ComponentActivity() {
 
             var showOtaGooglePrompt by remember { mutableStateOf(!Vault.hasPromptedGoogleSignIn(this@MainActivity) && Vault.getGoogleEmail(this@MainActivity).isEmpty()) }
 
-            // --- FIREBASE OTA UPDATE STATE ---
             var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
             var isDownloadingUpdate by remember { mutableStateOf(false) }
 
-            // Silently check for updates on launch
+            // === THE SYNC TRIGGER ===
+            // This reads the flag sent from LoginActivity and automatically fires GlobalSyncer
+            val triggerInitialSync = remember { intent.getBooleanExtra("TRIGGER_INITIAL_SYNC", false) }
+
+            LaunchedEffect(triggerInitialSync) {
+                if (triggerInitialSync && !GlobalSyncer.isSyncing.value) {
+                    intent.putExtra("TRIGGER_INITIAL_SYNC", false) // Consume the intent
+                    GlobalSyncer.performSync(this@MainActivity, "PROFILE", false)
+                }
+            }
+
             LaunchedEffect(Unit) {
                 try {
                     val info = UpdateManager.checkForUpdates()
@@ -182,7 +191,9 @@ class MainActivity : ComponentActivity() {
                             attendanceData = AppBridge.attendanceState.value,
                             examsData = AppBridge.examsState.value,
                             onSyncClick = { activeTab, forceNewSession ->
-                                GlobalSyncer.performSync(this@MainActivity, activeTab, forceNewSession)
+                                lifecycleScope.launch {
+                                    GlobalSyncer.performSync(this@MainActivity, activeTab, forceNewSession)
+                                }
                             },
                             onLogoutClick = {
                                 sharedPrefs.edit { putBoolean("IS_EXPLICITLY_LOGGED_OUT", true) }
@@ -191,62 +202,34 @@ class MainActivity : ComponentActivity() {
                                 finish()
                             },
                             outingHandler = object : OutingActionHandler {
-                                @Suppress("SpellCheckingInspection")
                                 override fun onFetchGeneralFormData(callback: FetchCallback) {
-                                    val creds = Vault.getCredentials(this@MainActivity)
-                                    val regNo = creds[0] ?: "Unknown"
-
-                                    val dummyData = mapOf(
-                                        "name" to "Student",
-                                        "regNo" to regNo,
-                                        "appNo" to "N/A",
-                                        "gender" to "N/A",
-                                        "block" to "-",
-                                        "room" to "-"
-                                    )
+                                    val regNo = Vault.getRegNo(this@MainActivity).takeIf { it.isNotBlank() } ?: (Vault.getCredentials(this@MainActivity)[0] ?: "Unknown")
+                                    val dummyData = mapOf("name" to "Student", "regNo" to regNo, "appNo" to "N/A", "gender" to "N/A", "block" to "-", "room" to "-")
                                     callback.onResult(dummyData)
                                 }
 
-                                @Suppress("SpellCheckingInspection")
                                 override fun onFetchWeekendFormData(callback: FetchCallback) {
-                                    val creds = Vault.getCredentials(this@MainActivity)
-                                    val regNo = creds[0] ?: "Unknown"
-
-                                    val dummyData = mapOf(
-                                        "name" to "Student",
-                                        "regNo" to regNo,
-                                        "appNo" to "N/A",
-                                        "gender" to "N/A",
-                                        "block" to "-",
-                                        "room" to "-",
-                                        "parentContact" to "0000000000"
-                                    )
+                                    val regNo = Vault.getRegNo(this@MainActivity).takeIf { it.isNotBlank() } ?: (Vault.getCredentials(this@MainActivity)[0] ?: "Unknown")
+                                    val dummyData = mapOf("name" to "Student", "regNo" to regNo, "appNo" to "N/A", "gender" to "N/A", "block" to "-", "room" to "-", "parentContact" to "0000000000")
                                     callback.onResult(dummyData)
                                 }
 
-                                @Suppress("SpellCheckingInspection")
                                 override fun onViewPass(id: String, isWeekend: Boolean, onReady: (File?) -> Unit) {
                                     lifecycleScope.launch(Dispatchers.IO) {
                                         try {
                                             val creds = Vault.getCredentials(this@MainActivity)
-                                            val regNo = creds[0]!!
-                                            val client = VtopClient(this@MainActivity, regNo, creds[1]!!)
+                                            val regNo = Vault.getRegNo(this@MainActivity)
+
+                                            val client = VtopClient(this@MainActivity, creds[0]!!, creds[1]!!)
+                                            client.setAuthorizedId(regNo)
 
                                             val destinationFile = File(cacheDir, "outpass_$id.pdf")
-
                                             val success = client.downloadAndCacheOutpass(id, isWeekend, regNo, destinationFile)
 
                                             withContext(Dispatchers.Main) {
-                                                if (success && destinationFile.exists()) {
-                                                    onReady(destinationFile)
-                                                } else {
-                                                    Toast.makeText(this@MainActivity, "Failed to download PDF", Toast.LENGTH_SHORT).show()
-                                                    onReady(null)
-                                                }
+                                                if (success && destinationFile.exists()) { onReady(destinationFile) } else { Toast.makeText(this@MainActivity, "Failed to download PDF", Toast.LENGTH_SHORT).show(); onReady(null) }
                                             }
-                                        } catch (_: Exception) {
-                                            withContext(Dispatchers.Main) { onReady(null) }
-                                        }
+                                        } catch (_: Exception) { withContext(Dispatchers.Main) { onReady(null) } }
                                     }
                                 }
 
@@ -254,20 +237,18 @@ class MainActivity : ComponentActivity() {
                                     lifecycleScope.launch(Dispatchers.IO) {
                                         try {
                                             val creds = Vault.getCredentials(this@MainActivity)
+                                            val regNo = Vault.getRegNo(this@MainActivity)
+
                                             val client = VtopClient(this@MainActivity, creds[0]!!, creds[1]!!)
+                                            client.setAuthorizedId(regNo)
 
                                             val success = client.submitWeekendOuting(place, purpose, date, time, contact)
 
                                             withContext(Dispatchers.Main) {
-                                                val msg = if (success) "Weekend Request Submitted!" else "Submission Failed"
-                                                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
-                                                if (success) GlobalSyncer.performSync(this@MainActivity)
+                                                Toast.makeText(this@MainActivity, if (success) "Weekend Request Submitted!" else "Submission Failed", Toast.LENGTH_LONG).show()
+                                                if (success) { lifecycleScope.launch { GlobalSyncer.performSync(this@MainActivity) } }
                                             }
-                                        } catch (_: Exception) {
-                                            withContext(Dispatchers.Main) {
-                                                Toast.makeText(this@MainActivity, "Error during submission", Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
+                                        } catch (_: Exception) { withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error during submission", Toast.LENGTH_SHORT).show() } }
                                     }
                                 }
 
@@ -275,20 +256,18 @@ class MainActivity : ComponentActivity() {
                                     lifecycleScope.launch(Dispatchers.IO) {
                                         try {
                                             val creds = Vault.getCredentials(this@MainActivity)
+                                            val regNo = Vault.getRegNo(this@MainActivity)
+
                                             val client = VtopClient(this@MainActivity, creds[0]!!, creds[1]!!)
+                                            client.setAuthorizedId(regNo)
 
                                             val success = client.submitGeneralOuting(place, purpose, fromDate, toDate, fromTime, toTime)
 
                                             withContext(Dispatchers.Main) {
-                                                val msg = if (success) "General Leave Submitted!" else "Submission Failed"
-                                                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
-                                                if (success) GlobalSyncer.performSync(this@MainActivity)
+                                                Toast.makeText(this@MainActivity, if (success) "General Leave Submitted!" else "Submission Failed", Toast.LENGTH_LONG).show()
+                                                if (success) { lifecycleScope.launch { GlobalSyncer.performSync(this@MainActivity) } }
                                             }
-                                        } catch (_: Exception) {
-                                            withContext(Dispatchers.Main) {
-                                                Toast.makeText(this@MainActivity, "Error during submission", Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
+                                        } catch (_: Exception) { withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error during submission", Toast.LENGTH_SHORT).show() } }
                                     }
                                 }
 
@@ -296,23 +275,18 @@ class MainActivity : ComponentActivity() {
                                     lifecycleScope.launch(Dispatchers.IO) {
                                         try {
                                             val creds = Vault.getCredentials(this@MainActivity)
+                                            val regNo = Vault.getRegNo(this@MainActivity)
+
                                             val client = VtopClient(this@MainActivity, creds[0]!!, creds[1]!!)
+                                            client.setAuthorizedId(regNo)
 
                                             val success = client.deleteOuting(id, isWeekend)
 
                                             withContext(Dispatchers.Main) {
-                                                if (success) {
-                                                    Toast.makeText(this@MainActivity, "Leave Cancelled!", Toast.LENGTH_SHORT).show()
-                                                    GlobalSyncer.performSync(this@MainActivity)
-                                                } else {
-                                                    Toast.makeText(this@MainActivity, "Failed to cancel request.", Toast.LENGTH_SHORT).show()
-                                                }
+                                                if (success) { Toast.makeText(this@MainActivity, "Leave Cancelled!", Toast.LENGTH_SHORT).show(); lifecycleScope.launch { GlobalSyncer.performSync(this@MainActivity) } }
+                                                else { Toast.makeText(this@MainActivity, "Failed to cancel request.", Toast.LENGTH_SHORT).show() }
                                             }
-                                        } catch (e: Exception) {
-                                            withContext(Dispatchers.Main) {
-                                                Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
+                                        } catch (e: Exception) { withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_SHORT).show() } }
                                     }
                                 }
                             }
@@ -329,75 +303,23 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
-                // --- FIREBASE OTA UPDATE DIALOG ---
                 if (updateInfo != null) {
                     AlertDialog(
                         onDismissRequest = { updateInfo = null },
                         title = {
                             Column {
                                 Text("Update Available", fontWeight = FontWeight.Black, fontSize = 20.sp)
-                                if (!updateInfo?.releaseTitle.isNullOrBlank()) {
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(
-                                        text = updateInfo!!.releaseTitle,
-                                        fontSize = 14.sp,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
+                                if (!updateInfo?.releaseTitle.isNullOrBlank()) { Spacer(Modifier.height(4.dp)); Text(text = updateInfo!!.releaseTitle, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) }
                             }
                         },
                         text = {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(max = 350.dp)
-                                    .verticalScroll(rememberScrollState()),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Text(
-                                    text = "Version ${updateInfo?.latestVersion} is ready to download. Do you want to install it now?",
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    fontSize = 14.sp
-                                )
-
-                                if (!updateInfo?.releaseNotes.isNullOrBlank()) {
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                                    Text(
-                                        text = "Release Notes:",
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        letterSpacing = 0.5.sp
-                                    )
-                                    Markdown(
-                                        content = updateInfo!!.releaseNotes,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                }
+                            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 350.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text(text = "Version ${updateInfo?.latestVersion} is ready to download. Do you want to install it now?", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
+                                if (!updateInfo?.releaseNotes.isNullOrBlank()) { HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)); Text(text = "Release Notes:", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp); Markdown(content = updateInfo!!.releaseNotes, modifier = Modifier.fillMaxWidth()) }
                             }
                         },
-                        confirmButton = {
-                            Button(
-                                onClick = {
-                                    isDownloadingUpdate = true
-                                    UpdateManager.downloadAndInstallUpdate(
-                                        context = this@MainActivity,
-                                        downloadUrl = updateInfo!!.downloadUrl,
-                                        version = updateInfo!!.latestVersion
-                                    )
-                                    updateInfo = null
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                            ) {
-                                Text(if (isDownloadingUpdate) "Downloading..." else "Update Now", fontWeight = FontWeight.Bold)
-                            }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { updateInfo = null }) {
-                                Text("Later", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        },
+                        confirmButton = { Button(onClick = { isDownloadingUpdate = true; UpdateManager.downloadAndInstallUpdate(context = this@MainActivity, downloadUrl = updateInfo!!.downloadUrl, version = updateInfo!!.latestVersion); updateInfo = null }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) { Text(if (isDownloadingUpdate) "Downloading..." else "Update Now", fontWeight = FontWeight.Bold) } },
+                        dismissButton = { TextButton(onClick = { updateInfo = null }) { Text("Later", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
                         containerColor = MaterialTheme.colorScheme.surface
                     )
                 }
@@ -409,47 +331,15 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun VtopSplashScreen() {
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
         contentAlignment = Alignment.Center
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(80.dp)
-                    .background(MaterialTheme.colorScheme.surface, CircleShape)
-                    .border(2.dp, AppColors.glassBorder, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "V",
-                    color = MaterialTheme.colorScheme.primary,
-                    fontSize = 36.sp,
-                    fontWeight = FontWeight.Black
-                )
-            }
-
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Box(modifier = Modifier.size(80.dp).background(MaterialTheme.colorScheme.surface, CircleShape).border(2.dp, AppColors.glassBorder, CircleShape), contentAlignment = Alignment.Center) { Text(text = "V", color = MaterialTheme.colorScheme.primary, fontSize = 36.sp, fontWeight = FontWeight.Black) }
             Spacer(modifier = Modifier.height(24.dp))
-
-            Text(
-                text = "VTOP",
-                color = MaterialTheme.colorScheme.onBackground,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Black,
-                letterSpacing = 4.sp
-            )
-
+            Text(text = "VTOP", color = MaterialTheme.colorScheme.onBackground, fontSize = 24.sp, fontWeight = FontWeight.Black, letterSpacing = 4.sp)
             Spacer(modifier = Modifier.height(32.dp))
-
-            CircularProgressIndicator(
-                modifier = Modifier.size(32.dp),
-                color = MaterialTheme.colorScheme.primary,
-                strokeWidth = 3.dp
-            )
+            CircularProgressIndicator(modifier = Modifier.size(32.dp), color = MaterialTheme.colorScheme.primary, strokeWidth = 3.dp)
         }
     }
 }

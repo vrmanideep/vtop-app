@@ -62,6 +62,18 @@ public class Vault {
         SharedPreferences prefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE);
         return prefs.getString("NAV_STYLE", "DOCK");
     }
+    // Add this anywhere inside Vault.java
+    public static void saveRegNo(Context context, String regNo) {
+        context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putString("PARSED_REG_NO", regNo)
+                .apply();
+    }
+
+    public static String getRegNo(Context context) {
+        return context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE)
+                .getString("PARSED_REG_NO", "");
+    }
 
     public static void saveGoogleEmail(Context context, String email) {
         context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE).edit().putString(KEY_GOOGLE_EMAIL, email).apply();
