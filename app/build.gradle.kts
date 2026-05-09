@@ -25,7 +25,7 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = 2 // Incremented for the new update
-        versionName = "1.1.3"
+        versionName = "1.1.4"
 
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
@@ -90,6 +90,7 @@ dependencies {
     implementation("androidx.compose.material:material:1.6.0")
     implementation("androidx.compose.material:material-icons-extended:1.6.0")
     implementation("com.google.android.material:material:1.11.0")
+    implementation("androidx.navigation:navigation-compose:2.7.7")
 
     // Networking & Logic
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
