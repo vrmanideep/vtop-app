@@ -1,11 +1,9 @@
 package com.vtop.ui.screens.main
 
 import android.Manifest
-import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import com.mikepenz.markdown.m3.Markdown
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -13,7 +11,19 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,13 +39,38 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material.icons.outlined.DateRange
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Lock
-import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material3.*
-import com.composables.icons.lucide.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,8 +84,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.composables.icons.lucide.LogOut
+import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.UserRound
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.GoogleAuthProvider
+import com.mikepenz.markdown.m3.Markdown
 import com.vtop.BuildConfig
 import com.vtop.models.ExamScheduleModel
+import com.vtop.models.SemesterOption
 import com.vtop.models.TimetableModel
 import com.vtop.ui.core.CalendarInfo
 import com.vtop.ui.core.CalendarSync
@@ -65,14 +107,6 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.GoogleAuthProvider
-import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.android.gms.auth.api.signin.GoogleSignInAccount
-import com.google.android.gms.auth.api.signin.GoogleSignInClient
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions
-import com.google.android.gms.common.api.ApiException
-import com.google.android.gms.tasks.Task
 
 private fun formatReminderDate(dateStr: String): String {
     return try {
@@ -107,7 +141,7 @@ fun Profile(
     onLogout: () -> Unit,
     profileData: Map<String, Map<String, String>>,
     selectedSemester: String,
-    availableSemesters: List<String>,
+    availableSemesters: List<SemesterOption>,
     onSemesterChange: (String) -> Unit,
     currentRegNo: String,
     currentPass: String,
@@ -116,7 +150,8 @@ fun Profile(
     onDeleteReminder: (String) -> Unit,
     onNavigateToAnalytics: () -> Unit,
     lastSyncTime: String,
-    onSyncClick: (Boolean) -> Unit
+    onSyncClick: (Boolean) -> Unit,
+    onNavigateToFaculty: () -> Unit // <-- NEW PARAMETER
 ) {
     var isViewingAcademicCalendar by remember { mutableStateOf(false) }
 
@@ -400,7 +435,8 @@ fun Profile(
                     Column {
                         Text("More", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                         Spacer(Modifier.height(2.dp))
-                        Text("Calendar export, Analytics", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        // Updated Subtitle to mention Faculty
+                        Text("Calendar export, Analytics, Faculty", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Icon(
                         imageVector = if (isMoreExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
@@ -427,6 +463,15 @@ fun Profile(
                         value = "View attendance trends & stats",
                         actionText = "Open",
                         onClick = onNavigateToAnalytics
+                    )
+
+                    // --- NEW FACULTY ROW INJECTED HERE ---
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                    SettingRow(
+                        label = "Faculty Directory",
+                        value = "Find cabins, emails & domains",
+                        actionText = "Open",
+                        onClick = onNavigateToFaculty
                     )
                 }
             }
@@ -880,17 +925,18 @@ fun Profile(
             title = { Text("Select Semester", fontWeight = FontWeight.Bold, fontSize = 18.sp) },
             text = {
                 Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Replace the availableSemesters loop in the AlertDialog with this:
                     availableSemesters.forEach { sem ->
-                        val isSelected = sem == selectedSemester
+                        val isSelected = sem.name == selectedSemester
                         Card(
                             colors = CardDefaults.cardColors(containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.fillMaxWidth().clickable {
-                                onSemesterChange(sem)
+                                onSemesterChange(sem.name)
                                 showSemesterDialog = false
                             }
                         ) {
-                            Text(sem, color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.padding(16.dp))
+                            Text(sem.name, color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.padding(16.dp))
                         }
                     }
                 }

@@ -2,6 +2,7 @@
 
 package com.vtop.ui.screens.main
 
+import com.vtop.models.SemesterOption
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.AlarmManager
@@ -291,7 +292,11 @@ fun MainScreen(
                             }
 
                             val allSemesters = remember(semesterOptions, semInfo) {
-                                if (semesterOptions.isNotEmpty()) semesterOptions.map { it.name } else listOf(semInfo[1] ?: "Unknown Semester")
+                                if (semesterOptions.isNotEmpty()) {
+                                    semesterOptions
+                                } else {
+                                    listOf(SemesterOption(id = semInfo[0] ?: "", name = semInfo[1] ?: "Unknown Semester"))
+                                }
                             }
 
                             Profile(
@@ -357,7 +362,8 @@ fun MainScreen(
                                 },
                                 onNavigateToAnalytics = { activeOverlay = "ANALYTICS" },
                                 lastSyncTime = lastSyncTime,
-                                onSyncClick = { forceNewSession -> handleSyncAndUpdateWidget("PROFILE", forceNewSession) }
+                                onSyncClick = { forceNewSession -> handleSyncAndUpdateWidget("PROFILE", forceNewSession) },
+                                onNavigateToFaculty = { activeOverlay = "FACULTY" }
                             )
                         }
                     }
@@ -419,6 +425,10 @@ fun MainScreen(
                         val creds = Vault.getCredentials(context)
                         val client = remember { com.vtop.network.VtopClient(context, creds[0] ?: "", creds[1] ?: "") }
                         VtopPortalScreen(vtopClient = client, onClose = { activeOverlay = null })
+                    }
+                    "FACULTY" -> {
+                        // Loads the JSON and displays the global directory!
+                        FacultyScreen(facultyList = loadFaculty(LocalContext.current))
                     }
                 }
             }

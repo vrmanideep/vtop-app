@@ -4,14 +4,32 @@ package com.vtop.ui.screens.main
 
 import android.annotation.SuppressLint
 import android.content.Context
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -22,10 +40,40 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -35,7 +83,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,7 +100,10 @@ import com.vtop.ui.core.ReminderManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.abs
 
 val ColorDanger = Color(0xFFF87171)
@@ -642,7 +695,13 @@ fun CourseDetailsSheet(
             Spacer(Modifier.height(16.dp))
             Text("DATE", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             Spacer(Modifier.height(6.dp))
-            OutlinedCard(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = getPremiumSurfaceColor()), border = BorderStroke(1.dp, getPremiumBorderColor())) {
+
+            // Replaced OutlinedCard with standard Card to avoid experimental M3 errors
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable { showDatePicker = true },
+                colors = CardDefaults.cardColors(containerColor = getPremiumSurfaceColor()),
+                border = BorderStroke(1.dp, getPremiumBorderColor())
+            ) {
                 Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.DateRange, null, tint = themePrimary)
                     Spacer(Modifier.width(12.dp))
@@ -701,7 +760,10 @@ fun CourseDetailsSheet(
             DetailRow(label = "TIME", value = course.mergedTimeSlot.clean())
             DetailRow(label = "SLOT", value = course.mergedSlot.clean())
             DetailRow(label = "VENUE", value = course.venue.clean())
-            DetailRow(label = "FACULTY", value = course.faculty.clean())
+
+            // INJECTED EXPANDABLE ROW HERE
+            ExpandableFacultyRow(facultyName = course.faculty.clean())
+
             DetailRow(label = "CLASS ID", value = course.classId.clean())
             Spacer(Modifier.height(24.dp))
 
@@ -756,6 +818,202 @@ fun DetailRow(label: String, value: String) {
     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(text = label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
         Text(text = value, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium, textAlign = TextAlign.End, modifier = Modifier.weight(1f).padding(start = 16.dp))
+    }
+}
+
+// ------------------------------------------------------------------------
+// EXPANDABLE FACULTY ROW COMPONENT
+// ------------------------------------------------------------------------
+@Composable
+fun ExpandableFacultyRow(facultyName: String) {
+    var isExpanded by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+    var cabin by remember { mutableStateOf("Loading...") }
+    var email by remember { mutableStateOf("Loading...") }
+    var isLoaded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isExpanded) {
+        if (isExpanded && !isLoaded) {
+            try {
+                val json = context.assets.open("faculty.json").bufferedReader().use { it.readText() }
+                val jsonArray = org.json.JSONArray(json)
+
+                var bestMatchObj: org.json.JSONObject? = null
+                var bestDistance = Int.MAX_VALUE
+
+                // Helper 1: Basic text cleaner
+                fun clean(s: String): String = s.replace(Regex("[^a-zA-Z]"), "").lowercase()
+                    .removePrefix("dr").removePrefix("prof").removePrefix("mr").removePrefix("mrs")
+
+                // Helper 2: Sorts the parts of the name alphabetically to handle "Firstname Surname" vs "Surname Firstname"
+                fun sortClean(s: String): String {
+                    return s.lowercase()
+                        .replace("dr.", "").replace("dr ", "")
+                        .replace("prof.", "").replace("prof ", "")
+                        .split(Regex("[\\s.]+"))
+                        .filter { it.isNotBlank() }
+                        .sorted()
+                        .joinToString("") { it.replace(Regex("[^a-z]"), "") }
+                }
+
+                // Helper 3: Levenshtein Distance (Calculates how many typos/edits it takes to match)
+                fun levenshtein(a: String, b: String): Int {
+                    var cost = IntArray(a.length + 1) { it }
+                    var newCost = IntArray(a.length + 1) { 0 }
+                    for (i in 1..b.length) {
+                        newCost[0] = i
+                        for (j in 1..a.length) {
+                            val match = if (a[j - 1] == b[i - 1]) 0 else 1
+                            newCost[j] = minOf(cost[j] + 1, newCost[j - 1] + 1, cost[j - 1] + match)
+                        }
+                        val swap = cost; cost = newCost; newCost = swap
+                    }
+                    return cost[a.length]
+                }
+
+                val srcClean = clean(facultyName)
+                val srcSorted = sortClean(facultyName)
+
+                for (i in 0 until jsonArray.length()) {
+                    val obj = jsonArray.getJSONObject(i)
+                    val targetName = obj.optString("name", "")
+
+                    val tgtClean = clean(targetName)
+                    val tgtSorted = sortClean(targetName)
+
+                    if (tgtClean.isEmpty()) continue
+
+                    // 1. Direct or Substring match
+                    if (srcClean.contains(tgtClean) || tgtClean.contains(srcClean) ||
+                        srcSorted.contains(tgtSorted) || tgtSorted.contains(srcSorted) ||
+                        targetName.contains(facultyName, ignoreCase = true)
+                    ) {
+                        bestMatchObj = obj
+                        bestDistance = 0
+                        break // Perfect match found!
+                    }
+
+                    // 2. Fuzzy match for spelling mistakes (e.g. 'shekar' vs 'sekhar')
+                    val dist1 = levenshtein(srcClean, tgtClean)
+                    val dist2 = levenshtein(srcSorted, tgtSorted)
+                    val dist = minOf(dist1, dist2)
+
+                    // Allow up to 1/3rd of the string length to be typos (e.g. 3 typos for a 9 letter name)
+                    val maxAllowed = maxOf(1, srcClean.length / 3)
+                    if (dist <= maxAllowed && dist < bestDistance) {
+                        bestDistance = dist
+                        bestMatchObj = obj
+                    }
+                }
+
+                if (bestMatchObj != null) {
+                    cabin = bestMatchObj.optString("office", "Not Provided").replace(";", "-")
+                    email = bestMatchObj.optString("email", "Not Provided")
+                } else {
+                    cabin = "Not found"
+                    email = "N/A"
+                }
+                isLoaded = true
+            } catch (e: Exception) {
+                cabin = "Error loading"
+                email = "Error"
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .animateContentSize()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable { isExpanded = !isExpanded }
+            .padding(vertical = 8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "FACULTY",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f).padding(start = 16.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                Text(
+                    text = facultyName,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.End,
+                    maxLines = if (isExpanded) 2 else 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Icon(
+                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 4.dp).size(18.dp)
+                )
+            }
+        }
+
+        if (isExpanded) {
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(text = "Cabin", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = cabin, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium, textAlign = TextAlign.End)
+                    Spacer(Modifier.width(8.dp))
+                    Icon(
+                        imageVector = Icons.Outlined.ContentCopy,
+                        contentDescription = "Copy Cabin",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp).clickable {
+                            clipboardManager.setText(AnnotatedString(cabin))
+                            android.widget.Toast.makeText(context, "Copied: $cabin", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(text = "Email", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = email,
+                        fontSize = 14.sp,
+                        color = if (email.contains("@")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Medium,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.clickable(enabled = email.contains("@")) {
+                            val intent = android.content.Intent(android.content.Intent.ACTION_SENDTO, android.net.Uri.parse("mailto:$email"))
+                            context.startActivity(intent)
+                        }
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Icon(
+                        imageVector = Icons.Outlined.ContentCopy,
+                        contentDescription = "Copy Email",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp).clickable(enabled = email.contains("@")) {
+                            clipboardManager.setText(AnnotatedString(email))
+                            android.widget.Toast.makeText(context, "Copied: $email", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                }
+            }
+        }
     }
 }
 
