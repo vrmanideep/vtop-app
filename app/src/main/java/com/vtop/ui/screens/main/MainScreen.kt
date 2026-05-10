@@ -11,9 +11,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import android.os.PowerManager
 import android.provider.Settings
-import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -72,6 +70,9 @@ import com.vtop.models.*
 import com.vtop.ui.VtopAnalyticsTab
 import com.vtop.ui.core.*
 import com.vtop.ui.screens.portal.VtopPortalScreen
+import com.vtop.ui.screens.sub.BunkSimulatorTab
+import com.vtop.ui.screens.sub.FacultyScreen
+import com.vtop.ui.screens.sub.loadFaculty
 import com.vtop.ui.theme.AppColors
 import com.vtop.ui.theme.AppThemeMode
 import com.vtop.ui.theme.DockPosition
@@ -224,7 +225,8 @@ fun MainScreen(
                                 val holidaysMap = remember {
                                     val map = mutableMapOf<String, String>()
                                     try {
-                                        val jsonString = context.assets.open("academic_calendar.json").bufferedReader().use { it.readText() }
+                                        // CHANGED: Now pulls from OtaManager
+                                        val jsonString = com.vtop.utils.OtaManager.getCalendarJson(context)
                                         val jsonObject = org.json.JSONObject(jsonString)
                                         val semesters = jsonObject.keys()
 
@@ -419,7 +421,10 @@ fun MainScreen(
         ) {
             Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                 when (activeOverlay) {
-                    "SIMULATOR" -> BunkSimulatorTab(timetable = timetable, attendanceData = attendanceData, onBack = { activeOverlay = null })
+                    "SIMULATOR" -> BunkSimulatorTab(
+                        timetable = timetable,
+                        attendanceData = attendanceData,
+                        onBack = { activeOverlay = null })
                     "ANALYTICS" -> VtopAnalyticsTab(attendanceData = attendanceData, historySummary = AppBridge.historySummaryState.value, historyData = AppBridge.historyItemsState.value)
                     "PORTAL" -> {
                         val creds = Vault.getCredentials(context)

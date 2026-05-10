@@ -97,6 +97,7 @@ import com.vtop.models.TimetableModel
 import com.vtop.ui.core.CalendarInfo
 import com.vtop.ui.core.CalendarSync
 import com.vtop.ui.core.CourseReminder
+import com.vtop.ui.screens.sub.AcademicCalendarScreen
 import com.vtop.ui.theme.AppThemeMode
 import com.vtop.utils.UpdateInfo
 import com.vtop.utils.UpdateManager

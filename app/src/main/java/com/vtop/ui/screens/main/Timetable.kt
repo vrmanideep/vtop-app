@@ -836,7 +836,8 @@ fun ExpandableFacultyRow(facultyName: String) {
     LaunchedEffect(isExpanded) {
         if (isExpanded && !isLoaded) {
             try {
-                val json = context.assets.open("faculty.json").bufferedReader().use { it.readText() }
+                // CHANGED: Now pulls from OtaManager
+                val json = com.vtop.utils.OtaManager.getFacultyJson(context)
                 val jsonArray = org.json.JSONArray(json)
 
                 var bestMatchObj: org.json.JSONObject? = null

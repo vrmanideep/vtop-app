@@ -54,11 +54,14 @@ import com.vtop.ui.screens.main.FetchCallback
 import com.vtop.ui.screens.main.MainScreen
 import com.vtop.ui.screens.main.OutingActionHandler
 import com.vtop.ui.screens.auth.GoogleSignInDialog
+
+// Sub-screens imports
+import com.vtop.ui.screens.sub.AcademicCalendarScreen
+import com.vtop.ui.screens.sub.BunkSimulatorTab
+import com.vtop.ui.screens.sub.FacultyScreen
+
 import com.vtop.ui.theme.*
-import com.vtop.utils.NotificationHelper
-import com.vtop.utils.UpdateInfo
-import com.vtop.utils.UpdateManager
-import com.vtop.utils.Vault
+import com.vtop.utils.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -71,12 +74,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        com.vtop.ui.core.AppBridge.isAppInForeground = true
+        AppBridge.isAppInForeground = true
     }
 
     override fun onPause() {
         super.onPause()
-        com.vtop.ui.core.AppBridge.isAppInForeground = false
+        AppBridge.isAppInForeground = false
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -95,9 +98,14 @@ class MainActivity : ComponentActivity() {
         ThemeManager.useDynamicColor.value = sharedPrefs.getBoolean("USE_DYNAMIC_COLOR", true)
         val defaultAccentInt = VtopPrimaryBlue.toArgb()
         val savedAccentInt = sharedPrefs.getInt("CUSTOM_ACCENT", defaultAccentInt)
-        ThemeManager.customAccent.value = androidx.compose.ui.graphics.Color(savedAccentInt)
+        ThemeManager.customAccent.value = Color(savedAccentInt)
 
         NotificationHelper.createNotificationChannel(this)
+
+        // Silent OTA Check in the background
+        lifecycleScope.launch(Dispatchers.IO) {
+            OtaManager.checkForOtaUpdates(this@MainActivity)
+        }
 
         val syncRequest = PeriodicWorkRequestBuilder<VtopSyncWorker>(8, TimeUnit.HOURS).build()
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
@@ -148,7 +156,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            com.vtop.utils.AppShortcuts.setupDynamicShortcuts(this)
+            AppShortcuts.setupDynamicShortcuts(this)
             val shortcutAction = intent?.action
 
             var showOtaGooglePrompt by remember { mutableStateOf(!Vault.hasPromptedGoogleSignIn(this@MainActivity) && Vault.getGoogleEmail(this@MainActivity).isEmpty()) }
@@ -156,13 +164,11 @@ class MainActivity : ComponentActivity() {
             var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
             var isDownloadingUpdate by remember { mutableStateOf(false) }
 
-            // === THE SYNC TRIGGER ===
-            // This reads the flag sent from LoginActivity and automatically fires GlobalSyncer
             val triggerInitialSync = remember { intent.getBooleanExtra("TRIGGER_INITIAL_SYNC", false) }
 
             LaunchedEffect(triggerInitialSync) {
                 if (triggerInitialSync && !GlobalSyncer.isSyncing.value) {
-                    intent.putExtra("TRIGGER_INITIAL_SYNC", false) // Consume the intent
+                    intent.putExtra("TRIGGER_INITIAL_SYNC", false)
                     GlobalSyncer.performSync(this@MainActivity, "PROFILE", false)
                 }
             }

@@ -19,7 +19,6 @@ android {
             keyPassword = "M@nideep14"
         }
     }
-
     defaultConfig {
         applicationId = "com.vtop"
         minSdk = 24
@@ -83,6 +82,7 @@ dependencies {
 
     // Play Services
     implementation("com.google.android.gms:play-services-auth:21.0.0")
+    implementation("io.coil-kt:coil-compose:2.5.0")
 
     // UI & Icons
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.37.0")

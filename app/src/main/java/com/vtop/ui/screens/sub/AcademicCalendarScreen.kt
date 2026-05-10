@@ -1,4 +1,4 @@
-package com.vtop.ui.screens.main
+package com.vtop.ui.screens.sub
 
 import android.annotation.SuppressLint
 import androidx.compose.animation.animateContentSize
@@ -43,6 +43,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
 import androidx.compose.ui.text.style.TextAlign
+import kotlin.math.abs
 
 data class AcademicEvent(
     val startDate: Date,
@@ -314,7 +315,7 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                 } else {
                     itemsIndexed(filteredSemesters) { index, semester ->
                         // Calculate opacity based on distance from current semester
-                        val distance = kotlin.math.abs(index - currentSemIndex)
+                        val distance = abs(index - currentSemIndex)
                         val baseOpacity = (1f - (distance * 0.25f)).coerceIn(0.35f, 1f)
 
                         SemesterTimelineCard(semester, todayDate, baseOpacity)
