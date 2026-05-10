@@ -11,5 +11,6 @@ data class FacultyModel(
     val office: String? = null,
     val department: String? = null,
     val sub_department: String? = null,
-    val research: String? = null
+    val research: String? = null,
+    val image: String? = null
 )

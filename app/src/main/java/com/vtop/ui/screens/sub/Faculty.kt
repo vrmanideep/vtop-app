@@ -1,4 +1,4 @@
-package com.vtop.ui.screens.main
+package com.vtop.ui.screens.sub
 
 import android.content.Context
 import android.content.Intent
@@ -23,15 +23,22 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.vtop.models.FacultyModel
-
+import coil.compose.AsyncImage
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.background
 fun loadFaculty(context: Context): List<FacultyModel> {
     return try {
-        val json = context.assets.open("faculty.json").bufferedReader().use { it.readText() }
+        // CHANGED: Now pulls from OtaManager
+        val json = com.vtop.utils.OtaManager.getFacultyJson(context)
         Gson().fromJson(json, object : TypeToken<List<FacultyModel>>() {}.type) ?: emptyList()
     } catch (e: Exception) {
         e.printStackTrace()
@@ -69,7 +76,7 @@ fun FacultyScreen(facultyList: List<FacultyModel>) {
                 Text(
                     text = "No faculty data found.\nEnsure 'faculty.json' is in the assets folder.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    textAlign = TextAlign.Center
                 )
             }
         } else if (filteredList.isEmpty()) {
@@ -103,27 +110,64 @@ fun FacultyCard(faculty: FacultyModel, isExpanded: Boolean, onClick: () -> Unit)
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = faculty.name,
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp,
-                color = MaterialTheme.colorScheme.onSurface
-            )
 
-            val designation = faculty.designation ?: ""
-            if (designation.isNotBlank()) {
-                Text(
-                    text = designation,
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 2.dp)
-                )
+            // --- NEW: ROW FOR PHOTO AND TEXT ---
+            Row(verticalAlignment = Alignment.CenterVertically) {
+
+                // Photo Frame with Fallback Icon
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center
+                ) {
+                    // Fallback icon (shows while loading or if no image exists)
+                    Icon(
+                        imageVector = Icons.Outlined.Person,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
+
+                    // The actual image loaded from the URL
+                    if (!faculty.image.isNullOrBlank()) {
+                        AsyncImage(
+                            model = faculty.image, // Make sure 'image' matches your JSON key!
+                            contentDescription = "Photo of ${faculty.name}",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(16.dp))
+
+                // Name and Designation Column
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = faculty.name,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    val designation = faculty.designation ?: ""
+                    if (designation.isNotBlank()) {
+                        Text(
+                            text = designation,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                }
             }
 
+            // --- EXPANDED DETAILS ---
             if (isExpanded) {
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // --- CABIN ROW (Updated Formatting & Dark Mode Fix) ---
+                // Cabin Row
                 val rawOffice = faculty.office ?: "N/A"
                 val formattedOffice = rawOffice.replace(";", "-")
 
@@ -132,13 +176,13 @@ fun FacultyCard(faculty: FacultyModel, isExpanded: Boolean, onClick: () -> Unit)
                         imageVector = Icons.Outlined.LocationOn,
                         contentDescription = null,
                         modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.primary // Primary color for better visibility
+                        tint = MaterialTheme.colorScheme.primary
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = formattedOffice,
                         fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurface // Fixed Dark Mode visibility
+                        color = MaterialTheme.colorScheme.onSurface
                     )
 
                     Spacer(Modifier.weight(1f))
@@ -152,7 +196,7 @@ fun FacultyCard(faculty: FacultyModel, isExpanded: Boolean, onClick: () -> Unit)
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.ContentCopy,
-                            contentDescription = "Copy",
+                            contentDescription = "Copy Cabin",
                             modifier = Modifier.size(14.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -161,7 +205,7 @@ fun FacultyCard(faculty: FacultyModel, isExpanded: Boolean, onClick: () -> Unit)
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // --- EMAIL ROW ---
+                // Email Row
                 val safeEmail = faculty.email ?: "N/A"
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -171,7 +215,7 @@ fun FacultyCard(faculty: FacultyModel, isExpanded: Boolean, onClick: () -> Unit)
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.weight(1f).clickable(enabled = safeEmail != "N/A") {
                             try {
-                                context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$safeEmail")))
+                                context.startActivity(Intent(Intent.ACTION_SENDTO, android.net.Uri.parse("mailto:$safeEmail")))
                             } catch (e: Exception) {
                                 Toast.makeText(context, "No email app found", Toast.LENGTH_SHORT).show()
                             }
@@ -197,7 +241,8 @@ fun FacultyCard(faculty: FacultyModel, isExpanded: Boolean, onClick: () -> Unit)
                         Icon(Icons.Outlined.ContentCopy, null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-
+/*
+                // Research Interests
                 val safeResearch = faculty.research ?: ""
                 if (safeResearch.isNotBlank()) {
                     Spacer(modifier = Modifier.height(12.dp))
@@ -210,6 +255,7 @@ fun FacultyCard(faculty: FacultyModel, isExpanded: Boolean, onClick: () -> Unit)
                         lineHeight = 18.sp
                     )
                 }
+                */
             }
         }
     }
