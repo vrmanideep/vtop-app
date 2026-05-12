@@ -771,7 +771,7 @@ fun Profile(
             }
         }
 
-        // --- THEMED LOGOUT BUTTON ---
+        // ---LOGOUT BUTTON ---
         Spacer(Modifier.height(16.dp))
         Card(
             modifier = Modifier
@@ -941,7 +941,7 @@ fun Profile(
                             letterSpacing = 0.5.sp
                         )
                         Markdown(
-                            content = updateInfo!!.releaseNotes,
+                            content = updateInfo!!.releaseNotes.replace("\\n", "\n"),
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
