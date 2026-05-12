@@ -10,30 +10,46 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
+import androidx.core.content.FileProvider
 import com.vtop.ui.MainActivity
+import java.io.File
 
 object NotificationHelper {
+    // --- ORIGINAL CHANNELS & IDs ---
     private const val CHANNEL_ID = "vtop_alerts_channel"
     private const val CHANNEL_NAME = "VTOP Academic Alerts"
-
-    // The fixed ID for the interactive OTP notification
     const val OTP_NOTIFICATION_ID = 888
 
-    // 1. Create the Channel (Required for Android 8.0+)
+    // --- NEW CHANNELS & IDs ---
+    private const val CHANNEL_DOWNLOADS = "DOWNLOADS_CHANNEL"
+    private const val CHANNEL_EXAMS = "EXAMS_CHANNEL"
+    const val EXAM_NOTIF_ID = 1001
+
+    // 1. Create All Channels (Required for Android 8.0+)
     fun createNotificationChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                CHANNEL_NAME,
-                NotificationManager.IMPORTANCE_HIGH // Makes it pop up on screen
-            ).apply {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+            // Original Alerts Channel
+            val alertChannel = NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH).apply {
                 description = "Alerts for class cancellations, attendance risks, and OTPs"
             }
 
-            val notificationManager: NotificationManager =
-                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.createNotificationChannel(channel)
+            // New Downloads Channel
+            val downloadChannel = NotificationChannel(CHANNEL_DOWNLOADS, "Downloads", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Notifications for downloaded files and outpasses"
+            }
+
+            // New Exams Channel
+            val examChannel = NotificationChannel(CHANNEL_EXAMS, "Exam Alerts", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Sticky notifications for exam seating"
+            }
+
+            manager.createNotificationChannel(alertChannel)
+            manager.createNotificationChannel(downloadChannel)
+            manager.createNotificationChannel(examChannel)
         }
     }
 
@@ -52,7 +68,7 @@ object NotificationHelper {
             .setContentText(message)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(pendingIntent)
-            .setAutoCancel(true) // Dismisses when tapped
+            .setAutoCancel(true)
 
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.notify(notificationId, builder.build())
@@ -60,15 +76,12 @@ object NotificationHelper {
 
     // 3. Fire the Interactive OTP Notification
     fun showOtpNotification(context: Context) {
-        // Create the RemoteInput (The text box that appears in the notification)
         val remoteInput = RemoteInput.Builder("KEY_OTP_REPLY")
             .setLabel("Enter VTOP OTP")
             .build()
 
-        // Create the Intent that fires when the user hits "Send" on the keyboard
         val replyIntent = Intent(context, OtpReceiver::class.java)
 
-        // FLAG_MUTABLE is strictly required here so Android can inject the typed text into the intent
         val replyPendingIntent = PendingIntent.getBroadcast(
             context,
             0,
@@ -76,33 +89,119 @@ object NotificationHelper {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT else PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        // Attach the text input to an Action button
         val replyAction = NotificationCompat.Action.Builder(
             android.R.drawable.ic_menu_send,
             "Enter OTP",
             replyPendingIntent
         ).addRemoteInput(remoteInput).build()
 
-        // Build and show the Notification
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info) // TODO: Replace with your app's icon
             .setContentTitle("VTOP Sync Paused")
             .setContentText("VTOP requires an OTP to continue syncing your data.")
-            .setColor(0xFF4ADE80.toInt()) // Standard green accent
+            .setColor(0xFF4ADE80.toInt())
             .addAction(replyAction)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setVibrate(longArrayOf(0, 250, 250, 250)) // High priority vibration to wake the user
-            .setAutoCancel(false) // Don't let them dismiss it just by tapping the body
+            .setVibrate(longArrayOf(0, 250, 250, 250))
+            .setAutoCancel(false)
             .build()
 
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(OTP_NOTIFICATION_ID, notification)
     }
 
-    // 4. Safely dismiss a specific notification (Used when the 3-minute timer expires)
+    // 4. Safely dismiss a specific notification
     fun dismissNotification(context: Context, id: Int) {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.cancel(id)
+    }
+
+    // 5. Fire Download Notification (Click to open file securely)
+    fun showDownloadNotification(context: Context, file: File, title: String, description: String) {
+        val uri: Uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
+
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, context.contentResolver.getType(uri) ?: "application/pdf")
+            flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            file.hashCode(),
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_DOWNLOADS)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle(title)
+            .setContentText(description)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .build()
+
+        try {
+            NotificationManagerCompat.from(context).notify(file.name.hashCode(), notification)
+        } catch (e: SecurityException) {
+            e.printStackTrace()
+        }
+    }
+    // Paste this inside NotificationHelper object
+    fun showDownloadNotificationFromUri(context: Context, uri: Uri, fileName: String, title: String, description: String) {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/pdf")
+            // Crucial: Grants the PDF viewer permission to read this specific URI
+            flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            uri.hashCode(),
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_DOWNLOADS)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle(title)
+            .setContentText(description)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .build()
+
+        try {
+            NotificationManagerCompat.from(context).notify(fileName.hashCode(), notification)
+        } catch (e: SecurityException) {
+            e.printStackTrace()
+        }
+    }
+
+    // 6. Fire Exam Seat Notification (Sticky until +30 mins)
+    fun showExamSeatNotification(context: Context, title: String, message: String, examStartTimeMillis: Long) {
+        val clearTimeMillis = examStartTimeMillis + (30 * 60 * 1000) // +30 mins
+        val timeUntilClear = clearTimeMillis - System.currentTimeMillis()
+
+        val builder = NotificationCompat.Builder(context, CHANNEL_EXAMS)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+
+        if (timeUntilClear > 0) {
+            builder.setOngoing(true)
+            builder.setTimeoutAfter(timeUntilClear)
+        } else {
+            builder.setOngoing(false)
+        }
+
+        try {
+            NotificationManagerCompat.from(context).notify(EXAM_NOTIF_ID, builder.build())
+        } catch (e: SecurityException) {
+            e.printStackTrace()
+        }
     }
 }
 
@@ -112,9 +211,7 @@ object BatteryUtils {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
 
-            // Check if we are already whitelisted
             if (!powerManager.isIgnoringBatteryOptimizations(context.packageName)) {
-                // If not, launch the Android system prompt asking the user to "Allow" it
                 val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
                     data = Uri.parse("package:${context.packageName}")
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
