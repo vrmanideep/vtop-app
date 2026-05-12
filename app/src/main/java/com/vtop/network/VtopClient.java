@@ -440,17 +440,48 @@ public class VtopClient {
     public boolean downloadAndCacheOutpass(String bookingId, boolean isWeekend, String regNo, File outputFile) {
         try {
             String endpoint = isWeekend ? "/hostel/downloadOutingForm/" : "/hostel/downloadLeavePass/";
-            HttpUrl parsedUrl = HttpUrl.parse(BASE_URL + endpoint + bookingId);
+            okhttp3.HttpUrl parsedUrl = okhttp3.HttpUrl.parse(BASE_URL + endpoint + bookingId);
             if (parsedUrl == null) return false;
-            HttpUrl url = parsedUrl.newBuilder().addQueryParameter("authorizedID", regNo).addQueryParameter("_csrf", csrfToken).addQueryParameter("x", String.valueOf(System.currentTimeMillis())).build();
-            Request req = new Request.Builder().url(url).get().build();
-            try (Response res = client.newCall(req).execute()) {
+
+            // 1. Use FormBody (POST) to avoid the strict GET URL-encoding traps
+            okhttp3.FormBody.Builder formBuilder = new okhttp3.FormBody.Builder()
+                    .add("authorizedID", regNo)
+                    .add("_csrf", csrfToken);
+
+            okhttp3.Request.Builder requestBuilder = new okhttp3.Request.Builder().url(parsedUrl);
+
+            // 2. Set the specific headers matching your Python script
+            if (isWeekend) {
+                // Weekend pass requires standard form submission origins
+                requestBuilder.header("Referer", BASE_URL + "/hostel/StudentWeekendOuting")
+                        .header("Origin", "https://vtop.vitap.ac.in");
+            } else {
+                // General pass requires the GMT timestamp and AJAX header
+                formBuilder.add("x", getGmtTimestamp()); // Using your existing helper method!
+                requestBuilder.header("X-Requested-With", "XMLHttpRequest");
+                // Note: Your global interceptor will detect this header and automatically fix the 'Accept' and 'Sec-Fetch' headers for you!
+            }
+
+            requestBuilder.post(formBuilder.build());
+
+            // 3. Execute and verify the PDF signature
+            try (okhttp3.Response res = client.newCall(requestBuilder.build()).execute()) {
                 if (res.isSuccessful() && res.body() != null) {
-                    try (FileOutputStream fos = new FileOutputStream(outputFile)) { fos.write(res.body().bytes()); }
-                    return true;
+                    byte[] bytes = res.body().bytes();
+
+                    if (bytes.length > 10) {
+                        String header = new String(bytes, 0, 10);
+                        if (header.contains("%PDF")) {
+                            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(outputFile)) {
+                                fos.write(bytes);
+                            }
+                            return true;
+                        }
+                    }
                 }
             }
         } catch (Exception ignored) {}
+
         return false;
     }
 
