@@ -39,7 +39,8 @@ data class GradeHistoryItem(
     val courseType: String,
     val credits: String,
     val grade: String,
-    val examMonth: String
+    val examMonth: String,
+    val courseDistribution: String? = ""
 )
 
 data class CGPASummary(

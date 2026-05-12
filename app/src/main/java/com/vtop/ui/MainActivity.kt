@@ -233,7 +233,19 @@ class MainActivity : ComponentActivity() {
                                             val success = client.downloadAndCacheOutpass(id, isWeekend, regNo, destinationFile)
 
                                             withContext(Dispatchers.Main) {
-                                                if (success && destinationFile.exists()) { onReady(destinationFile) } else { Toast.makeText(this@MainActivity, "Failed to download PDF", Toast.LENGTH_SHORT).show(); onReady(null) }
+                                                if (success && destinationFile.exists()) {
+                                                    // --- TRIGGER THE DOWNLOAD NOTIFICATION HERE ---
+                                                    NotificationHelper.showDownloadNotification(
+                                                        context = this@MainActivity,
+                                                        file = destinationFile,
+                                                        title = "Outpass Downloaded",
+                                                        description = "Tap to open outpass_$id.pdf"
+                                                    )
+                                                    onReady(destinationFile)
+                                                } else {
+                                                    Toast.makeText(this@MainActivity, "Failed to download PDF", Toast.LENGTH_SHORT).show()
+                                                    onReady(null)
+                                                }
                                             }
                                         } catch (_: Exception) { withContext(Dispatchers.Main) { onReady(null) } }
                                     }

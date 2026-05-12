@@ -104,7 +104,7 @@ object MarksParser {
         try {
             val doc = Jsoup.parse(html)
 
-            // Extract CGPA Summary
+            // 1. Extract CGPA Summary
             val cgpaRow = doc.select("div.box-body.table-responsive tbody tr").first()
             if (cgpaRow != null) {
                 val cells = cgpaRow.select("td")
@@ -117,25 +117,40 @@ object MarksParser {
                 }
             }
 
-            // Extract History
-            val rows = doc.select("table.customTable tr.tableContent")
-            for (row in rows) {
-                // Ignore nested detail rows by checking column count
-                val cells = row.select("td")
-                if (cells.size == 10) {
-                    historyList.add(
-                        GradeHistoryItem(
-                            courseCode = cells[1].text().trim(),
-                            courseTitle = cells[2].text().trim(),
-                            courseType = cells[3].text().trim(),
-                            credits = cells[4].text().trim(),
-                            grade = cells[5].text().trim(),
-                            examMonth = cells[6].text().trim()
+            // 2. Extract History Safely
+            val courseTables = doc.select("table.customTable")
+            for (table in courseTables) {
+                // CRITICAL FIX: Skip the student info table. Only process tables that actually have grades.
+                if (!table.html().contains("Course Code")) {
+                    continue
+                }
+
+                val rows = table.select("tr.tableContent")
+                for (row in rows) {
+                    val cells = row.select("td")
+
+                    // CRITICAL FIX 2: Ensure we have 10 columns AND the first column is a valid Serial Number
+                    // This prevents "24BCE7058" (RegNo) from slipping through.
+                    if (cells.size >= 10 && cells[0].text().trim().toIntOrNull() != null) {
+                        historyList.add(
+                            GradeHistoryItem(
+                                courseCode = cells[1].text().trim(),
+                                courseTitle = cells[2].text().trim(),
+                                courseType = cells[3].text().trim(),
+                                credits = cells[4].text().trim(),
+                                grade = cells[5].text().trim(),
+                                examMonth = cells[6].text().trim(),
+                                // Added the Course Distribution from column index 8!
+                                courseDistribution = cells[8].text().trim()
+                            )
                         )
-                    )
+                    }
                 }
             }
-        } catch (e: Exception) { Log.e("MARKS_PARSER", "Error parsing history", e) }
+        } catch (e: Exception) {
+            Log.e("GRADE-HISTORY_PARSER", "Error parsing history", e)
+        }
+
         return Pair(summary, historyList)
     }
 }
