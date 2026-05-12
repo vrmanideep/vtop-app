@@ -1,6 +1,7 @@
 package com.vtop.ui.screens.main
 
 import android.Manifest
+import android.content.Context
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -152,7 +153,7 @@ fun Profile(
     onNavigateToAnalytics: () -> Unit,
     lastSyncTime: String,
     onSyncClick: (Boolean) -> Unit,
-    onNavigateToFaculty: () -> Unit // <-- NEW PARAMETER
+    onNavigateToFaculty: () -> Unit
 ) {
     var isViewingAcademicCalendar by remember { mutableStateOf(false) }
 
@@ -163,6 +164,7 @@ fun Profile(
 
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val sharedPrefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
 
     var showCalendarSheet by remember { mutableStateOf(false) }
     var availableCalendars by remember { mutableStateOf<List<CalendarInfo>>(emptyList()) }
@@ -228,6 +230,11 @@ fun Profile(
     var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var isCheckingUpdate by remember { mutableStateOf(false) }
     var isDownloadingUpdate by remember { mutableStateOf(false) }
+
+    // --- AUTO SYNC STATE ---
+    var autoSyncInterval by remember { mutableIntStateOf(sharedPrefs.getInt("AUTO_SYNC_INTERVAL", 8)) }
+    var syncDropdownExpanded by remember { mutableStateOf(false) }
+    val syncOptions = mapOf(0 to "None", 1 to "1 hr", 2 to "2 hrs", 4 to "4 hrs", 8 to "8 hrs")
 
     val bottomPadding = if (currentNavStyle == "STATIC") 110.dp else 16.dp
 
@@ -381,7 +388,6 @@ fun Profile(
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
 
-            // GOOGLE OAUTH ROW
             if (googleEmail.isNotBlank()) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -436,8 +442,7 @@ fun Profile(
                     Column {
                         Text("More", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                         Spacer(Modifier.height(2.dp))
-                        // Updated Subtitle to mention Faculty
-                        Text("Calendar export, Analytics, Faculty", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Calendar export, Auto Sync, Faculty", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Icon(
                         imageVector = if (isMoreExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
@@ -458,15 +463,92 @@ fun Profile(
                             )
                         }
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                    SettingRow(
-                        label = "Advanced Analytics",
-                        value = "View attendance trends & stats",
-                        actionText = "Open",
-                        onClick = onNavigateToAnalytics
-                    )
 
-                    // --- NEW FACULTY ROW INJECTED HERE ---
+                    // --- AUTO SYNC ROW ---
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                    Box {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { syncDropdownExpanded = true }
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Background Auto Sync", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(2.dp))
+                                Text("Frequency of background updates", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                            }
+
+                            // The beautiful pill dropdown button
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = syncOptions[autoSyncInterval] ?: "8 hrs",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    contentDescription = "Select",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp).padding(start = 4.dp)
+                                )
+                            }
+                        }
+
+                        // The styled, pop-out Dropdown Menu
+                        DropdownMenu(
+                            expanded = syncDropdownExpanded,
+                            onDismissRequest = { syncDropdownExpanded = false },
+                            modifier = Modifier
+                                .background(MaterialTheme.colorScheme.surfaceVariant) // Helps it pop out from the black surface
+                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                        ) {
+                            syncOptions.forEach { (hours, label) ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = label,
+                                            color = if (autoSyncInterval == hours) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontWeight = if (autoSyncInterval == hours) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        autoSyncInterval = hours
+                                        sharedPrefs.edit().putInt("AUTO_SYNC_INTERVAL", hours).apply()
+                                        syncDropdownExpanded = false
+
+                                        // Update the actual WorkManager scheduling immediately
+                                        val workManager = androidx.work.WorkManager.getInstance(context)
+                                        if (hours == 0) {
+                                            workManager.cancelUniqueWork("VTOP_BACKGROUND_SYNC")
+                                            Toast.makeText(context, "Auto sync disabled", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            val syncRequest = androidx.work.PeriodicWorkRequestBuilder<com.vtop.ui.core.VtopSyncWorker>(
+                                                hours.toLong(),
+                                                java.util.concurrent.TimeUnit.HOURS
+                                            ).build()
+
+                                            workManager.enqueueUniquePeriodicWork(
+                                                "VTOP_BACKGROUND_SYNC",
+                                                androidx.work.ExistingPeriodicWorkPolicy.REPLACE,
+                                                syncRequest
+                                            )
+                                            Toast.makeText(context, "Auto sync set to $label", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
                     SettingRow(
                         label = "Faculty Directory",
@@ -658,7 +740,7 @@ fun Profile(
 
                         isCheckingUpdate = true
                         coroutineScope.launch {
-                            val info = UpdateManager.checkForUpdates() // <--- FIXED HERE
+                            val info = UpdateManager.checkForUpdates()
                             if (info.isUpdateAvailable) {
                                 updateInfo = info
                             } else {
@@ -926,7 +1008,6 @@ fun Profile(
             title = { Text("Select Semester", fontWeight = FontWeight.Bold, fontSize = 18.sp) },
             text = {
                 Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // Replace the availableSemesters loop in the AlertDialog with this:
                     availableSemesters.forEach { sem ->
                         val isSelected = sem.name == selectedSemester
                         Card(

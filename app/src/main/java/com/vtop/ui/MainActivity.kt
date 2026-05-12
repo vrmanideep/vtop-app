@@ -107,12 +107,18 @@ class MainActivity : ComponentActivity() {
             OtaManager.checkForOtaUpdates(this@MainActivity)
         }
 
-        val syncRequest = PeriodicWorkRequestBuilder<VtopSyncWorker>(8, TimeUnit.HOURS).build()
-        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            "VTOP_BACKGROUND_SYNC",
-            ExistingPeriodicWorkPolicy.KEEP,
-            syncRequest
-        )
+        // --- DYNAMIC BACKGROUND SYNC SCHEDULING ---
+        val autoSyncInterval = sharedPrefs.getInt("AUTO_SYNC_INTERVAL", 8)
+        if (autoSyncInterval > 0) {
+            val syncRequest = PeriodicWorkRequestBuilder<VtopSyncWorker>(autoSyncInterval.toLong(), TimeUnit.HOURS).build()
+            WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+                "VTOP_BACKGROUND_SYNC",
+                ExistingPeriodicWorkPolicy.KEEP,
+                syncRequest
+            )
+        } else {
+            WorkManager.getInstance(this).cancelUniqueWork("VTOP_BACKGROUND_SYNC")
+        }
 
         lifecycleScope.launch(Dispatchers.IO) {
             val timetable = Vault.getTimetable(this@MainActivity)
