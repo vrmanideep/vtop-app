@@ -33,12 +33,16 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.vtop.network.VtopClient
 import com.vtop.ui.core.AppBridge
+import com.vtop.utils.NotificationHelper
+import com.vtop.utils.GmailOtpExtractor
 import com.vtop.utils.Vault
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import java.io.File
 
 private const val VTOP_BASE = "https://vtop.vitap.ac.in"
 private const val VTOP_OPEN_PAGE = "$VTOP_BASE/vtop/open/page"
@@ -69,33 +73,57 @@ fun VtopPortalScreen(
                 var attempts = 0
                 val maxRetries = 3
 
-                // THE FIX: Added the 3-attempt retry loop for Captcha failures
                 while (attempts < maxRetries && !loginSuccess) {
                     try {
                         loginSuccess = vtopClient.autoLogin(context, object : VtopClient.LoginListener {
                             override fun onStatusUpdate(message: String) {}
 
                             override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
-                                scope.launch(Dispatchers.Main) {
-                                    AppBridge.currentOtpResolver.value = resolver
+                                scope.launch(Dispatchers.IO) {
+                                    val googleEmail = Vault.getGoogleEmail(context)
+                                    var autoExtractedOtp: String? = null
+
+                                    // Try Auto-Extraction if Google is linked
+                                    if (googleEmail.isNotBlank()) {
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "Reading OTP from Gmail...", Toast.LENGTH_SHORT).show()
+                                        }
+
+                                        try {
+                                            delay(3000) // Wait for email to arrive
+                                            autoExtractedOtp = GmailOtpExtractor.getLatestVtopOtp(context, googleEmail)
+                                        } catch (e: Exception) {
+                                            e.printStackTrace()
+                                        }
+                                    }
+
+                                    // Submit or Fallback
+                                    if (!autoExtractedOtp.isNullOrBlank()) {
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "OTP Auto-filled! Resuming...", Toast.LENGTH_SHORT).show()
+                                        }
+                                        resolver.submit(autoExtractedOtp)
+                                    } else {
+                                        withContext(Dispatchers.Main) {
+                                            AppBridge.currentOtpResolver.value = resolver
+                                        }
+                                    }
                                 }
                             }
                         })
                     } catch (e: Exception) {
-                        if (e is CancellationException) throw e // Don't trap coroutine cancellations
-                        // Captcha failed or network blip
+                        if (e is CancellationException) throw e
                         loginSuccess = false
                     }
 
                     if (!loginSuccess) {
                         attempts++
                         if (attempts < maxRetries) {
-                            // Wipe the dead session and request a fresh Captcha image
                             vtopClient.reinitializeSession(context)
                         }
                     }
                 }
-                loginSuccess // return final status
+                loginSuccess
             }
 
             if (success) {
@@ -178,22 +206,19 @@ fun VtopPortalScreen(
                                     val bytes = response.body?.bytes()
 
                                     if (response.isSuccessful && bytes != null) {
-                                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                                            val resolver = context.contentResolver
-                                            val values = android.content.ContentValues().apply {
-                                                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                                                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mimeType)
-                                                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
-                                            }
-                                            val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                                            uri?.let { resolver.openOutputStream(it)?.use { out -> out.write(bytes) } }
-                                        } else {
-                                            val dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)
-                                            java.io.File(dir, fileName).writeBytes(bytes)
-                                        }
+                                        val dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)
+                                        if (dir != null && !dir.exists()) dir.mkdirs()
+
+                                        val downloadedFile = File(dir, fileName)
+                                        downloadedFile.writeBytes(bytes)
 
                                         withContext(Dispatchers.Main) {
-                                            Toast.makeText(context, "Saved $fileName to Downloads", Toast.LENGTH_LONG).show()
+                                            NotificationHelper.showDownloadNotification(
+                                                context = context,
+                                                file = downloadedFile,
+                                                title = "Download Complete",
+                                                description = "Tap to open ${downloadedFile.name}"
+                                            )
                                         }
                                     } else {
                                         withContext(Dispatchers.Main) {

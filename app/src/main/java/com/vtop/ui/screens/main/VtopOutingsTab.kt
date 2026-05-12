@@ -4,7 +4,6 @@ package com.vtop.ui.screens.main
 
 import android.annotation.SuppressLint
 import android.app.DatePickerDialog
-import android.app.TimePickerDialog
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -44,10 +43,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -82,6 +78,9 @@ import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.roundToInt
 import com.composables.icons.lucide.*
+import com.vtop.utils.NotificationHelper
+import android.os.VibrationEffect
+import android.os.Vibrator
 
 // --------------------------------------------------------
 // UNIVERSAL ACCENT COLORS (Preserved across themes)
@@ -110,9 +109,6 @@ private fun formatDate(dateStr: String?, yearFormat: Boolean = false): String {
     }
 }
 
-// --------------------------------------------------------
-// EXACTLY ONE calculateLiveProgress (Returns a Triple)
-// --------------------------------------------------------
 private fun calculateLiveProgress(outD: String, outT: String, inD: String, inT: String, currentMillis: Long, isWeekend: Boolean): Triple<String, Float, Boolean> {
     try {
         val dateFmtIn = if (outD.contains("-") && outD.split("-")[0].length == 4) "yyyy-MM-dd" else "dd-MMM-yyyy"
@@ -167,9 +163,6 @@ private fun calculateLiveProgress(outD: String, outT: String, inD: String, inT: 
     return Triple("Valid Pass", 0f, false)
 }
 
-// --------------------------------------------------------
-// SECURE FILE SHARING
-// --------------------------------------------------------
 private fun sharePdf(context: Context, sourceFile: File, leaveId: String) {
     try {
         val fileName = "$leaveId.pdf"
@@ -229,13 +222,24 @@ private fun savePdfToDownloads(context: Context, sourceFile: File, fileName: Str
                 resolver.openOutputStream(uri)?.use { outStream ->
                     sourceFile.inputStream().use { it.copyTo(outStream) }
                 }
-                Toast.makeText(context, "Saved to Downloads folder", Toast.LENGTH_SHORT).show()
+                NotificationHelper.showDownloadNotification(
+                    context = context,
+                    file = sourceFile,
+                    title = "Download Complete",
+                    description = "Tap to open $fileName"
+                )
             }
         } else {
             val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             val destFile = File(downloadsDir, fileName)
             sourceFile.copyTo(destFile, overwrite = true)
-            Toast.makeText(context, "Saved to Downloads folder", Toast.LENGTH_SHORT).show()
+
+            NotificationHelper.showDownloadNotification(
+                context = context,
+                file = destFile,
+                title = "Download Complete",
+                description = "Tap to open $fileName"
+            )
         }
     } catch (e: Exception) {
         Toast.makeText(context, "Failed to save: ${e.message}", Toast.LENGTH_LONG).show()
@@ -263,6 +267,48 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
         val s = it.status.uppercase(Locale.getDefault())
         s.contains("PENDING") || s.contains("WAITING") || s.contains("FORWARD")
     }
+
+    // --- NEW QUEUE LOGIC: Track only Live Transitions ---
+    val sharedPrefs = remember { context.getSharedPreferences("OutingQueuePrefs", Context.MODE_PRIVATE) }
+
+    LaunchedEffect(outingsData) {
+        val pendingQueue = sharedPrefs.getStringSet("pending_queue", setOf())?.toMutableSet() ?: mutableSetOf()
+        var queueUpdated = false
+
+        outingsData.forEach { outing ->
+            val statusUpper = outing.status.uppercase(Locale.getDefault())
+            val isApproved = statusUpper.contains("APPROVE") || statusUpper.contains("ACCEPT") || statusUpper.contains("ISSUED") || statusUpper.contains("AVAILED")
+            val isRejected = statusUpper.contains("REJECT") || statusUpper.contains("DECLINE") || statusUpper.contains("CANCEL")
+
+            // If it's a brand new pending pass, Push it to the Queue
+            if (!isApproved && !isRejected) {
+                if (pendingQueue.add(outing.id)) {
+                    queueUpdated = true
+                }
+            }
+            // If it WAS in the queue and is now Approved, Download & Pop it!
+            else if (isApproved && pendingQueue.contains(outing.id)) {
+                pendingQueue.remove(outing.id)
+                queueUpdated = true
+
+                handler.onViewPass(outing.id, outing.type.uppercase(Locale.getDefault()) == "WEEKEND") { file: File? ->
+                    if (file != null) {
+                        savePdfToDownloads(context, file, "${outing.id}.pdf")
+                    }
+                }
+            }
+            // If it was rejected, just Pop it from the queue without downloading
+            else if (isRejected && pendingQueue.contains(outing.id)) {
+                pendingQueue.remove(outing.id)
+                queueUpdated = true
+            }
+        }
+
+        if (queueUpdated) {
+            sharedPrefs.edit().putStringSet("pending_queue", pendingQueue).apply()
+        }
+    }
+    // -----------------------------------------------------
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -392,7 +438,9 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
 
                     if (activeOutings.isEmpty() && pastOutings.isEmpty()) {
                         item {
-                            Column(modifier = Modifier.fillMaxWidth().padding(top = 80.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Column(modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 80.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                                 Icon(Icons.Default.CalendarMonth, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
                                 Spacer(Modifier.height(16.dp))
                                 Text("No outings yet this semester", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, fontSize = 16.sp)
@@ -436,8 +484,15 @@ private fun OutingsTabSelector(
             .fillMaxWidth()
             .padding(horizontal = 20.dp, vertical = 8.dp)
             .height(48.dp)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(50))
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(50))
+            .background(
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                RoundedCornerShape(50)
+            )
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+                RoundedCornerShape(50)
+            )
             .padding(4.dp)
     ) {
         val animatedOffset by animateFloatAsState(
@@ -461,10 +516,18 @@ private fun OutingsTabSelector(
             val colorGen by animateColorAsState(if (pagerState.currentPage == 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, label = "c1")
             val colorWeek by animateColorAsState(if (pagerState.currentPage == 1) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, label = "c2")
 
-            Box(modifier = Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(50)).clickable { coroutineScope.launch { pagerState.animateScrollToPage(0) } }, contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(50))
+                .clickable { coroutineScope.launch { pagerState.animateScrollToPage(0) } }, contentAlignment = Alignment.Center) {
                 Text("General", color = colorGen, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
-            Box(modifier = Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(50)).clickable { coroutineScope.launch { pagerState.animateScrollToPage(1) } }, contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(50))
+                .clickable { coroutineScope.launch { pagerState.animateScrollToPage(1) } }, contentAlignment = Alignment.Center) {
                 Text("Weekend", color = colorWeek, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
         }
@@ -475,17 +538,46 @@ private fun OutingsTabSelector(
 private fun ApprovalJourney(statusStr: String, type: String) {
     val s = statusStr.uppercase(Locale.getDefault())
     val isForwarded = s.contains("FORWARD")
+    val isApproved = s.contains("APPROVE") || s.contains("ACCEPT") || s.contains("ISSUED") || s.contains("AVAIL")
+    val isRejected = s.contains("REJECT") || s.contains("DECLINE") || s.contains("CANCEL")
+
+    val isMentorApproved = isForwarded || isApproved
+    val isMentorRejected = isRejected && s.contains("MENTOR")
+    val isWardenApproved = isApproved
+    val isWardenRejected = isRejected && s.contains("WARDEN")
+
+    val mentorText = when {
+        isMentorApproved -> "Mentor Approved"
+        isMentorRejected -> "Mentor Rejected"
+        else -> "Mentor Approval"
+    }
+
+    val wardenText = when {
+        isWardenApproved -> "Warden Approved"
+        isWardenRejected -> "Warden Rejected"
+        else -> "Warden Approval"
+    }
 
     val steps = if (type.equals("WEEKEND", ignoreCase = true)) {
-        listOf("Submitted", "Warden Approved", "Outpass Available")
+        listOf("Submitted", wardenText, "Outpass Available")
     } else {
-        listOf("Submitted", "Mentor Approved", "Warden Approved", "Pass Available")
+        listOf("Submitted", mentorText, wardenText, "Pass Available")
     }
 
     val currentStep = if (type.equals("WEEKEND", ignoreCase = true)) {
-        if (s.contains("ACCEPT") || s.contains("APPROVE")) 2 else 1
+        when {
+            isWardenApproved -> 2
+            isRejected -> 1 // Halts at Warden
+            else -> 1
+        }
     } else {
-        if (s.contains("ACCEPT") || s.contains("APPROVE")) 3 else if (isForwarded) 2 else 1
+        when {
+            isWardenApproved -> 3
+            isWardenRejected -> 2 // Halts at Warden
+            isMentorApproved -> 2
+            isMentorRejected -> 1 // Halts at Mentor
+            else -> 1
+        }
     }
 
     Column(modifier = Modifier.padding(vertical = 4.dp)) {
@@ -496,6 +588,7 @@ private fun ApprovalJourney(statusStr: String, type: String) {
             val isCurrent = index == currentStep
 
             val dotColor = when {
+                isCurrent && isRejected -> OutingColorDanger
                 isCompleted -> OutingColorSuccess
                 isCurrent -> OutingPrimaryAccent
                 else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
@@ -506,7 +599,12 @@ private fun ApprovalJourney(statusStr: String, type: String) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(20.dp)) {
                     Box(modifier = Modifier.size(10.dp).background(dotColor, CircleShape))
                     if (index != steps.lastIndex) {
-                        Box(modifier = Modifier.width(2.dp).fillMaxHeight().weight(1f).background(if (isCompleted) OutingColorSuccess else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)))
+                        Box(modifier = Modifier
+                            .width(2.dp)
+                            .fillMaxHeight()
+                            .weight(1f)
+                            .background(if (isCompleted) OutingColorSuccess else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                        )
                     }
                 }
 
@@ -537,12 +635,38 @@ private fun ActiveOutingCard(
     val isPending = !isApproved
 
     if (isPending) {
+        val context = LocalContext.current
+        val vibrator = remember { context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator }
         val offsetX = remember { Animatable(0f) }
         val coroutineScope = rememberCoroutineScope()
 
-        Box(
-            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-        ) {
+        var showConfirmDialog by remember { mutableStateOf(false) }
+        var thresholdCrossed by remember { mutableStateOf(false) }
+
+        if (showConfirmDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    showConfirmDialog = false
+                    coroutineScope.launch { offsetX.animateTo(0f, animationSpec = spring()) }
+                },
+                title = { Text("Cancel Request", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) },
+                text = { Text("Are you sure you want to cancel this outing request?", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                confirmButton = {
+                    TextButton(onClick = { showConfirmDialog = false; onDelete() }) {
+                        Text("Yes, Cancel", color = OutingColorDanger, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showConfirmDialog = false
+                        coroutineScope.launch { offsetX.animateTo(0f, animationSpec = spring()) }
+                    }) { Text("Keep", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                },
+                containerColor = MaterialTheme.colorScheme.surface
+            )
+        }
+
+        Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))) {
             Box(
                 modifier = Modifier.matchParentSize().background(OutingColorDanger).padding(end = 24.dp),
                 contentAlignment = Alignment.CenterEnd
@@ -559,16 +683,36 @@ private fun ActiveOutingCard(
                                 val target = offsetX.value + dragAmount
                                 if (target <= 0f) {
                                     coroutineScope.launch { offsetX.snapTo(target) }
+
+                                    if (target < -200f && !thresholdCrossed) {
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                            vibrator.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+                                        } else {
+                                            @Suppress("DEPRECATION")
+                                            vibrator.vibrate(100)
+                                        }
+                                        thresholdCrossed = true
+                                    } else if (target >= -200f) {
+                                        thresholdCrossed = false
+                                    }
                                 }
                             },
                             onDragEnd = {
                                 coroutineScope.launch {
                                     if (offsetX.value < -200f) {
-                                        offsetX.animateTo(-1000f, animationSpec = spring())
-                                        onDelete()
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                            vibrator.vibrate(VibrationEffect.createOneShot(150, VibrationEffect.DEFAULT_AMPLITUDE))
+                                        } else {
+                                            @Suppress("DEPRECATION")
+                                            vibrator.vibrate(150)
+                                        }
+
+                                        offsetX.animateTo(-300f, animationSpec = spring())
+                                        showConfirmDialog = true
                                     } else {
                                         offsetX.animateTo(0f, animationSpec = spring())
                                     }
+                                    thresholdCrossed = false
                                 }
                             }
                         )
@@ -624,11 +768,15 @@ private fun ActiveCardContent(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("${outing.type.uppercase(Locale.getDefault())} · $shortStatus", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                 if (isApproved) {
-                    Box(modifier = Modifier.background(statusBg, RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 4.dp)) {
+                    Box(modifier = Modifier
+                        .background(statusBg, RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)) {
                         Text(shortStatus, color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 } else {
-                    Box(modifier = Modifier.border(1.dp, statusColor.copy(alpha = 0.4f), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 4.dp)) {
+                    Box(modifier = Modifier
+                        .border(1.dp, statusColor.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)) {
                         Text(shortStatus, color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
@@ -662,19 +810,33 @@ private fun ActiveCardContent(
                 val (durationText, progressPct, isOngoing) = calculateLiveProgress(outing.fromDate, outing.fromTime, outing.toDate, outing.toTime, currentMillis, outing.type.uppercase(Locale.getDefault()) == "WEEKEND")
 
                 if (isOngoing) {
-                    Row(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                    Row(Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp)) {
                         if (progressPct > 0f) {
-                            Box(Modifier.weight(progressPct).height(3.dp).background(OutingPrimaryAccent, RoundedCornerShape(topStart = 2.dp, bottomStart = 2.dp)))
+                            Box(Modifier
+                                .weight(progressPct)
+                                .height(3.dp)
+                                .background(
+                                    OutingPrimaryAccent,
+                                    RoundedCornerShape(topStart = 2.dp, bottomStart = 2.dp)
+                                ))
                         }
                         if (progressPct < 1f) {
-                            Box(Modifier.weight(1f - progressPct).height(1.dp).background(MaterialTheme.colorScheme.outline.copy(alpha=0.3f)).align(Alignment.CenterVertically))
+                            Box(Modifier
+                                .weight(1f - progressPct)
+                                .height(1.dp)
+                                .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                                .align(Alignment.CenterVertically))
                         }
                     }
                 }
 
                 val topPadding = if (isOngoing) 6.dp else 12.dp
                 if (durationText != "Completed" || isOngoing) {
-                    Text(durationText, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier.align(Alignment.End).padding(top = topPadding))
+                    Text(durationText, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier
+                        .align(Alignment.End)
+                        .padding(top = topPadding))
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -771,8 +933,12 @@ private fun HistoryOutingCard(outing: OutingModel) {
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+        Row(modifier = Modifier
+            .padding(16.dp)
+            .fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier
+                .weight(1f)
+                .padding(end = 12.dp)) {
                 Text(outing.place, color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(4.dp))
                 val outT = if (outing.type.uppercase(Locale.getDefault()) == "WEEKEND") outing.fromTime.substringBefore("-").trim() else outing.fromTime.replace("-", "").trim()
@@ -802,7 +968,7 @@ private fun FormDatePickerDialog(
             TextButton(onClick = {
                 datePickerState.selectedDateMillis?.let { onDateSelected(it) }
                 onDismiss()
-            }) { Text("OK", color = OutingPrimaryAccent) }
+            }) { Text("OK", color = OutingPrimaryAccent, fontWeight = FontWeight.Bold) }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -817,9 +983,53 @@ private fun FormDatePickerDialog(
                 weekdayContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 dayContentColor = MaterialTheme.colorScheme.onSurface,
                 selectedDayContainerColor = OutingPrimaryAccent,
-                selectedDayContentColor = Color.White
+                selectedDayContentColor = Color.White,
+                todayDateBorderColor = OutingPrimaryAccent,
+                todayContentColor = OutingPrimaryAccent
             )
         )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FormTimePickerDialog(
+    initialHour: Int,
+    initialMinute: Int,
+    onTimeSelected: (Int, Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val timePickerState = rememberTimePickerState(initialHour = initialHour, initialMinute = initialMinute, is24Hour = false)
+
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = {
+                onTimeSelected(timePickerState.hour, timePickerState.minute)
+                onDismiss()
+            }) { Text("OK", color = OutingPrimaryAccent, fontWeight = FontWeight.Bold) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        },
+        colors = DatePickerDefaults.colors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.padding(24.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Select Time", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
+            TimePicker(
+                state = timePickerState,
+                colors = TimePickerDefaults.colors(
+                    clockDialColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    clockDialSelectedContentColor = Color.White,
+                    clockDialUnselectedContentColor = MaterialTheme.colorScheme.onSurface,
+                    selectorColor = OutingPrimaryAccent,
+                    timeSelectorSelectedContainerColor = OutingPrimaryAccent.copy(alpha = 0.2f),
+                    timeSelectorUnselectedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    timeSelectorSelectedContentColor = OutingPrimaryAccent,
+                    timeSelectorUnselectedContentColor = MaterialTheme.colorScheme.onSurface
+                )
+            )
+        }
     }
 }
 
@@ -882,6 +1092,8 @@ private fun OutingWizardDialog(
 
     var showOutDatePicker by remember { mutableStateOf(false) }
     var showInDatePicker by remember { mutableStateOf(false) }
+    var showOutTimePicker by remember { mutableStateOf(false) }
+    var showInTimePicker by remember { mutableStateOf(false) }
 
     if (showOutDatePicker) {
         FormDatePickerDialog(initialDateMillis = outDateMillis, onDateSelected = {
@@ -897,86 +1109,85 @@ private fun OutingWizardDialog(
         }, onDismiss = { showInDatePicker = false })
     }
 
-    val showTimePicker = { isOutTime: Boolean ->
-        val h = if (isOutTime) outHour else inHour
-        val m = if (isOutTime) outMinute else inMinute
-        fun promptPicker(initialH: Int, initialM: Int) {
-            TimePickerDialog(context, { _, selectedH, selectedM ->
-                if (selectedH in 6..23 && selectedM in 0..59) {
-                    if (isOutTime) { outHour = selectedH; outMinute = selectedM } else { inHour = selectedH; inMinute = selectedM }
-                } else {
-                    Toast.makeText(context, "Invalid time! Hrs: 6-23, Mins: 00-59", Toast.LENGTH_LONG).show()
-                    promptPicker(selectedH, selectedM)
-                }
-            }, initialH, initialM, false).show()
-        }
-        promptPicker(h, m)
+    if (showOutTimePicker) {
+        FormTimePickerDialog(initialHour = outHour, initialMinute = outMinute, onTimeSelected = { h, m ->
+            if (h in 6..23) { outHour = h; outMinute = m; showOutTimePicker = false }
+            else Toast.makeText(context, "Invalid time! Outings allowed 6 AM - 11 PM", Toast.LENGTH_LONG).show()
+        }, onDismiss = { showOutTimePicker = false })
+    }
+    if (showInTimePicker) {
+        FormTimePickerDialog(initialHour = inHour, initialMinute = inMinute, onTimeSelected = { h, m ->
+            if (h in 6..23) { inHour = h; inMinute = m; showInTimePicker = false }
+            else Toast.makeText(context, "Invalid time! Outings allowed 6 AM - 11 PM", Toast.LENGTH_LONG).show()
+        }, onDismiss = { showInTimePicker = false })
     }
 
     val fieldColors = OutlinedTextFieldDefaults.colors(
         focusedTextColor = MaterialTheme.colorScheme.onSurface,
         unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
         focusedBorderColor = OutingPrimaryAccent,
-        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha=0.5f),
-        focusedContainerColor = Color.Transparent,
-        unfocusedContainerColor = Color.Transparent
+        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha=0.3f),
+        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
     )
 
     Column(modifier = Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
-        // App Bar & Steps
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurface) }
             Column(modifier = Modifier.padding(start = 8.dp)) {
                 Text("New request", color = MaterialTheme.colorScheme.onSurface, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Text(type.toTitleCase(), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text(type.toTitleCase(), color = OutingPrimaryAccent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             }
         }
 
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 16.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(modifier = Modifier.size(32.dp).background(if (currentStep >= 1) OutingPrimaryAccent else MaterialTheme.colorScheme.outline, CircleShape), contentAlignment = Alignment.Center) { Text("1", color = Color.White, fontWeight = FontWeight.Bold) }
-                Text("Details", color = if (currentStep >= 1) OutingPrimaryAccent else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+                Text("Details", color = if (currentStep >= 1) OutingPrimaryAccent else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp), fontWeight = FontWeight.Bold)
             }
-            Box(modifier = Modifier.width(60.dp).height(2.dp).background(if (currentStep == 2) OutingPrimaryAccent else MaterialTheme.colorScheme.outline).offset(y = (-8).dp))
+            Box(modifier = Modifier.width(60.dp).height(2.dp).background(if (currentStep == 2) OutingPrimaryAccent else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)).offset(y = (-8).dp))
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(modifier = Modifier.size(32.dp).background(if (currentStep == 2) OutingPrimaryAccent else MaterialTheme.colorScheme.surfaceVariant, CircleShape), contentAlignment = Alignment.Center) { Text("2", color = if(currentStep == 2) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold) }
-                Text("Review", color = if (currentStep == 2) OutingPrimaryAccent else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+                Text("Review", color = if (currentStep == 2) OutingPrimaryAccent else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp), fontWeight = FontWeight.Bold)
             }
         }
 
-        // Content
         if (currentStep == 1) {
             Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).weight(1f)) {
-                Text("Where are you going?", color = MaterialTheme.colorScheme.onSurface, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
+                Text("Where are you going?", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
 
                 if (type == "WEEKEND") {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(weekendPlaceOptions) { p ->
                             val isSelected = weekendSelectedPlace == p
-                            Box(modifier = Modifier.border(1.dp, if (isSelected) OutingPrimaryAccent else MaterialTheme.colorScheme.outline.copy(alpha=0.3f), RoundedCornerShape(50)).background(if (isSelected) OutingPrimaryAccent.copy(alpha = 0.1f) else Color.Transparent, RoundedCornerShape(50)).clickable { weekendSelectedPlace = p }.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                                Text(p, color = if (isSelected) OutingPrimaryAccent else MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
+                            Box(modifier = Modifier
+                                .border(1.dp, if (isSelected) OutingPrimaryAccent else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(50))
+                                .background(if (isSelected) OutingPrimaryAccent else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(50))
+                                .clickable { weekendSelectedPlace = p }
+                                .padding(horizontal = 16.dp, vertical = 10.dp)) {
+                                Text(p, color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                             }
                         }
                     }
                 } else {
-                    OutlinedTextField(value = generalPlace, onValueChange = { if(it.length <= 25) generalPlace = it }, label = { Text("Place of Visit") }, modifier = Modifier.fillMaxWidth(), colors = fieldColors, singleLine = true)
+                    OutlinedTextField(value = generalPlace, onValueChange = { if(it.length <= 25) generalPlace = it }, label = { Text("Place of Visit") }, modifier = Modifier.fillMaxWidth(), colors = fieldColors, singleLine = true, shape = RoundedCornerShape(12.dp))
                 }
 
                 Spacer(Modifier.height(24.dp))
-                Text("Purpose", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
-                OutlinedTextField(value = purpose, onValueChange = { if(it.length <= 25) purpose = it }, placeholder = { Text("Brief reason for leave") }, modifier = Modifier.fillMaxWidth(), colors = fieldColors, singleLine = true)
+                Text("Purpose", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+                OutlinedTextField(value = purpose, onValueChange = { if(it.length <= 25) purpose = it }, placeholder = { Text("Brief reason for leave") }, modifier = Modifier.fillMaxWidth(), colors = fieldColors, singleLine = true, shape = RoundedCornerShape(12.dp))
 
                 if (type == "WEEKEND") {
                     Spacer(Modifier.height(24.dp))
-                    Text("Parent contact", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
-                    OutlinedTextField(value = contact, onValueChange = { if (it.length <= 10 && it.all { char -> char.isDigit() }) contact = it }, placeholder = { Text("+91") }, modifier = Modifier.fillMaxWidth(), colors = fieldColors, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+                    Text("Parent contact", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+                    OutlinedTextField(value = contact, onValueChange = { if (it.length <= 10 && it.all { char -> char.isDigit() }) contact = it }, placeholder = { Text("+91") }, modifier = Modifier.fillMaxWidth(), colors = fieldColors, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, shape = RoundedCornerShape(12.dp))
 
                     Spacer(Modifier.height(24.dp))
-                    Text("When are you leaving?", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+                    Text("When are you leaving?", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
                     var expandedWDate by remember { mutableStateOf(false) }
                     @Suppress("DEPRECATION")
                     ExposedDropdownMenuBox(expanded = expandedWDate, onExpandedChange = { expandedWDate = it }) {
-                        OutlinedTextField(value = weekendSelectedDate, onValueChange = {}, readOnly = true, trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }, modifier = Modifier.fillMaxWidth().menuAnchor(), colors = fieldColors)
+                        OutlinedTextField(value = weekendSelectedDate, onValueChange = {}, readOnly = true, trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }, modifier = Modifier.fillMaxWidth().menuAnchor(), colors = fieldColors, shape = RoundedCornerShape(12.dp))
                         ExposedDropdownMenu(expanded = expandedWDate, onDismissRequest = { expandedWDate = false }, modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
                             weekendDates.forEach { option -> DropdownMenuItem(text = { Text(option, color = MaterialTheme.colorScheme.onSurface) }, onClick = { weekendSelectedDate = option; expandedWDate = false }) }
                         }
@@ -985,7 +1196,7 @@ private fun OutingWizardDialog(
                     var expandedWTime by remember { mutableStateOf(false) }
                     @Suppress("DEPRECATION")
                     ExposedDropdownMenuBox(expanded = expandedWTime, onExpandedChange = { expandedWTime = it }) {
-                        OutlinedTextField(value = weekendSelectedTime, onValueChange = {}, readOnly = true, trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }, modifier = Modifier.fillMaxWidth().menuAnchor(), colors = fieldColors)
+                        OutlinedTextField(value = weekendSelectedTime, onValueChange = {}, readOnly = true, trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }, modifier = Modifier.fillMaxWidth().menuAnchor(), colors = fieldColors, shape = RoundedCornerShape(12.dp))
                         ExposedDropdownMenu(expanded = expandedWTime, onDismissRequest = { expandedWTime = false }, modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
                             weekendTimeOptions.forEach { option -> DropdownMenuItem(text = { Text(option, color = MaterialTheme.colorScheme.onSurface) }, onClick = { weekendSelectedTime = option; expandedWTime = false }) }
                         }
@@ -994,16 +1205,36 @@ private fun OutingWizardDialog(
                     Spacer(Modifier.height(24.dp))
                     Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(16.dp)) {
                         Column(Modifier.weight(1f)) {
-                            Text("Leave", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
-                            OutlinedCard(onClick = { showOutDatePicker = true }, modifier = Modifier.fillMaxWidth().height(48.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.5f))) { Box(Modifier.fillMaxSize(), Alignment.CenterStart) { Text(displayDateFmt.format(Date(outDateMillis)), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(horizontal = 16.dp)) } }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            OutlinedCard(onClick = { showTimePicker(true) }, modifier = Modifier.fillMaxWidth().height(48.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.5f))) { Box(Modifier.fillMaxSize(), Alignment.CenterStart) { Text(formatTimeDisplay(outHour, outMinute), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(horizontal = 16.dp)) } }
+                            Text("Leave", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+                            OutlinedCard(onClick = { showOutDatePicker = true }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.3f))) {
+                                Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Lucide.CalendarDays, null, tint = OutingPrimaryAccent, modifier = Modifier.size(16.dp))
+                                    Text(displayDateFmt.format(Date(outDateMillis)), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            OutlinedCard(onClick = { showOutTimePicker = true }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.3f))) {
+                                Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Lucide.Clock, null, tint = OutingPrimaryAccent, modifier = Modifier.size(16.dp))
+                                    Text(formatTimeDisplay(outHour, outMinute), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
                         }
                         Column(Modifier.weight(1f)) {
-                            Text("Return", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
-                            OutlinedCard(onClick = { showInDatePicker = true }, modifier = Modifier.fillMaxWidth().height(48.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.5f))) { Box(Modifier.fillMaxSize(), Alignment.CenterStart) { Text(displayDateFmt.format(Date(inDateMillis)), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(horizontal = 16.dp)) } }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            OutlinedCard(onClick = { showTimePicker(false) }, modifier = Modifier.fillMaxWidth().height(48.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.5f))) { Box(Modifier.fillMaxSize(), Alignment.CenterStart) { Text(formatTimeDisplay(inHour, inMinute), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(horizontal = 16.dp)) } }
+                            Text("Return", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+                            OutlinedCard(onClick = { showInDatePicker = true }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.3f))) {
+                                Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Lucide.CalendarDays, null, tint = OutingPrimaryAccent, modifier = Modifier.size(16.dp))
+                                    Text(displayDateFmt.format(Date(inDateMillis)), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            OutlinedCard(onClick = { showInTimePicker = true }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.3f))) {
+                                Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Lucide.Clock, null, tint = OutingPrimaryAccent, modifier = Modifier.size(16.dp))
+                                    Text(formatTimeDisplay(inHour, inMinute), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
                         }
                     }
                 }
@@ -1012,15 +1243,12 @@ private fun OutingWizardDialog(
             val canProceed = if (type == "WEEKEND") purpose.isNotBlank() && contact.length == 10 else generalPlace.isNotBlank() && purpose.isNotBlank()
             Button(
                 onClick = { if (canProceed) {
-                    if (type == "GENERAL" && inDateMillis < outDateMillis) {
-                        Toast.makeText(context, "Return date must be after Leave date", Toast.LENGTH_SHORT).show()
-                    } else {
-                        currentStep = 2
-                    }
+                    if (type == "GENERAL" && inDateMillis < outDateMillis) Toast.makeText(context, "Return date must be after Leave date", Toast.LENGTH_SHORT).show()
+                    else currentStep = 2
                 }},
                 modifier = Modifier.fillMaxWidth().padding(24.dp).height(56.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = if (canProceed) OutingPrimaryAccent else MaterialTheme.colorScheme.surfaceVariant),
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(16.dp)
             ) { Text("Next — review >", color = if (canProceed) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, fontSize = 16.sp) }
 
         } else if (currentStep == 2) {
@@ -1029,10 +1257,10 @@ private fun OutingWizardDialog(
 
                 val finalPlace = if (type == "WEEKEND") weekendSelectedPlace else generalPlace
 
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.5f)), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.2f)), modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Destination", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp); Text(finalPlace, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(12.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Purpose", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp); Text(purpose, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
 
                         Spacer(Modifier.height(16.dp))
@@ -1043,27 +1271,27 @@ private fun OutingWizardDialog(
                             val outT = weekendSelectedTime.substringBefore("-").trim()
                             val inT = weekendSelectedTime.substringAfter("-").trim()
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Leave", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp); Text("${formatDate(weekendSelectedDate, true)} · $outT", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(12.dp))
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Return", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp); Text("${formatDate(weekendSelectedDate, true)} · $inT", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
                         } else {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Leave", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp); Text("${displayDateFmt.format(Date(outDateMillis))} · ${formatTimeDisplay(outHour, outMinute)}", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(12.dp))
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Return", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp); Text("${displayDateFmt.format(Date(inDateMillis))} · ${formatTimeDisplay(inHour, inMinute)}", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
                         }
                     }
                 }
 
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(20.dp))
 
                 val warningText = if (type == "WEEKEND") "Warden approval is required before your pass is issued." else "Mentor and Warden approval is required before your pass is issued."
-                Row(modifier = Modifier.fillMaxWidth().border(1.dp, OutingColorWarning.copy(alpha = 0.3f), RoundedCornerShape(8.dp)).padding(12.dp)) {
+                Row(modifier = Modifier.fillMaxWidth().background(OutingColorWarning.copy(alpha = 0.1f), RoundedCornerShape(12.dp)).border(1.dp, OutingColorWarning.copy(alpha = 0.3f), RoundedCornerShape(12.dp)).padding(16.dp)) {
                     Icon(Icons.Outlined.Info, null, tint = OutingColorWarning, modifier = Modifier.size(20.dp))
-                    Text(warningText, color = OutingColorWarning, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
+                    Text(warningText, color = OutingColorWarning, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 12.dp))
                 }
             }
 
             Row(Modifier.fillMaxWidth().padding(24.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = { currentStep = 1 }, modifier = Modifier.weight(1f).height(56.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp)) { Text("Edit", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold) }
+                Button(onClick = { currentStep = 1 }, modifier = Modifier.weight(1f).height(56.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(16.dp)) { Text("Edit", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, fontSize = 16.sp) }
                 Button(
                     onClick = {
                         if (type == "WEEKEND") {
@@ -1076,8 +1304,8 @@ private fun OutingWizardDialog(
                             onSubmitGeneral(generalPlace, purpose, subOutDate, subInDate, subOutTime, subInTime)
                         }
                     },
-                    modifier = Modifier.weight(1f).height(56.dp), colors = ButtonDefaults.buttonColors(containerColor = OutingPrimaryAccent), shape = RoundedCornerShape(12.dp)
-                ) { Text("Submit", color = Color.White, fontWeight = FontWeight.Black) }
+                    modifier = Modifier.weight(1f).height(56.dp), colors = ButtonDefaults.buttonColors(containerColor = OutingPrimaryAccent), shape = RoundedCornerShape(16.dp)
+                ) { Text("Submit", color = Color.White, fontWeight = FontWeight.Black, fontSize = 16.sp) }
             }
         }
     }
@@ -1113,20 +1341,40 @@ fun InAppPdfViewer(pdfFile: File, onDismiss: () -> Unit) {
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-            Row(modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)) {
+            Row(modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, null, tint = MaterialTheme.colorScheme.onSurface) }
                 Text("Outpass Document", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 IconButton(onClick = { savePdfToDownloads(context, pdfFile, pdfFile.name) }) {
                     Icon(Lucide.FileDown, null, tint = OutingPrimaryAccent)
                 }
             }
-            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(), contentAlignment = Alignment.Center) {
                 bitmap?.let {
                     Image(
                         bitmap = it.asImageBitmap(),
                         contentDescription = null,
-                        modifier = Modifier.fillMaxSize().padding(16.dp).pointerInput(Unit) { detectTransformGestures { _, pan, zoom, _ -> scale = (scale * zoom).coerceIn(1f, 5f); offset += pan } }.graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                            .pointerInput(Unit) {
+                                detectTransformGestures { _, pan, zoom, _ ->
+                                    scale = (scale * zoom).coerceIn(1f, 5f); offset += pan
+                                }
+                            }
+                            .graphicsLayer(
+                                scaleX = scale,
+                                scaleY = scale,
+                                translationX = offset.x,
+                                translationY = offset.y
+                            ),
                         contentScale = ContentScale.Fit
                     )
                 } ?: CircularProgressIndicator(color = OutingPrimaryAccent)

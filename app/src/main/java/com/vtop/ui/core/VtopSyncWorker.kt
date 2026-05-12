@@ -17,6 +17,7 @@ import com.vtop.utils.*
 import com.vtop.logic.*
 import com.vtop.logic.MarksParser
 import com.vtop.logic.AttendanceParser
+import com.vtop.logic.OutingParser
 import com.vtop.utils.SemesterTransitionEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -116,14 +117,10 @@ class VtopSyncWorker(
 
             var authorizedId = Vault.getRegNo(context)
             if (authorizedId.isBlank() || authorizedId == "-") {
-                authorizedId = username // Fallback if worker runs before first GlobalSync
+                authorizedId = username
             }
 
-            // =========================================================
-            // THE FIX: FORCING THE JAVA CLIENT TO USE THE SCRAPED ID
-            // =========================================================
             client.setAuthorizedId(authorizedId)
-
             val semInfo = Vault.getSelectedSemester(context)
             val semId = semInfo[0] ?: ""
 
@@ -185,9 +182,36 @@ class VtopSyncWorker(
                 withContext(Dispatchers.Main) { AppBridge.marksState.value = newMarks }
             }
 
+            // --- 4. CHECK OUTINGS ---
+            val oldOutings = Vault.getOutings(context) ?: emptyList()
+            val genHtml = client.fetchGeneralOutingRawHtml(authorizedId, null) ?: ""
+            val weekHtml = client.fetchWeekendOutingRawHtml(authorizedId, null) ?: ""
+            val newOutings = OutingParser.parseGeneral(genHtml) + OutingParser.parseWeekend(weekHtml)
+
+            if (newOutings.isNotEmpty()) {
+                newOutings.forEach { newOut ->
+                    val oldOut = oldOutings.find { it.id == newOut.id }
+                    if (oldOut != null && oldOut.status != newOut.status) {
+                        val s = newOut.status.uppercase(Locale.getDefault())
+                        val oldS = oldOut.status.uppercase(Locale.getDefault())
+                        val notifId = 501 + (newOut.id.hashCode() % 1000)
+
+                        if (s.contains("FORWARD") && !oldS.contains("FORWARD")) {
+                            NotificationHelper.showNotification(context, "Outing Update", "Your mentor has approved your request.", notifId)
+                        } else if ((s.contains("APPROVE") || s.contains("ACCEPT") || s.contains("ISSUED")) && !oldS.contains("APPROVE") && !oldS.contains("ACCEPT")) {
+                            NotificationHelper.showNotification(context, "Outing Approved!", "Your warden has approved your request.", notifId)
+                        } else if ((s.contains("REJECT") || s.contains("DECLINE")) && !oldS.contains("REJECT") && !oldS.contains("DECLINE")) {
+                            NotificationHelper.showNotification(context, "Outing Rejected", "Your outing request was rejected.", notifId)
+                        }
+                    }
+                }
+                Vault.saveOutings(context, newOutings)
+                withContext(Dispatchers.Main) { AppBridge.outingsState.value = newOutings }
+            }
+
             Vault.saveLastSyncTime(context)
 
-            // --- 4. SEMESTER TRANSITION ---
+            // --- 5. SEMESTER TRANSITION ---
             val savedExams = Vault.getExamSchedule(context)
             if (SemesterTransitionEngine.checkIfLastFatIsOver(savedExams)) {
                 withContext(Dispatchers.Main) { AppBridge.isSemesterCompleted.value = true }
