@@ -284,13 +284,38 @@ fun Timetable(
     var tick by remember { mutableIntStateOf(0) }
     var currentTimeStr by remember { mutableStateOf(SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())) }
 
+    // PARSE ALL EXAMS FOR GAP LOGIC
+    val parsedExams = remember(examsData) {
+        examsData.mapNotNull { exam ->
+            val dateStr = exam.examDate
+            if (dateStr != null) {
+                val formats = listOf("dd-MMM-yyyy", "yyyy-MM-dd", "dd/MM/yyyy", "dd-MM-yyyy", "MMM dd, yyyy")
+                var d: Date? = null
+                for (f in formats) {
+                    try { d = SimpleDateFormat(f, Locale.ENGLISH).parse(dateStr.trim()); break } catch(e: Exception) {}
+                }
+                if (d != null) {
+                    val c = Calendar.getInstance().apply {
+                        time = d
+                        set(Calendar.HOUR_OF_DAY, 0)
+                        set(Calendar.MINUTE, 0)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }
+                    Pair(c.time, exam)
+                } else null
+            } else null
+        }.sortedBy { it.first }
+    }
+
     LaunchedEffect(Unit) {
         while (true) { delay(60000); currentTimeStr = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date()); tick++ }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
-            NextClassCard(timetable, allReminders, tick, examsData, holidays)
+            NextClassCard(timetable, allReminders, tick, parsedExams, examsData, holidays)
+
             LazyColumn(
                 state = listState, modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(top = 8.dp, bottom = 120.dp), verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -310,8 +335,42 @@ fun Timetable(
                     val daysOffset = abs(index - 30)
                     val rowAlpha = when (daysOffset) { 0 -> 1f; 1, 2 -> 0.85f; in 3..5 -> 0.6f; in 6..14 -> 0.35f; else -> 0.15f }
 
+                    val currentCalDate = Calendar.getInstance().apply {
+                        time = dateCal.time
+                        set(Calendar.HOUR_OF_DAY, 0)
+                        set(Calendar.MINUTE, 0)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }.time
+
+                    // SMART PREPARATION DAY LOGIC
+                    var isPrepDay = false
+                    var nextExamForPrep: ExamScheduleModel? = null
+
+                    val nextExInfo = parsedExams.firstOrNull { it.first.after(currentCalDate) }
+                    if (nextExInfo != null) {
+                        val daysUntilNextExam = ((nextExInfo.first.time - currentCalDate.time) / (1000 * 60 * 60 * 24)).toInt()
+                        if (daysUntilNextExam == 1) {
+                            // Always prep 1 day before any exam
+                            isPrepDay = true
+                            nextExamForPrep = nextExInfo.second
+                        } else if (daysUntilNextExam > 1) {
+                            // If gap is small between previous exam and next exam, mark as prep
+                            val prevExInfo = parsedExams.lastOrNull { it.first.before(currentCalDate) }
+                            if (prevExInfo != null) {
+                                val daysSincePrevExam = ((currentCalDate.time - prevExInfo.first.time) / (1000 * 60 * 60 * 24)).toInt()
+                                if ((daysUntilNextExam + daysSincePrevExam) <= 6) {
+                                    isPrepDay = true
+                                    nextExamForPrep = nextExInfo.second
+                                }
+                            }
+                        }
+                    }
+
                     if (examToday != null) {
-                        ExamRow(dateCal, examToday, isToday, isExpanded, rowAlpha, onExpandToggle = { expandedDateStr = if (isExpanded) "" else dateStr })
+                        ExamRow(timetable, dateCal, examToday, isToday, isExpanded, rowAlpha, onExpandToggle = { expandedDateStr = if (isExpanded) "" else dateStr })
+                    } else if (isPrepDay && nextExamForPrep != null) {
+                        NextExamGapRow(dateCal, nextExamForPrep, isToday, rowAlpha)
                     } else if (holidayToday != null) {
                         HolidayRow(dateCal, holidayToday, isToday, rowAlpha)
                     } else if (rawCourses.isEmpty() && isWeekend && !isExpanded) {
@@ -351,11 +410,39 @@ fun Timetable(
 }
 
 @Composable
+fun NextExamGapRow(dateCal: Calendar, nextExam: ExamScheduleModel, isToday: Boolean, alpha: Float) {
+    val sdfDayShort = remember { SimpleDateFormat("EEE", Locale.ENGLISH) }
+    val themePrimary = MaterialTheme.colorScheme.primary
+
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).alpha(alpha).clip(RoundedCornerShape(14.dp))
+            .background(Brush.horizontalGradient(listOf(themePrimary.copy(0.1f), Color.Transparent)))
+            .border(1.5.dp, themePrimary.copy(0.2f), RoundedCornerShape(14.dp))
+    ) {
+        Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(end = 16.dp)) {
+                Text(if (isToday) "TODAY" else dateCal.get(Calendar.DAY_OF_MONTH).toString(), fontSize = 14.sp, fontWeight = FontWeight.Black, color = themePrimary)
+                Text(sdfDayShort.format(dateCal.time), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Box(modifier = Modifier.width(1.dp).height(30.dp).background(themePrimary.copy(0.3f)))
+            Column(modifier = Modifier.padding(start = 16.dp)) {
+                Text("PREPARATION DAY", fontSize = 10.sp, fontWeight = FontWeight.Black, color = themePrimary, letterSpacing = 1.sp)
+                Spacer(Modifier.height(4.dp))
+                Text("Next: ${nextExam.courseTitle.clean()}", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(2.dp))
+                Text("${nextExam.courseCode.clean()} · ${nextExam.examDate.clean()}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
 fun NextClassCard(
     timetable: TimetableModel,
     allReminders: List<CourseReminder>,
     tick: Int,
-    exams: List<ExamScheduleModel>,
+    parsedExams: List<Pair<Date, ExamScheduleModel>>,
+    rawExams: List<ExamScheduleModel>,
     holidays: Map<String, String>
 ) {
     val context = LocalContext.current
@@ -364,33 +451,64 @@ fun NextClassCard(
     val themeOnSurface = MaterialTheme.colorScheme.onSurface
     val themeOnSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
 
-    val nextEvent: Pair<Any, Pair<String, Color>>? = remember(timetable, tick, exams, holidays) {
+    val nextEvent: Pair<Any, Pair<String, Color>>? = remember(timetable, tick, parsedExams, holidays) {
         val mergeLabs = sharedPrefs.getBoolean("MERGE_LABS", true)
         val cal = Calendar.getInstance()
 
-        val examToday = findExamForDate(cal, exams)
+        // 1. Is there an exam today?
+        val examToday = findExamForDate(cal, rawExams)
         if (examToday != null) return@remember Pair(examToday, "EXAM TODAY" to themePrimary)
 
+        // 2. Is there a regular class today?
         val holidayToday = findHolidayForDate(cal, holidays)
         if (holidayToday == null) {
             val todayStr = SimpleDateFormat("EEEE", Locale.getDefault()).format(cal.time)
             val todayCourses = processAndMergeCourses(timetable.scheduleMap[todayStr] ?: emptyList(), mergeLabs)
-            val nextToday = todayCourses.firstOrNull { course ->
-                val status = getCourseTimeStatus(course.mergedTimeSlot, true, true)
-                status == TimeStatus.NEXT || status == TimeStatus.ONGOING
-            }
+            val nextToday = todayCourses.firstOrNull { getCourseTimeStatus(it.mergedTimeSlot, true, true) in listOf(TimeStatus.NEXT, TimeStatus.ONGOING) }
             if (nextToday != null) return@remember Pair(nextToday, "NEXT UP" to themePrimary.copy(alpha = 0.8f))
         }
 
+        // 3. Look ahead for the next 7 days
+        val searchCal = Calendar.getInstance()
         for (i in 1..7) {
-            cal.add(Calendar.DAY_OF_YEAR, 1)
-            val examFuture = findExamForDate(cal, exams)
-            if (examFuture != null) return@remember Pair(examFuture, "UPCOMING EXAM" to themePrimary)
+            searchCal.add(Calendar.DAY_OF_YEAR, 1)
+            val currentSearchZero = Calendar.getInstance().apply { time = searchCal.time; set(Calendar.HOUR_OF_DAY,0); set(Calendar.MINUTE,0); set(Calendar.SECOND,0); set(Calendar.MILLISECOND,0) }.time
 
-            val holidayFuture = findHolidayForDate(cal, holidays)
+            // If there's an exam on this day
+            val examFuture = findExamForDate(searchCal, rawExams)
+            if (examFuture != null) {
+                val title = if (i == 1) "TOMORROW: EXAM" else "UPCOMING EXAM"
+                return@remember Pair(examFuture, title to themePrimary)
+            }
+
+            // If it's a Prep Day (e.g., 1 day before exam, or in a short gap)
+            val nextExInfo = parsedExams.firstOrNull { it.first.after(currentSearchZero) }
+            if (nextExInfo != null) {
+                val daysUntilNextExam = ((nextExInfo.first.time - currentSearchZero.time) / (1000 * 60 * 60 * 24)).toInt()
+                var isPrep = false
+                if (daysUntilNextExam == 1) {
+                    isPrep = true
+                } else {
+                    val prevExInfo = parsedExams.lastOrNull { it.first.before(currentSearchZero) }
+                    if (prevExInfo != null) {
+                        val daysSincePrevExam = ((currentSearchZero.time - prevExInfo.first.time) / (1000 * 60 * 60 * 24)).toInt()
+                        if ((daysUntilNextExam + daysSincePrevExam) <= 6) isPrep = true
+                    }
+                }
+
+                if (isPrep) {
+                    // Only show prep day in top card if it's tomorrow
+                    if (i == 1) {
+                        return@remember Pair(nextExInfo.second, "TOMORROW: PREPARATION" to themePrimary.copy(alpha = 0.8f))
+                    }
+                    continue // Skip to the next day if we are looking ahead through a prep gap
+                }
+            }
+
+            val holidayFuture = findHolidayForDate(searchCal, holidays)
             if (holidayFuture != null) continue
 
-            val futureDayStr = SimpleDateFormat("EEEE", Locale.getDefault()).format(cal.time)
+            val futureDayStr = SimpleDateFormat("EEEE", Locale.getDefault()).format(searchCal.time)
             val futureCourses = processAndMergeCourses(timetable.scheduleMap[futureDayStr] ?: emptyList(), mergeLabs)
             if (futureCourses.isNotEmpty()) return@remember Pair(futureCourses.first(), (if (i == 1) "TOMORROW" else futureDayStr.uppercase()) to themeOnSurfaceVariant)
         }
@@ -402,22 +520,27 @@ fun NextClassCard(
         val (headerText, headerColor) = header
         Card(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = getPremiumSurfaceColor()), border = BorderStroke(1.dp, if(headerText.contains("EXAM")) themePrimary.copy(0.3f) else getPremiumBorderColor())
+            shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = getPremiumSurfaceColor()), border = BorderStroke(1.dp, if(headerText.contains("EXAM") || headerText.contains("PREP")) themePrimary.copy(0.3f) else getPremiumBorderColor())
         ) {
             Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(headerText, fontSize = 9.sp, color = headerColor, letterSpacing = 1.5.sp, fontWeight = FontWeight.Black)
                     Spacer(Modifier.height(4.dp))
                     if (event is ExamScheduleModel) {
-                        Text(event.courseCode.clean(), fontSize = 22.sp, fontWeight = FontWeight.Black, color = themeOnSurface)
-                        Text("${event.examType.clean()} · ${event.reportingTime.clean()}", fontSize = 12.sp, color = themeOnSurfaceVariant)
+                        if (headerText.contains("PREP")) {
+                            Text("PREPARATION DAY", fontSize = 22.sp, fontWeight = FontWeight.Black, color = themeOnSurface)
+                            Text("Next: ${event.courseTitle.clean()}", fontSize = 12.sp, color = themeOnSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        } else {
+                            Text(event.courseCode.clean(), fontSize = 22.sp, fontWeight = FontWeight.Black, color = themeOnSurface)
+                            Text("${event.examType.clean()} · ${event.reportingTime.clean()}", fontSize = 12.sp, color = themeOnSurfaceVariant)
+                        }
                     } else if (event is ProcessedCourse) {
                         Text(event.courseCode.clean(), fontSize = 22.sp, fontWeight = FontWeight.Black, color = themeOnSurface)
                         Text(event.mergedTimeSlot.clean(), fontSize = 12.sp, color = themeOnSurfaceVariant)
                     }
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    if (event is ExamScheduleModel) {
+                    if (event is ExamScheduleModel && !headerText.contains("PREP")) {
                         val v = event.venue.clean()
                         val sl = event.seatLocation.clean()
                         val sn = event.seatNumber.clean()
@@ -467,9 +590,19 @@ fun HolidayRow(dateCal: Calendar, holidayName: String, isToday: Boolean, alpha: 
 }
 
 @Composable
-fun ExamRow(dateCal: Calendar, exam: ExamScheduleModel, isToday: Boolean, isExpanded: Boolean, alpha: Float, onExpandToggle: () -> Unit) {
+fun ExamRow(timetable: TimetableModel, dateCal: Calendar, exam: ExamScheduleModel, isToday: Boolean, isExpanded: Boolean, alpha: Float, onExpandToggle: () -> Unit) {
     val sdfDayShort = remember { SimpleDateFormat("EEE", Locale.ENGLISH) }
     val themePrimary = MaterialTheme.colorScheme.primary
+
+    // Look up the faculty from the Timetable dataset with robust string matching
+    val facultyName = remember(exam.courseCode, timetable) {
+        val examBaseCode = exam.courseCode?.substringBefore("-")?.trim() ?: ""
+        timetable.scheduleMap.values.flatten()
+            .find {
+                val ttBaseCode = it.courseCode?.substringBefore("-")?.trim() ?: ""
+                ttBaseCode == examBaseCode || it.courseCode?.contains(examBaseCode) == true || examBaseCode.contains(it.courseCode ?: "###")
+            }?.faculty?.clean()?.takeIf { it.isNotBlank() } ?: "N/A"
+    }
 
     Box(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).alpha(alpha).clip(RoundedCornerShape(14.dp))
@@ -534,6 +667,10 @@ fun ExamRow(dateCal: Calendar, exam: ExamScheduleModel, isToday: Boolean, isExpa
                 DetailRow("Seat location", exam.seatLocation.clean())
                 DetailRow("Seat number", exam.seatNumber.clean())
                 DetailRow("Class ID", exam.classId.clean())
+
+                // Will default to "Unknown Faculty" if not found so the UI arrow still appears!
+                val displayFaculty = if (facultyName != "N/A") facultyName else "Unknown Faculty"
+                ExpandableFacultyRow(facultyName = displayFaculty)
             }
         }
     }
@@ -696,7 +833,6 @@ fun CourseDetailsSheet(
             Text("DATE", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             Spacer(Modifier.height(6.dp))
 
-            // Replaced OutlinedCard with standard Card to avoid experimental M3 errors
             Card(
                 modifier = Modifier.fillMaxWidth().clickable { showDatePicker = true },
                 colors = CardDefaults.cardColors(containerColor = getPremiumSurfaceColor()),
@@ -761,7 +897,6 @@ fun CourseDetailsSheet(
             DetailRow(label = "SLOT", value = course.mergedSlot.clean())
             DetailRow(label = "VENUE", value = course.venue.clean())
 
-            // INJECTED EXPANDABLE ROW HERE
             ExpandableFacultyRow(facultyName = course.faculty.clean())
 
             DetailRow(label = "CLASS ID", value = course.classId.clean())
@@ -821,9 +956,6 @@ fun DetailRow(label: String, value: String) {
     }
 }
 
-// ------------------------------------------------------------------------
-// EXPANDABLE FACULTY ROW COMPONENT
-// ------------------------------------------------------------------------
 @Composable
 fun ExpandableFacultyRow(facultyName: String) {
     var isExpanded by remember { mutableStateOf(false) }
@@ -836,18 +968,15 @@ fun ExpandableFacultyRow(facultyName: String) {
     LaunchedEffect(isExpanded) {
         if (isExpanded && !isLoaded) {
             try {
-                // CHANGED: Now pulls from OtaManager
                 val json = com.vtop.utils.OtaManager.getFacultyJson(context)
                 val jsonArray = org.json.JSONArray(json)
 
                 var bestMatchObj: org.json.JSONObject? = null
                 var bestDistance = Int.MAX_VALUE
 
-                // Helper 1: Basic text cleaner
                 fun clean(s: String): String = s.replace(Regex("[^a-zA-Z]"), "").lowercase()
                     .removePrefix("dr").removePrefix("prof").removePrefix("mr").removePrefix("mrs")
 
-                // Helper 2: Sorts the parts of the name alphabetically to handle "Firstname Surname" vs "Surname Firstname"
                 fun sortClean(s: String): String {
                     return s.lowercase()
                         .replace("dr.", "").replace("dr ", "")
@@ -858,7 +987,6 @@ fun ExpandableFacultyRow(facultyName: String) {
                         .joinToString("") { it.replace(Regex("[^a-z]"), "") }
                 }
 
-                // Helper 3: Levenshtein Distance (Calculates how many typos/edits it takes to match)
                 fun levenshtein(a: String, b: String): Int {
                     var cost = IntArray(a.length + 1) { it }
                     var newCost = IntArray(a.length + 1) { 0 }
@@ -885,22 +1013,19 @@ fun ExpandableFacultyRow(facultyName: String) {
 
                     if (tgtClean.isEmpty()) continue
 
-                    // 1. Direct or Substring match
                     if (srcClean.contains(tgtClean) || tgtClean.contains(srcClean) ||
                         srcSorted.contains(tgtSorted) || tgtSorted.contains(srcSorted) ||
                         targetName.contains(facultyName, ignoreCase = true)
                     ) {
                         bestMatchObj = obj
                         bestDistance = 0
-                        break // Perfect match found!
+                        break
                     }
 
-                    // 2. Fuzzy match for spelling mistakes (e.g. 'shekar' vs 'sekhar')
                     val dist1 = levenshtein(srcClean, tgtClean)
                     val dist2 = levenshtein(srcSorted, tgtSorted)
                     val dist = minOf(dist1, dist2)
 
-                    // Allow up to 1/3rd of the string length to be typos (e.g. 3 typos for a 9 letter name)
                     val maxAllowed = maxOf(1, srcClean.length / 3)
                     if (dist <= maxAllowed && dist < bestDistance) {
                         bestDistance = dist

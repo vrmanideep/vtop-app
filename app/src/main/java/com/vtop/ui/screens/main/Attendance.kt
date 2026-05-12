@@ -325,8 +325,8 @@ fun AttendanceDetailCore(course: AttendanceModel, onSimulateClick: (() -> Unit)?
         ) {
             when (bunkState) {
                 is BunkState.Safe -> Column {
-                    Text("Bunk Budget", color = Color(0xFF4CAF50), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(4.dp))
+                    //Text("Bunk Budget", color = Color(0xFF4CAF50), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                   //  Spacer(Modifier.height(4.dp))
                     Text(text = "You can safely skip the next ${bunkState.canMiss} classes and stay above 75%.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, lineHeight = 18.sp)
                 }
                 is BunkState.AtRisk -> Column {
