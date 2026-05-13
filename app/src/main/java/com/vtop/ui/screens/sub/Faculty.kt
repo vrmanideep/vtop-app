@@ -2,42 +2,65 @@ package com.vtop.ui.screens.sub
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.LocationOn
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import coil.compose.AsyncImage
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.vtop.models.FacultyModel
-import coil.compose.AsyncImage
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.material.icons.outlined.Person
-import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.background
+import kotlin.math.roundToInt
+
+// Helper to extract "SAS" from "School of Advanced Sciences (SAS)"
+fun getShortDept(dept: String?): String {
+    if (dept.isNullOrBlank()) return ""
+    val regex = Regex("\\((.*?)\\)")
+    val match = regex.find(dept)
+    return match?.groupValues?.get(1)?.trim() ?: dept.trim()
+}
+
 fun loadFaculty(context: Context): List<FacultyModel> {
     return try {
-        // CHANGED: Now pulls from OtaManager
         val json = com.vtop.utils.OtaManager.getFacultyJson(context)
         Gson().fromJson(json, object : TypeToken<List<FacultyModel>>() {}.type) ?: emptyList()
     } catch (e: Exception) {
@@ -50,13 +73,27 @@ fun loadFaculty(context: Context): List<FacultyModel> {
 fun FacultyScreen(facultyList: List<FacultyModel>) {
     var searchQuery by remember { mutableStateOf("") }
     var expandedId by remember { mutableStateOf<Int?>(null) }
+    var expandedFacultyImage by remember { mutableStateOf<FacultyModel?>(null) }
+    var selectedSchool by remember { mutableStateOf("All") }
 
-    val filteredList = remember(searchQuery, facultyList) {
-        if (searchQuery.isBlank()) facultyList
-        else facultyList.filter {
-            it.name.contains(searchQuery, true) ||
-                    it.department?.contains(searchQuery, true) == true ||
-                    it.research?.contains(searchQuery, true) == true
+    // Dynamically extract short department names
+    val schools = remember(facultyList) {
+        listOf("All") + facultyList.mapNotNull { getShortDept(it.department) }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .sorted()
+    }
+
+    val filteredList = remember(searchQuery, selectedSchool, facultyList) {
+        facultyList.filter { faculty ->
+            val matchesSearch = if (searchQuery.isBlank()) true else {
+                faculty.name.contains(searchQuery, true) ||
+                        faculty.department?.contains(searchQuery, true) == true ||
+                        faculty.research?.contains(searchQuery, true) == true
+            }
+            val matchesSchool = if (selectedSchool == "All") true else getShortDept(faculty.department) == selectedSchool
+
+            matchesSearch && matchesSchool
         }
     }
 
@@ -64,36 +101,175 @@ fun FacultyScreen(facultyList: List<FacultyModel>) {
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp),
             placeholder = { Text("Search name, dept, or research...") },
             leadingIcon = { Icon(Icons.Default.Search, null) },
             shape = RoundedCornerShape(12.dp),
             singleLine = true
         )
 
+        // FILTER CHIPS
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+        ) {
+            items(schools) { school ->
+                val isSelected = selectedSchool == school
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .border(1.dp, if (isSelected) Color.Transparent else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(20.dp))
+                        .clickable { selectedSchool = school }
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = school,
+                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                    )
+                }
+            }
+        }
+
         if (facultyList.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier.fillMaxSize().weight(1f), contentAlignment = Alignment.Center) {
                 Text(
-                    text = "No faculty data found.\nEnsure 'faculty.json' is in the assets folder.",
+                    text = "No faculty data found.\nEnsure data is synced.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
             }
         } else if (filteredList.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier.fillMaxSize().weight(1f), contentAlignment = Alignment.Center) {
                 Text("No matches found.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
             LazyColumn(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f)
             ) {
                 items(filteredList, key = { it.id }) { faculty ->
                     FacultyCard(
                         faculty = faculty,
                         isExpanded = expandedId == faculty.id,
-                        onClick = { expandedId = if (expandedId == faculty.id) null else faculty.id }
+                        onClick = { expandedId = if (expandedId == faculty.id) null else faculty.id },
+                        onImageClick = { expandedFacultyImage = it }
                     )
+                }
+            }
+        }
+    }
+
+    // WHATSAPP STYLE DIALOG VIEWER
+    if (expandedFacultyImage != null) {
+        val faculty = expandedFacultyImage!!
+        var offsetY by remember { mutableFloatStateOf(0f) }
+        var isDismissing by remember { mutableStateOf(false) }
+
+        val animatedOffsetY by animateFloatAsState(
+            targetValue = if (isDismissing) 1500f else offsetY,
+            animationSpec = spring(stiffness = Spring.StiffnessLow),
+            label = "swipeDismiss"
+        )
+
+        // Clear the state completely once the exit animation falls off-screen
+        LaunchedEffect(animatedOffsetY) {
+            if (isDismissing && animatedOffsetY > 800f) {
+                expandedFacultyImage = null
+            }
+        }
+
+        Dialog(
+            onDismissRequest = { isDismissing = true },
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false,
+                dismissOnBackPress = true,
+                dismissOnClickOutside = true
+            )
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = (0.7f - (Math.abs(offsetY) / 1000f)).coerceIn(0f, 0.7f)))
+                    .clickable { isDismissing = true },
+                contentAlignment = Alignment.Center
+            ) {
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    modifier = Modifier
+                        .fillMaxWidth(0.75f)
+                        .aspectRatio(1f) // Squarish, like WhatsApp
+                        .offset { IntOffset(0, animatedOffsetY.roundToInt()) }
+                        .pointerInput(Unit) {
+                            detectVerticalDragGestures(
+                                onDragEnd = {
+                                    if (offsetY > 200f || offsetY < -200f) {
+                                        isDismissing = true
+                                    } else {
+                                        offsetY = 0f
+                                    }
+                                },
+                                onDragCancel = { offsetY = 0f }
+                            ) { change, dragAmount ->
+                                change.consume()
+                                offsetY += dragAmount
+                            }
+                        }
+                        .clickable(enabled = false) {} // Catch clicks to prevent dismissing when tapping the image
+                ) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+
+                        // Fallback icon or Actual Image
+                        if (faculty.image.isNullOrBlank()) {
+                            Icon(
+                                imageVector = Icons.Outlined.Person,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                                modifier = Modifier.fillMaxSize().padding(32.dp)
+                            )
+                        } else {
+                            AsyncImage(
+                                model = faculty.image,
+                                contentDescription = "Profile Photo",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+
+                        // WhatsApp-style Bottom Bar Overlay (Aligned to Bottom)
+                        Column(
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .fillMaxWidth()
+                                .background(Color.Black.copy(alpha = 0.5f))
+                                .padding(horizontal = 16.dp, vertical = 12.dp)
+                        ) {
+                            Text(
+                                text = faculty.name,
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            val shortDept = getShortDept(faculty.department)
+                            if (shortDept.isNotBlank()) {
+                                Text(
+                                    text = shortDept,
+                                    color = Color.White.copy(alpha = 0.8f),
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -101,7 +277,7 @@ fun FacultyScreen(facultyList: List<FacultyModel>) {
 }
 
 @Composable
-fun FacultyCard(faculty: FacultyModel, isExpanded: Boolean, onClick: () -> Unit) {
+fun FacultyCard(faculty: FacultyModel, isExpanded: Boolean, onClick: () -> Unit, onImageClick: (FacultyModel) -> Unit) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
 
@@ -111,28 +287,26 @@ fun FacultyCard(faculty: FacultyModel, isExpanded: Boolean, onClick: () -> Unit)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
 
-            // --- NEW: ROW FOR PHOTO AND TEXT ---
             Row(verticalAlignment = Alignment.CenterVertically) {
 
-                // Photo Frame with Fallback Icon
+                // CLICKABLE AVATAR
                 Box(
                     modifier = Modifier
                         .size(56.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .clickable { onImageClick(faculty) },
                     contentAlignment = Alignment.Center
                 ) {
-                    // Fallback icon (shows while loading or if no image exists)
                     Icon(
                         imageVector = Icons.Outlined.Person,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                     )
 
-                    // The actual image loaded from the URL
                     if (!faculty.image.isNullOrBlank()) {
                         AsyncImage(
-                            model = faculty.image, // Make sure 'image' matches your JSON key!
+                            model = faculty.image,
                             contentDescription = "Photo of ${faculty.name}",
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Crop
@@ -142,7 +316,6 @@ fun FacultyCard(faculty: FacultyModel, isExpanded: Boolean, onClick: () -> Unit)
 
                 Spacer(modifier = Modifier.width(16.dp))
 
-                // Name and Designation Column
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = faculty.name,
@@ -160,6 +333,24 @@ fun FacultyCard(faculty: FacultyModel, isExpanded: Boolean, onClick: () -> Unit)
                             modifier = Modifier.padding(top = 2.dp)
                         )
                     }
+
+                    // SMOOTH ROUNDED SCHOOL BADGE
+                    val shortSchool = getShortDept(faculty.department)
+                    if (shortSchool.isNotBlank()) {
+                        Box(
+                            modifier = Modifier
+                                .padding(top = 6.dp)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = shortSchool,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
 
@@ -167,7 +358,6 @@ fun FacultyCard(faculty: FacultyModel, isExpanded: Boolean, onClick: () -> Unit)
             if (isExpanded) {
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Cabin Row
                 val rawOffice = faculty.office ?: "N/A"
                 val formattedOffice = rawOffice.replace(";", "-")
 
@@ -205,7 +395,6 @@ fun FacultyCard(faculty: FacultyModel, isExpanded: Boolean, onClick: () -> Unit)
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Email Row
                 val safeEmail = faculty.email ?: "N/A"
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -226,7 +415,9 @@ fun FacultyCard(faculty: FacultyModel, isExpanded: Boolean, onClick: () -> Unit)
                         Text(
                             text = safeEmail,
                             fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.primary
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
 
@@ -241,21 +432,6 @@ fun FacultyCard(faculty: FacultyModel, isExpanded: Boolean, onClick: () -> Unit)
                         Icon(Icons.Outlined.ContentCopy, null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-/*
-                // Research Interests
-                val safeResearch = faculty.research ?: ""
-                if (safeResearch.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text("Research Interests:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = safeResearch,
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        lineHeight = 18.sp
-                    )
-                }
-                */
             }
         }
     }
