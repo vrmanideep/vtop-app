@@ -29,6 +29,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -63,6 +64,7 @@ import com.vtop.ui.screens.sub.FacultyScreen
 import com.vtop.ui.theme.*
 import com.vtop.utils.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -71,6 +73,7 @@ import java.util.concurrent.TimeUnit
 class MainActivity : ComponentActivity() {
 
     private val isDataLoaded = mutableStateOf(false)
+    private val updateTriggerFlow = MutableStateFlow(false)
 
     override fun onResume() {
         super.onResume()
@@ -80,6 +83,15 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         AppBridge.isAppInForeground = false
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        // Detect FCM Click while app is in background/foreground
+        if (intent.getBooleanExtra("SHOW_UPDATE", false) || intent.action == "SHOW_UPDATE") {
+            updateTriggerFlow.value = true
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -105,6 +117,11 @@ class MainActivity : ComponentActivity() {
         // Silent OTA Check in the background
         lifecycleScope.launch(Dispatchers.IO) {
             OtaManager.checkForOtaUpdates(this@MainActivity)
+        }
+
+        // Detect FCM Click on fresh app launch
+        if (intent?.getBooleanExtra("SHOW_UPDATE", false) == true || intent?.action == "SHOW_UPDATE") {
+            updateTriggerFlow.value = true
         }
 
         // --- DYNAMIC BACKGROUND SYNC SCHEDULING ---
@@ -169,16 +186,24 @@ class MainActivity : ComponentActivity() {
 
             var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
             var isDownloadingUpdate by remember { mutableStateOf(false) }
+            val triggerUpdate by updateTriggerFlow.collectAsState()
 
-            val triggerInitialSync = remember { intent.getBooleanExtra("TRIGGER_INITIAL_SYNC", false) }
-
-            LaunchedEffect(triggerInitialSync) {
-                if (triggerInitialSync && !GlobalSyncer.isSyncing.value) {
-                    intent.putExtra("TRIGGER_INITIAL_SYNC", false)
-                    GlobalSyncer.performSync(this@MainActivity, "PROFILE", false)
+            // Triggered by FCM intent
+            LaunchedEffect(triggerUpdate) {
+                if (triggerUpdate) {
+                    try {
+                        val info = UpdateManager.checkForUpdates()
+                        if (info.isUpdateAvailable) {
+                            updateInfo = info
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                    updateTriggerFlow.value = false // Reset trigger
                 }
             }
 
+            // Normal Startup Check
             LaunchedEffect(Unit) {
                 try {
                     val info = UpdateManager.checkForUpdates()
@@ -187,6 +212,15 @@ class MainActivity : ComponentActivity() {
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
+                }
+            }
+
+            val triggerInitialSync = remember { intent.getBooleanExtra("TRIGGER_INITIAL_SYNC", false) }
+
+            LaunchedEffect(triggerInitialSync) {
+                if (triggerInitialSync && !GlobalSyncer.isSyncing.value) {
+                    intent.putExtra("TRIGGER_INITIAL_SYNC", false)
+                    GlobalSyncer.performSync(this@MainActivity, "PROFILE", false)
                 }
             }
 
@@ -240,7 +274,6 @@ class MainActivity : ComponentActivity() {
 
                                             withContext(Dispatchers.Main) {
                                                 if (success && destinationFile.exists()) {
-                                                    // --- TRIGGER THE DOWNLOAD NOTIFICATION HERE ---
                                                     NotificationHelper.showDownloadNotification(
                                                         context = this@MainActivity,
                                                         file = destinationFile,
@@ -339,7 +372,12 @@ class MainActivity : ComponentActivity() {
                         text = {
                             Column(modifier = Modifier.fillMaxWidth().heightIn(max = 350.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Text(text = "Version ${updateInfo?.latestVersion} is ready to download. Do you want to install it now?", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
-                                if (!updateInfo?.releaseNotes.isNullOrBlank()) { HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)); Text(text = "Release Notes:", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp); Markdown(content = updateInfo!!.releaseNotes.replace("\\n", "\n"), modifier = Modifier.fillMaxWidth())}
+                                if (!updateInfo?.releaseNotes.isNullOrBlank()) {
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                                    Text(text = "Release Notes:", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+                                    // Replaces \n literals coming from Firebase with true line breaks!
+                                    Markdown(content = updateInfo!!.releaseNotes.replace("\\n", "\n"), modifier = Modifier.fillMaxWidth())
+                                }
                             }
                         },
                         confirmButton = { Button(onClick = { isDownloadingUpdate = true; UpdateManager.downloadAndInstallUpdate(context = this@MainActivity, downloadUrl = updateInfo!!.downloadUrl, version = updateInfo!!.latestVersion); updateInfo = null }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) { Text(if (isDownloadingUpdate) "Downloading..." else "Update Now", fontWeight = FontWeight.Bold) } },

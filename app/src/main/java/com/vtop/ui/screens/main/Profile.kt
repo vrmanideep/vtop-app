@@ -508,7 +508,7 @@ fun Profile(
                             expanded = syncDropdownExpanded,
                             onDismissRequest = { syncDropdownExpanded = false },
                             modifier = Modifier
-                                .background(MaterialTheme.colorScheme.surfaceVariant) // Helps it pop out from the black surface
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
                                 .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
                         ) {
                             syncOptions.forEach { (hours, label) ->
@@ -941,6 +941,7 @@ fun Profile(
                             letterSpacing = 0.5.sp
                         )
                         Markdown(
+                            // FIX: Translates literal '\n' string to an actual newline break
                             content = updateInfo!!.releaseNotes.replace("\\n", "\n"),
                             modifier = Modifier.fillMaxWidth()
                         )
