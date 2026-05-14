@@ -96,6 +96,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.google.firebase.FirebaseApp.initializeApp(this)
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
 

@@ -97,6 +97,7 @@ import com.vtop.models.ExamScheduleModel
 import com.vtop.models.TimetableModel
 import com.vtop.ui.core.CourseReminder
 import com.vtop.ui.core.ReminderManager
+import com.vtop.utils.AnalyticsManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -268,6 +269,9 @@ fun Timetable(
     examsData: List<ExamScheduleModel> = emptyList(),
     holidays: Map<String, String> = emptyMap()
 ) {
+    LaunchedEffect(Unit) {
+        AnalyticsManager.logScreenView("Timetable_Screen")
+    }
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = 30)

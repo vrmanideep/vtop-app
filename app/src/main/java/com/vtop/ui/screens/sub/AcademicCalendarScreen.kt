@@ -43,6 +43,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
 import androidx.compose.ui.text.style.TextAlign
+import com.vtop.utils.AnalyticsManager
 import kotlin.math.abs
 
 data class AcademicEvent(
@@ -68,6 +69,9 @@ data class SemesterCalendar(
 @SuppressLint("SimpleDateFormat")
 @Composable
 fun AcademicCalendarScreen(onBack: () -> Unit) {
+    LaunchedEffect(Unit) {
+        AnalyticsManager.logScreenView("Academic_Calendar_Screen")
+    }
     val context = LocalContext.current
 
     val todayDate = remember {

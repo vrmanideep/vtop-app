@@ -81,6 +81,7 @@ import com.composables.icons.lucide.*
 import com.vtop.utils.NotificationHelper
 import android.os.VibrationEffect
 import android.os.Vibrator
+import com.vtop.utils.AnalyticsManager
 
 // --------------------------------------------------------
 // UNIVERSAL ACCENT COLORS (Preserved across themes)
@@ -253,6 +254,9 @@ private fun savePdfToDownloads(context: Context, sourceFile: File, fileName: Str
 @SuppressLint("NewApi")
 @Composable
 fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler) {
+    LaunchedEffect(Unit) {
+        AnalyticsManager.logScreenView("Outings_Screen")
+    }
     val context = LocalContext.current
     val pagerState = rememberPagerState(pageCount = { 2 })
     val coroutineScope = rememberCoroutineScope()

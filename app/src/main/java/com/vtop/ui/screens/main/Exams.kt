@@ -25,6 +25,7 @@ import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.*
 import com.composables.icons.lucide.*
+import com.vtop.utils.AnalyticsManager
 
 // Extracts a safe parsable time, falling back to reporting time or a default to prevent ParseExceptions
 private fun getSafeStartTime(exam: ExamScheduleModel): String {
@@ -39,6 +40,9 @@ private fun getSafeStartTime(exam: ExamScheduleModel): String {
 @SuppressLint("NewApi")
 @Composable
 fun Exams(exams: List<ExamScheduleModel>) {
+    LaunchedEffect(Unit) {
+        AnalyticsManager.logScreenView("Exams_Screen")
+    }
     var selectedExam by remember { mutableStateOf<ExamScheduleModel?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 

@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     id("com.google.gms.google-services")
+    id("com.google.firebase.crashlytics")
 }
 
 android {
@@ -24,7 +25,7 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = 2 // Incremented for the new update
-        versionName = "1.1.4"
+        versionName = "1.1.5"
 
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
@@ -79,6 +80,8 @@ dependencies {
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-config")
     implementation("com.google.firebase:firebase-messaging-ktx")
+    implementation("com.google.firebase:firebase-analytics")
+    implementation("com.google.firebase:firebase-crashlytics")
 
     // Play Services
     implementation("com.google.android.gms:play-services-auth:21.0.0")
@@ -91,6 +94,8 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended:1.6.0")
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.navigation:navigation-compose:2.7.7")
+    implementation("androidx.browser:browser:1.8.0")
+
 
     // Networking & Logic
     implementation("com.squareup.okhttp3:okhttp:4.11.0")

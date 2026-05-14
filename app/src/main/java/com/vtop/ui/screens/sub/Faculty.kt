@@ -49,6 +49,7 @@ import coil.compose.AsyncImage
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.vtop.models.FacultyModel
+import com.vtop.utils.AnalyticsManager
 import kotlin.math.roundToInt
 
 // Helper to extract "SAS" from "School of Advanced Sciences (SAS)"
@@ -71,6 +72,9 @@ fun loadFaculty(context: Context): List<FacultyModel> {
 
 @Composable
 fun FacultyScreen(facultyList: List<FacultyModel>) {
+    LaunchedEffect(Unit) {
+        AnalyticsManager.logScreenView("Faculty_Screen")
+    }
     var searchQuery by remember { mutableStateOf("") }
     var expandedId by remember { mutableStateOf<Int?>(null) }
     var expandedFacultyImage by remember { mutableStateOf<FacultyModel?>(null) }
@@ -164,7 +168,6 @@ fun FacultyScreen(facultyList: List<FacultyModel>) {
         }
     }
 
-    // WHATSAPP STYLE DIALOG VIEWER
     if (expandedFacultyImage != null) {
         val faculty = expandedFacultyImage!!
         var offsetY by remember { mutableFloatStateOf(0f) }

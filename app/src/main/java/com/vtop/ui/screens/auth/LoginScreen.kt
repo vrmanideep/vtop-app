@@ -53,9 +53,13 @@ import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.tasks.Task
+import com.vtop.utils.AnalyticsManager
 
 @Composable
 fun LoginScreen(savedReg: String?, savedPass: String?, callback: AuthActionCallback) {
+    LaunchedEffect(Unit) {
+        AnalyticsManager.logScreenView("Login_Screen_View")
+    }
     val context = LocalContext.current
     val currentState = LoginBridge.currentState.value
     val errorMsg = LoginBridge.loginError.value

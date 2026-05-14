@@ -65,6 +65,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -102,6 +103,7 @@ import com.vtop.ui.screens.sub.AcademicCalendarScreen
 import com.vtop.ui.theme.AppThemeMode
 import com.vtop.utils.UpdateInfo
 import com.vtop.utils.UpdateManager
+import com.vtop.utils.AnalyticsManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -155,6 +157,9 @@ fun Profile(
     onSyncClick: (Boolean) -> Unit,
     onNavigateToFaculty: () -> Unit
 ) {
+    LaunchedEffect(Unit) {
+        AnalyticsManager.logScreenView("Profile_Screen")
+    }
     var isViewingAcademicCalendar by remember { mutableStateOf(false) }
 
     if (isViewingAcademicCalendar) {
@@ -736,6 +741,7 @@ fun Profile(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable {
+                        AnalyticsManager.logEvent("Checked_For_Updates")
                         if (isCheckingUpdate || isDownloadingUpdate) return@clickable
 
                         isCheckingUpdate = true

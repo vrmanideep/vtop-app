@@ -38,11 +38,15 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.ceil
 import androidx.compose.foundation.border
+import com.vtop.utils.AnalyticsManager
 
 @SuppressLint("NewApi")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BunkSimulatorTab(timetable: TimetableModel, attendanceData: List<AttendanceModel>, onBack: () -> Unit) {
+    LaunchedEffect(Unit) {
+        AnalyticsManager.logScreenView("Bunk_Simulator_Screen")
+    }
     val context = LocalContext.current
 
     // Explicitly targeting the new JSON file

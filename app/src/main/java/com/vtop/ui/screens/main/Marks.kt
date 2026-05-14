@@ -51,6 +51,7 @@ import java.util.Locale
 import java.util.zip.GZIPOutputStream
 import kotlin.math.roundToInt
 import androidx.browser.customtabs.CustomTabsIntent
+import com.vtop.utils.AnalyticsManager
 
 private val MarksPrimaryAccent = Color(0xFF0090FF)
 private val MarksColorSuccess = Color(0xFF4ADE80)
@@ -170,6 +171,9 @@ fun Marks(
     historyData: List<GradeHistoryItem>,
     onHistoryLoad: () -> Unit
 ) {
+    LaunchedEffect(Unit) {
+        AnalyticsManager.logScreenView("Marks_Screen")
+    }
     val context = LocalContext.current
     val sharedPrefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
     val mergeMarks = sharedPrefs.getBoolean("MERGE_MARKS", true)

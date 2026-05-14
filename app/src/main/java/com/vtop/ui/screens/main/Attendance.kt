@@ -35,6 +35,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vtop.models.AttendanceModel
+import com.vtop.utils.AnalyticsManager
 import java.util.Locale
 
 // --- STRICT PREMIUM COLORS (Bypasses Material You Tint) ---
@@ -179,6 +180,9 @@ private fun BunkPredictorChip(bunkState: BunkState) {
 @SuppressLint("NewApi")
 @Composable
 fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> Unit = {}) {
+    LaunchedEffect(Unit) {
+        AnalyticsManager.logScreenView("Attendance_Screen")
+    }
     var selectedCourse by remember { mutableStateOf<AttendanceModel?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
