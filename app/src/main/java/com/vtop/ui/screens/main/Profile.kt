@@ -79,6 +79,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -86,6 +87,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.composables.icons.lucide.Github
 import com.composables.icons.lucide.LogOut
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.UserRound
@@ -111,7 +113,8 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
-
+import com.composables.icons.lucide.Link2Off
+import com.composables.icons.lucide.Link
 private fun formatReminderDate(dateStr: String): String {
     return try {
         val inFormat = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
@@ -168,6 +171,7 @@ fun Profile(
     }
 
     val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
     val coroutineScope = rememberCoroutineScope()
     val sharedPrefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
 
@@ -231,6 +235,7 @@ fun Profile(
     var showThemeDialog by remember { mutableStateOf(false) }
     var showCredDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
+    var showAboutSheet by remember { mutableStateOf(false) }
 
     var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var isCheckingUpdate by remember { mutableStateOf(false) }
@@ -412,19 +417,47 @@ fun Profile(
                             Toast.makeText(context, "Google Account Unlinked", Toast.LENGTH_SHORT).show()
                         }
                     }) {
-                        Icon(Lucide.LogOut, contentDescription = "Logout Google", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                        Icon(
+                            imageVector = Lucide.Link2Off,
+                            contentDescription = "Unlink Google",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
             } else {
-                SettingRow(
-                    label = "Linked Gmail for OTP",
-                    value = "Link @vitapstudent.ac.in email",
-                    actionText = "Link",
-                    onClick = {
-                        val client = com.vtop.utils.AuthHelper.getGoogleSignInClient(context, context.getString(context.resources.getIdentifier("default_web_client_id", "string", context.packageName)))
-                        googleSignInLauncher.launch(client.signInIntent)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            val client = com.vtop.utils.AuthHelper.getGoogleSignInClient(context, context.getString(context.resources.getIdentifier("default_web_client_id", "string", context.packageName)))
+                            googleSignInLauncher.launch(client.signInIntent)
+                        }
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Linked Gmail for OTP", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(2.dp))
+                        Text("Link @vitapstudent.ac.in email", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text("Link", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.width(6.dp))
+                        Icon(
+                            imageVector = Lucide.Link,
+                            contentDescription = "Link Google",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
             }
         }
 
@@ -733,77 +766,141 @@ fun Profile(
                 }
             }
         }
-
-        // --- SYSTEM (UPDATES) ---
+        // --- SYSTEM (ABOUT & UPDATES) ---
         SectionHeader("SYSTEM")
         CardGroup {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable {
-                        AnalyticsManager.logEvent("Checked_For_Updates")
-                        if (isCheckingUpdate || isDownloadingUpdate) return@clickable
-
-                        isCheckingUpdate = true
-                        coroutineScope.launch {
-                            val info = UpdateManager.checkForUpdates()
-                            if (info.isUpdateAvailable) {
-                                updateInfo = info
-                            } else {
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "You are on the latest version!", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                            isCheckingUpdate = false
-                        }
-                    }
+                    .clickable { showAboutSheet = true } // Now opens the About sheet
                     .padding(16.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    Text("App Version", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text("About & Updates", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(2.dp))
-                    Text("v${BuildConfig.VERSION_NAME} · Up to date", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                    Text("v${BuildConfig.VERSION_NAME} · View Source", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                 }
-
-                val actionText = when {
-                    isDownloadingUpdate -> "Downloading..."
-                    isCheckingUpdate -> "Checking..."
-                    else -> "Check →"
-                }
-
-                Text(actionText, color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Icon(Icons.AutoMirrored.Filled.ArrowForwardIos, contentDescription = "Open", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(12.dp))
             }
         }
 
-        // ---LOGOUT BUTTON ---
+        // --- LOGOUT BUTTON ---
         Spacer(Modifier.height(16.dp))
-        Card(
+        Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .clickable { showLogoutDialog = true },
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                .align(Alignment.CenterHorizontally)
+                .clip(RoundedCornerShape(50))
+                .clickable { showLogoutDialog = true }
+                .background(Color.Transparent)
+                .padding(horizontal = 24.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 16.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Logout", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Log Out", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ExitToApp,
+                contentDescription = "Logout",
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Log Out",
+                color = MaterialTheme.colorScheme.error,
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp
+            )
         }
 
         Spacer(Modifier.height(bottomPadding))
     }
-
     // --- DIALOGS & BOTTOM SHEETS ---
+        // --- ABOUT APP SHEET ---
+    if (showAboutSheet) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+        ModalBottomSheet(
+            onDismissRequest = { showAboutSheet = false },
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // App Logo Placeholder
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("⚡", fontSize = 32.sp) // You can replace this with your actual app logo/icon later
+                }
+
+                Spacer(Modifier.height(16.dp))
+                Text("VTOP App", fontSize = 22.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+                Text("Version ${BuildConfig.VERSION_NAME}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                Spacer(Modifier.height(32.dp))
+
+                // Update Button
+                Button(
+                    onClick = {
+                        AnalyticsManager.logEvent("Checked_For_Updates")
+                        if (!isCheckingUpdate && !isDownloadingUpdate) {
+                            isCheckingUpdate = true
+                            coroutineScope.launch {
+                                val info = UpdateManager.checkForUpdates()
+                                if (info.isUpdateAvailable) {
+                                    updateInfo = info
+                                } else {
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(context, "You are on the latest version!", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                                isCheckingUpdate = false
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    val actionText = when {
+                        isDownloadingUpdate -> "Downloading Update..."
+                        isCheckingUpdate -> "Checking for Updates..."
+                        else -> "Check for Updates"
+                    }
+                    Text(actionText, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                // GitHub Button
+                Button(
+                    onClick = { uriHandler.openUri("https://github.com/vrmanideep/vtop-app") },
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurface
+                    ),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Icon(Lucide.Github, contentDescription = "GitHub", modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("View on GitHub", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
+
+                Spacer(Modifier.height(32.dp))
+                Text("Developed with ❤️ by Mani", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Medium)
+            }
+        }
+    }
     if (showCalendarSheet) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         var selectedCalendarId by remember { mutableLongStateOf(availableCalendars.firstOrNull()?.id ?: -1L) }
