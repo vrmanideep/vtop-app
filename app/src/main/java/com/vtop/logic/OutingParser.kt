@@ -59,35 +59,36 @@ object OutingParser {
             for (i in 1 until rows.size) {
                 val cells = rows[i].select("td")
 
-                if (cells.size >= 11) {
+                // Weekend table has 14 columns (Indices 0 through 13)
+                if (cells.size >= 14) {
                     val place = cells[4].text().trim()
                     val purpose = cells[5].text().trim()
                     val timeStr = cells[6].text().trim()
-                    val dateStr = cells[7].text().trim().split(" ").firstOrNull() ?: ""
-                    val status = cells[9].text().trim()
 
+                    // Correct Indices based on VTOP HTML
+                    val dateStr = cells[9].text().trim().split(" ").firstOrNull() ?: ""
+                    var leaveId = cells[10].text().trim()
+                    var status = cells[12].text().trim()
+
+                    // Clean up VTOP's long status string for the UI
+                    if (status.contains("Accepted", ignoreCase = true)) {
+                        status = "Approved"
+                    }
+
+                    // Check column 13 for the download button
                     var canDownload = false
-                    var leaveId = ""
-                    val rowHtml = rows[i].outerHtml()
-
-                    // Try regex first (e.g., W23674651358)
-                    val idMatch = Regex("[A-Z]\\d{8,15}").find(rowHtml)
-                    if (idMatch != null) {
-                        leaveId = idMatch.value
-                    }
-
-                    // THE FIX: Weekend uses 'data-leave-url', not 'data-url'
-                    val downloadLink = cells[10].selectFirst("a[data-leave-url]")
-                    if (downloadLink != null && downloadLink.attr("data-leave-url").isNotEmpty()) {
+                    val downloadCellHtml = cells[13].html()
+                    if (downloadCellHtml.contains("downloadOutingForm", ignoreCase = true) ||
+                        downloadCellHtml.contains("Download", ignoreCase = true)) {
                         canDownload = true
-
-                        // If Regex failed, fallback to extracting ID from the download URL
-                        if (leaveId.isEmpty()) {
-                            leaveId = downloadLink.attr("data-leave-url").split("/").last()
-                        }
                     }
 
-                    if (leaveId.isEmpty()) leaveId = "WKND_${System.currentTimeMillis()}_$i"
+                    // Fallback if Booking ID column was empty for some reason
+                    if (leaveId.isEmpty()) {
+                        val rowHtml = rows[i].outerHtml()
+                        val idMatch = Regex("[A-Z]\\d{8,15}").find(rowHtml)
+                        leaveId = idMatch?.value ?: "WKND_${System.currentTimeMillis()}_$i"
+                    }
 
                     val fromTime = timeStr.substringBefore("-").trim()
                     val toTime = timeStr.substringAfter("-").trim()
@@ -100,7 +101,7 @@ object OutingParser {
                             purpose = purpose,
                             fromDate = dateStr,
                             fromTime = fromTime,
-                            toDate = dateStr,
+                            toDate = dateStr, // Weekend outings are single-day
                             toTime = toTime,
                             status = status,
                             canDownload = canDownload
