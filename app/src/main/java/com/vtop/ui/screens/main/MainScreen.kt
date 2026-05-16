@@ -219,9 +219,12 @@ fun MainScreen(
 
                     when (pageName) {
                         "HOME" -> {
+                            /*
                             if (AppBridge.isSemesterCompleted.value) {
-                                SemesterCompletedView()
-                            } else if (timetable.scheduleMap.isNotEmpty() || examsData.isNotEmpty()) {
+                                //SemesterCompletedView()
+                            }
+                            */if (timetable.scheduleMap.isNotEmpty() || examsData.isNotEmpty()) {
+
                                 val holidaysMap = remember {
                                     val map = mutableMapOf<String, String>()
                                     try {
@@ -259,14 +262,16 @@ fun MainScreen(
                         }
                         "ATTENDANCE" -> {
                             if (AppBridge.isSemesterCompleted.value) {
-                                SemesterCompletedView()
+                                //SemesterCompletedView()
+                                Attendance(attendanceData = attendanceData, onLaunchSimulator = { activeOverlay = "SIMULATOR" })
                             } else {
                                 Attendance(attendanceData = attendanceData, onLaunchSimulator = { activeOverlay = "SIMULATOR" })
                             }
                         }
                         "EXAMS" -> {
                             if (AppBridge.isSemesterCompleted.value) {
-                                SemesterCompletedView()
+                              //  SemesterCompletedView()
+                                Exams(exams = examsData)
                             } else {
                                 Exams(exams = examsData)
                             }
@@ -543,10 +548,10 @@ fun GlobalTopBar(currentScreen: String, onProfileClick: () -> Unit) {
         else -> currentScreen
     }
 
-    val subtitleText = when (syncStatus) {
-        "LOGGING_IN" -> "Logging in..."
-        "SYNCING" -> "Syncing data..."
-        else -> "Last synced: $timeAgoText"
+    val subtitleText = if (syncStatus == "IDLE") {
+        "Last synced: $timeAgoText"
+    } else {
+        syncStatus // Displays exactly what the Syncer is currently doing
     }
 
     val alpha by animateFloatAsState(targetValue = if (syncStatus != "IDLE") 0.5f else 1f, animationSpec = infiniteRepeatable(animation = tween(800), repeatMode = RepeatMode.Reverse), label = "syncAlpha")

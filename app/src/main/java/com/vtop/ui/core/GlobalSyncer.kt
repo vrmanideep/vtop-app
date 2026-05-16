@@ -47,6 +47,8 @@ object GlobalSyncer {
         return null
     }
 
+    // ... inside GlobalSyncer.kt ...
+
     suspend fun performSync(context: Context, priorityTab: String? = null, forceNewSession: Boolean = false) {
         if (isSyncing.value) {
             Log.w(TAG, "performSync ignored: already syncing")
@@ -57,7 +59,8 @@ object GlobalSyncer {
             try {
                 withContext(Dispatchers.Main) {
                     isSyncing.value = true
-                    AppBridge.syncStatus.value = "LOGGING_IN"
+                    // UPDATED: Standardized casing
+                    AppBridge.syncStatus.value = "Logging in..."
                 }
 
                 val creds = Vault.getCredentials(context)
@@ -90,13 +93,20 @@ object GlobalSyncer {
                                     val savedEmail = Vault.getGoogleEmail(context)
 
                                     if (savedEmail.isNotBlank()) {
+                                        // UPDATED: Show Gmail Interception Status
+                                        withContext(Dispatchers.Main) { AppBridge.syncStatus.value = "Fetching OTP from Gmail..." }
                                         val extractedOtp = GmailOtpExtractor.getLatestVtopOtp(context, savedEmail)
                                         if (extractedOtp != null) {
                                             Log.d(TAG, "Silently intercepted OTP: $extractedOtp")
+                                            // UPDATED: Show Verification Phase
+                                            withContext(Dispatchers.Main) { AppBridge.syncStatus.value = "Verifying OTP..." }
                                             resolver.submit(extractedOtp)
                                             return@launch
                                         }
                                     }
+
+                                    // UPDATED: Fallback manual OTP wait state
+                                    withContext(Dispatchers.Main) { AppBridge.syncStatus.value = "Awaiting manual OTP..." }
 
                                     if (AppBridge.isAppInForeground) {
                                         withContext(Dispatchers.Main) { AppBridge.currentOtpResolver.value = resolver }
@@ -171,27 +181,29 @@ object GlobalSyncer {
                     Log.d(TAG, "[SYNC STEP 3] Valid Registration Number already locked in Vault: $authorizedId")
                 }
 
-                // =========================================================
-                // THE FIX: FORCING THE JAVA CLIENT TO USE THE SCRAPED ID
-                // =========================================================
                 Log.d(TAG, "[SYNC STEP 6.5] Injecting Authorized ID into Client: $authorizedId")
                 client.setAuthorizedId(authorizedId)
 
                 val semInfo = Vault.getSelectedSemester(context)
                 val semId = semInfo[0] ?: ""
 
-                withContext(Dispatchers.Main) { AppBridge.syncStatus.value = "SYNCING" }
+                // --- UPDATED: Helper function for UI updates ---
+                suspend fun updateStatus(msg: String) {
+                    withContext(Dispatchers.Main) { AppBridge.syncStatus.value = msg }
+                }
 
                 val priority = priorityTab?.uppercase()
                 Log.d(TAG, "[SYNC STEP 7] Executing Priority Fetch for: $priority using ID: $authorizedId")
 
+                // --- UPDATED: Live UI updates during Priority Fetch ---
                 when (priority) {
-                    "HOME" -> syncTimetable(context, client, semId)
-                    "ATTENDANCE" -> syncAttendance(context, client, semId, authorizedId)
-                    "EXAMS" -> syncExams(context, client, semId)
-                    "MARKS" -> syncMarks(context, client, semId)
-                    "OUTINGS" -> syncOutings(context, client, authorizedId)
+                    "HOME" -> { updateStatus("Syncing Timetable..."); syncTimetable(context, client, semId) }
+                    "ATTENDANCE" -> { updateStatus("Syncing Attendance..."); syncAttendance(context, client, semId, authorizedId) }
+                    "EXAMS" -> { updateStatus("Syncing Exams..."); syncExams(context, client, semId) }
+                    "MARKS" -> { updateStatus("Syncing Marks & Grades..."); syncMarks(context, client, semId) }
+                    "OUTINGS" -> { updateStatus("Syncing Outings..."); syncOutings(context, client, authorizedId) }
                     "PROFILE" -> {
+                        updateStatus("Syncing Profile...")
                         Log.d(TAG, "[SYNC STEP 7.1] Fetching Profile...")
                         val profileHtml = client.fetchProfileRawHtml(null)
                         val profileData = ProfileParser.parse(profileHtml)
@@ -202,17 +214,21 @@ object GlobalSyncer {
 
                 Log.d(TAG, "[SYNC STEP 8] Priority fetch complete. Fetching remaining data in background...")
 
-                if (priority != "HOME") syncTimetable(context, client, semId)
-                if (priority != "ATTENDANCE") syncAttendance(context, client, semId, authorizedId)
-                if (priority != "EXAMS") syncExams(context, client, semId)
-                if (priority != "MARKS") syncMarks(context, client, semId)
-                if (priority != "OUTINGS") syncOutings(context, client, authorizedId)
+                // --- UPDATED: Live UI updates during Background Fetches ---
+                if (priority != "HOME") { updateStatus("Syncing Timetable..."); syncTimetable(context, client, semId) }
+                if (priority != "ATTENDANCE") { updateStatus("Syncing Attendance..."); syncAttendance(context, client, semId, authorizedId) }
+                if (priority != "EXAMS") { updateStatus("Syncing Exams..."); syncExams(context, client, semId) }
+                if (priority != "MARKS") { updateStatus("Syncing Marks & Grades..."); syncMarks(context, client, semId) }
+                if (priority != "OUTINGS") { updateStatus("Syncing Outings..."); syncOutings(context, client, authorizedId) }
                 if (priority != "PROFILE") {
+                    updateStatus("Syncing Profile...")
                     val profileHtml = client.fetchProfileRawHtml(null)
                     val profileData = ProfileParser.parse(profileHtml)
                     Vault.saveProfile(context, profileData)
                     withContext(Dispatchers.Main) { AppBridge.profileState.value = profileData }
                 }
+
+                updateStatus("Finishing up...")
 
                 Log.d(TAG, "[SYNC STEP 9] All data fetched. Updating widgets & saving timestamps.")
                 Vault.saveLastSyncTime(context)
@@ -225,7 +241,7 @@ object GlobalSyncer {
                 withContext(Dispatchers.Main) { Toast.makeText(context, "Sync Error: ${e.message}", Toast.LENGTH_LONG).show() }
             } finally {
                 withContext(Dispatchers.Main) {
-                    AppBridge.syncStatus.value = "IDLE"
+                    AppBridge.syncStatus.value = "IDLE" // This triggers the UI to flip back to "Last synced: Just now"
                     isSyncing.value = false
                 }
             }
