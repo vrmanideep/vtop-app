@@ -22,7 +22,8 @@ data class BunkProjectorResult(
     val projectedAttended: Int,
     val projectedTotal: Int,
     val projectedPct: Float,
-    val isDanger: Boolean
+    val isDanger: Boolean,
+    val noData: Boolean = false // NEW: Flag to tell the UI there was no base data
 )
 
 object BunkSimulator {
@@ -39,11 +40,6 @@ object BunkSimulator {
 
         val maxBunkDate = validDates.maxOrNull() ?: return emptyList()
         val currentYear = LocalDate.now().year
-
-        val semEndDt = LocalDate.of(currentYear, 5, 19)
-        if (maxBunkDate.isAfter(semEndDt)) {
-            throw IllegalArgumentException("HALT: The semester officially ends on 19-05. Cannot simulate beyond this date.")
-        }
 
         val cleanBlocked = mutableSetOf<String>()
         blockedDates.keys.forEach { dateStr ->
@@ -72,7 +68,6 @@ object BunkSimulator {
 
             val cleanAttCode = cCode.replace(Regex("[^A-Z0-9]"), "").uppercase(Locale.ENGLISH)
 
-            // Baseline check to see if the Attendance card is a Lab
             val attIsLab = cType.contains("LAB", true) || cType.contains("LO", true) || cType.contains("ELA", true) || cType.contains("PRACTICAL", true)
 
             val currentAttended = att.attendedClasses?.filter { it.isDigit() }?.toIntOrNull() ?: 0
@@ -82,7 +77,29 @@ object BunkSimulator {
             var lastUpdDt = LocalDate.now()
             var lastUpdatedStr = "Today (Assumed)"
 
-            if (!att.history.isNullOrEmpty()) {
+            // THE FIX: Do not throw an exception. Flag it as No Data and skip calculation.
+            if (att.history.isNullOrEmpty()) {
+                results.add(
+                    BunkProjectorResult(
+                        courseCode = cCode,
+                        courseType = cType,
+                        currentAttended = currentAttended,
+                        currentTotal = currentTotal,
+                        currentPct = currentPct,
+                        lastUpdatedStr = "No History Available",
+                        gapClassesAdded = 0,
+                        gapBreakdown = emptyList(),
+                        missedClassesAdded = 0,
+                        missedBreakdown = emptyList(),
+                        projectedAttended = currentAttended,
+                        projectedTotal = currentTotal,
+                        projectedPct = currentPct,
+                        isDanger = false,
+                        noData = true // Flags the UI
+                    )
+                )
+                continue // Move to the next subject immediately
+            } else {
                 val lastEntryDateStr = att.history.firstOrNull()?.date
                 if (lastEntryDateStr != null) {
                     lastUpdatedStr = lastEntryDateStr
@@ -109,9 +126,7 @@ object BunkSimulator {
             val gapBreakdown = mutableListOf<String>()
             val missedBreakdown = mutableListOf<String>()
 
-            // ==========================================
-            // PHASE A: RETROACTIVE BUNKING (PAST DATES)
-            // ==========================================
+            // PHASE A: RETROACTIVE BUNKING
             for (date in validDates) {
                 if (!date.isAfter(lastUpdDt)) {
                     val dateStrFull = date.format(DateTimeFormatter.ofPattern("dd-MM"))
@@ -127,8 +142,6 @@ object BunkSimulator {
 
                     for (cls in dayClasses) {
                         val cleanTtCode = cls.courseCode.replace(Regex("[^A-Z0-9]"), "").uppercase(Locale.ENGLISH)
-
-                        // THE FIX: Enforce Type Match (Lab == Lab, Theory == Theory)
                         val ttIsLab = cls.courseType.contains("LAB", true) || cls.courseType.contains("LO", true) || cls.courseType.contains("ELA", true) || cls.courseType.equals("L", true) || cls.courseType.equals("P", true) || cls.courseType.contains("PRACTICAL", true)
 
                         if ((cleanTtCode.contains(cleanAttCode) || cleanAttCode.contains(cleanTtCode)) && (attIsLab == ttIsLab)) {
@@ -139,12 +152,8 @@ object BunkSimulator {
                     }
 
                     if (targetFound) {
-                        val wasPresent = if (!att.history.isNullOrEmpty()) {
-                            val historyMatch = att.history.firstOrNull { it.date?.contains(dateStrFull) == true }
-                            historyMatch != null && (historyMatch.status?.contains("Present", true) == true || historyMatch.status?.contains("Attended", true) == true)
-                        } else {
-                            true // Blind trust fallback
-                        }
+                        val historyMatch = att.history.firstOrNull { it.date?.contains(dateStrFull) == true }
+                        val wasPresent = historyMatch != null && (historyMatch.status?.contains("Present", true) == true || historyMatch.status?.contains("Attended", true) == true)
 
                         if (wasPresent) {
                             simAttended -= penalty
@@ -155,9 +164,7 @@ object BunkSimulator {
                 }
             }
 
-            // ==========================================
             // PHASE B: GAP & FUTURE BUNKING
-            // ==========================================
             var currDt = lastUpdDt.plusDays(1)
             val endDt = if (maxBunkDate.isAfter(LocalDate.now())) maxBunkDate else LocalDate.now()
 
@@ -180,8 +187,6 @@ object BunkSimulator {
 
                 for (cls in dayClasses) {
                     val cleanTtCode = cls.courseCode.replace(Regex("[^A-Z0-9]"), "").uppercase(Locale.ENGLISH)
-
-                    // THE FIX: Enforce Type Match (Lab == Lab, Theory == Theory)
                     val ttIsLab = cls.courseType.contains("LAB", true) || cls.courseType.contains("LO", true) || cls.courseType.contains("ELA", true) || cls.courseType.equals("L", true) || cls.courseType.equals("P", true) || cls.courseType.contains("PRACTICAL", true)
 
                     if ((cleanTtCode.contains(cleanAttCode) || cleanAttCode.contains(cleanTtCode)) && (attIsLab == ttIsLab)) {

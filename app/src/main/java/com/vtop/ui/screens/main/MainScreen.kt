@@ -426,10 +426,17 @@ fun MainScreen(
         ) {
             Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                 when (activeOverlay) {
-                    "SIMULATOR" -> BunkSimulatorTab(
-                        timetable = timetable,
-                        attendanceData = attendanceData,
-                        onBack = { activeOverlay = null })
+                    "SIMULATOR" -> {
+                        val semInfo = Vault.getSelectedSemester(context)
+                        val currentSemName = semInfo[1] ?: semInfo[0] ?: "Unknown Semester"
+
+                        BunkSimulatorTab(
+                            timetable = timetable,
+                            attendanceData = attendanceData,
+                            selectedSemester = currentSemName,
+                            onBack = { activeOverlay = null }
+                        )
+                    }
                     "ANALYTICS" -> VtopAnalyticsTab(attendanceData = attendanceData, historySummary = AppBridge.historySummaryState.value, historyData = AppBridge.historyItemsState.value)
                     "PORTAL" -> {
                         val creds = Vault.getCredentials(context)

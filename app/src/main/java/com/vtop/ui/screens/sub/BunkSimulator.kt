@@ -2,18 +2,26 @@ package com.vtop.ui.screens.sub
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -25,93 +33,293 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import com.vtop.logic.BunkProjectorResult
-import com.vtop.logic.BunkSimulator
 import com.vtop.models.AttendanceModel
 import com.vtop.models.TimetableModel
+import com.vtop.utils.AnalyticsManager
 import org.json.JSONObject
-import java.text.SimpleDateFormat
+import java.time.Instant
 import java.time.LocalDate
-import java.time.YearMonth
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import kotlin.math.ceil
-import androidx.compose.foundation.border
-import com.vtop.utils.AnalyticsManager
+import kotlin.math.floor
+import kotlin.math.roundToInt
+
+data class CalendarContext(
+    val semesterName: String = "Unknown Semester",
+    val startDate: LocalDate = LocalDate.MIN,
+    val endDate: LocalDate = LocalDate.MAX,
+    val trueEndDate: LocalDate = LocalDate.MAX,
+    val weekOffs: List<String> = emptyList(),
+    val holidays: Map<LocalDate, String> = emptyMap()
+)
+
+fun isInstructionalDay(date: LocalDate, ctx: CalendarContext): Boolean {
+    if (date.isBefore(ctx.startDate) || date.isAfter(ctx.endDate)) return false
+    if (ctx.weekOffs.any { it.equals(date.dayOfWeek.name, ignoreCase = true) }) return false
+    if (ctx.holidays.containsKey(date)) return false
+    return true
+}
 
 @SuppressLint("NewApi")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BunkSimulatorTab(timetable: TimetableModel, attendanceData: List<AttendanceModel>, onBack: () -> Unit) {
-    LaunchedEffect(Unit) {
-        AnalyticsManager.logScreenView("Bunk_Simulator_Screen")
-    }
+fun BunkSimulatorTab(
+    timetable: TimetableModel,
+    attendanceData: List<AttendanceModel>,
+    selectedSemester: String,
+    onBack: () -> Unit
+) {
+    LaunchedEffect(Unit) { AnalyticsManager.logScreenView("Bunk_Simulator_Screen") }
+
     val context = LocalContext.current
 
-    // Explicitly targeting the new JSON file
-    val holidayMap = remember { buildComprehensiveHolidayMap(context) }
+    val calCtx = remember(selectedSemester) { getCalendarContext(context, selectedSemester) }
+
+    val legacyHolidayMap = remember(calCtx) {
+        val map = mutableMapOf<String, String>()
+        calCtx.holidays.forEach { (k, v) -> map[k.toString()] = v }
+
+        if (calCtx.startDate != LocalDate.MIN && calCtx.endDate != LocalDate.MAX) {
+            var curr = calCtx.startDate
+            while (!curr.isAfter(calCtx.endDate)) {
+                if (calCtx.weekOffs.any { it.equals(curr.dayOfWeek.name, ignoreCase = true) }) {
+                    map[curr.toString()] = "Week Off"
+                }
+                curr = curr.plusDays(1)
+            }
+
+            var postSem = calCtx.endDate.plusDays(1)
+            val limit = postSem.plusDays(100)
+            while (postSem.isBefore(limit)) {
+                if (!map.containsKey(postSem.toString())) {
+                    map[postSem.toString()] = "Semester Ended"
+                }
+                postSem = postSem.plusDays(1)
+            }
+
+            val today = LocalDate.now()
+            if (today.isBefore(calCtx.startDate)) {
+                var preSem = today
+                while (preSem.isBefore(calCtx.startDate)) {
+                    if (!map.containsKey(preSem.toString())) {
+                        map[preSem.toString()] = "Not Started"
+                    }
+                    preSem = preSem.plusDays(1)
+                }
+            }
+        }
+        map
+    }
 
     var selectedDates by remember { mutableStateOf<Set<LocalDate>>(emptySet()) }
-    var showCalendar by remember { mutableStateOf(false) }
+    var showDatePicker by remember { mutableStateOf(false) }
     var simulationResults by remember { mutableStateOf<List<BunkProjectorResult>>(emptyList()) }
     var hasRun by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    val datePickerState = rememberDatePickerState()
+
+    fun getClassesForDate(date: LocalDate): Int {
+        val dayName = date.dayOfWeek.name
+        return timetable.scheduleMap?.entries?.firstOrNull { it.key.equals(dayName, ignoreCase = true) }?.value?.size ?: 0
+    }
 
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 20.dp)) {
-        // Redesigned Header
+
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 16.dp, bottom = 12.dp)) {
             IconButton(
                 onClick = onBack,
-                modifier = Modifier
-                    .size(40.dp)
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), CircleShape)
+                modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), CircleShape)
             ) {
-                Text("<", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Black, fontSize = 20.sp)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface)
             }
             Spacer(modifier = Modifier.width(16.dp))
-            Text("Bunk Simulator", color = MaterialTheme.colorScheme.onBackground, fontSize = 28.sp, fontWeight = FontWeight.Black)
+            Text("Bunk Simulator", color = MaterialTheme.colorScheme.onBackground, fontSize = 28.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
         }
 
-        Text("Select specific dates to simulate how skipping classes will impact your final attendance percentage.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp, lineHeight = 20.sp)
-        Spacer(modifier = Modifier.height(28.dp))
+        val today = LocalDate.now()
 
-        // Redesigned Selector Button
-        OutlinedCard(
-            onClick = { showCalendar = true },
-            modifier = Modifier.fillMaxWidth().height(64.dp),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.5.dp, if (selectedDates.isEmpty()) MaterialTheme.colorScheme.outlineVariant else MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
-        ) {
-            Row(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(
-                    text = if (selectedDates.isEmpty()) "Tap to select dates..." else "${selectedDates.size} Dates Selected",
-                    color = if (selectedDates.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text("+", color = MaterialTheme.colorScheme.primary, fontSize = 24.sp, fontWeight = FontWeight.Black)
+        if (calCtx.startDate != LocalDate.MIN) {
+            if (today.isBefore(calCtx.startDate)) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text("${calCtx.semesterName} has not started yet. Classes begin on ${calCtx.startDate.format(DateTimeFormatter.ofPattern("dd MMM yyyy"))}.", color = MaterialTheme.colorScheme.onSecondaryContainer, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            } else if (today.isAfter(calCtx.endDate) && !today.isAfter(calCtx.trueEndDate)) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text("${calCtx.semesterName} instructional classes have ended. Exams are ongoing.", color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            } else if (today.isAfter(calCtx.trueEndDate)) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text("${calCtx.semesterName} is completely finished.", color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        val quickDates = listOf(
+            "Today" to today,
+            "Tomorrow" to today.plusDays(1),
+            today.plusDays(2).dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() } to today.plusDays(2)
+        )
 
-        // Redesigned Action Button
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            quickDates.forEach { (label, date) ->
+                val isSelected = selectedDates.contains(date)
+
+                val tagModifier = when {
+                    date.isBefore(calCtx.startDate) -> "Not Started"
+                    date.isAfter(calCtx.endDate) -> "Ended"
+                    calCtx.holidays.containsKey(date) -> calCtx.holidays[date]?.let { if (it.contains("Exam")) "Exam" else "Holiday" } ?: "Holiday"
+                    calCtx.weekOffs.any { it.equals(date.dayOfWeek.name, ignoreCase = true) } -> "Week Off"
+                    else -> null
+                }
+
+                val classCount = if (tagModifier == null) getClassesForDate(date) else 0
+                val chipLabel = when {
+                    tagModifier != null -> "$label · $tagModifier"
+                    classCount > 0 -> "$label · $classCount classes"
+                    else -> "$label · No classes"
+                }
+
+                val isYellowTint = tagModifier != null
+
+                FilterChip(
+                    selected = isSelected,
+                    onClick = {
+                        selectedDates = if (isSelected) selectedDates - date else selectedDates + date
+                        hasRun = false
+                    },
+                    label = { Text(chipLabel, fontWeight = FontWeight.Bold) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = if (isYellowTint) Color(0xFFB8860B).copy(alpha = 0.8f) else MaterialTheme.colorScheme.primary,
+                        selectedLabelColor = if (isYellowTint) Color.White else MaterialTheme.colorScheme.onPrimary,
+                        containerColor = if (isYellowTint) Color(0xFFB8860B).copy(alpha = 0.1f) else MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                    shape = RoundedCornerShape(50)
+                )
+            }
+
+            FilterChip(
+                selected = false,
+                onClick = { showDatePicker = true },
+                label = { Text("Pick Date", fontWeight = FontWeight.Bold) },
+                leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = "Calendar", modifier = Modifier.size(16.dp)) },
+                shape = RoundedCornerShape(50)
+            )
+        }
+
+        if (selectedDates.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                selectedDates.sorted().forEach { date ->
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
+                            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                            .clickable {
+                                selectedDates = selectedDates - date
+                                hasRun = false
+                            }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = date.format(DateTimeFormatter.ofPattern("dd MMM", Locale.ENGLISH)),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(Icons.Default.Close, contentDescription = "Remove", modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+        }
+
+        val validDates = selectedDates.filter { isInstructionalDay(it, calCtx) }
+        val totalClassesToSkip = validDates.sumOf { getClassesForDate(it) }
+
         Button(
             onClick = {
+                // FAILSAFE: Ensure the OTA JSON actually loaded the semester
+                if (calCtx.startDate == LocalDate.MIN) {
+                    errorMessage = "Calendar dates for $selectedSemester are currently unavailable. Ensure your calendar data is synced via settings."
+                    return@Button
+                }
+
+                // FAILSAFE: Block premature calculations
+                if (today.isBefore(calCtx.startDate)) {
+                    errorMessage = "${calCtx.semesterName} has not commenced yet. You cannot simulate attendance until classes begin."
+                    return@Button
+                }
+
+                if (attendanceData.isEmpty()) {
+                    errorMessage = "There is no attendance data available for the currently selected semester ($selectedSemester)."
+                    return@Button
+                }
+
+                if (timetable.scheduleMap.isNullOrEmpty()) {
+                    errorMessage = "There is no timetable available for the currently selected semester."
+                    return@Button
+                }
+
                 if (selectedDates.isNotEmpty()) {
-                    try {
-                        simulationResults = BunkSimulator.simulateMultiDayBunk(selectedDates.sorted(), timetable, attendanceData, holidayMap)
+                    if (validDates.isEmpty()) {
+                        simulationResults = emptyList()
                         hasRun = true
-                    } catch (e: Exception) { Toast.makeText(context, e.message, Toast.LENGTH_LONG).show() }
-                } else Toast.makeText(context, "Please select at least one date", Toast.LENGTH_SHORT).show()
+                    } else {
+                        try {
+                            simulationResults = com.vtop.logic.BunkSimulator.simulateMultiDayBunk(validDates.sorted(), timetable, attendanceData, legacyHolidayMap)
+                            hasRun = true
+                        } catch (e: Exception) {
+                            errorMessage = e.message ?: "Unknown backend error occurred"
+                        }
+                    }
+                } else {
+                    errorMessage = "Please select at least one date."
+                }
             },
             modifier = Modifier.fillMaxWidth().height(56.dp),
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-            shape = RoundedCornerShape(16.dp),
-            elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp, pressedElevation = 2.dp)
+            shape = RoundedCornerShape(16.dp)
         ) {
-            Text("RUN SIMULATION", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Black, letterSpacing = 1.5.sp, fontSize = 15.sp)
+            Text(
+                text = if (selectedDates.isEmpty()) "Calculate attendance" else "Simulate skipping $totalClassesToSkip classes",
+                color = MaterialTheme.colorScheme.onPrimary,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp
+            )
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -126,174 +334,221 @@ fun BunkSimulatorTab(timetable: TimetableModel, attendanceData: List<AttendanceM
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF10B981).copy(alpha = 0.1f)),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF10B981).copy(alpha = 0.05f)),
                         shape = RoundedCornerShape(16.dp),
                         border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.3f))
                     ) {
-                        Text("No attendance changes detected for the selected dates. You are safe!", color = Color(0xFF10B981), textAlign = TextAlign.Center, fontWeight = FontWeight.Bold, modifier = Modifier.padding(24.dp).fillMaxWidth())
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.fillMaxWidth().padding(32.dp)
+                        ) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(36.dp), tint = Color(0xFF10B981))
+                            Spacer(Modifier.height(16.dp))
+                            Text("No instructional days selected", color = Color(0xFF10B981), fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, fontSize = 16.sp)
+                            Spacer(Modifier.height(4.dp))
+                            Text("Holidays, exams, and out-of-semester days do not affect attendance calculations.", color = Color(0xFF10B981).copy(alpha = 0.7f), fontSize = 12.sp, textAlign = TextAlign.Center)
+                        }
                     }
                 }
             } else {
-                items(simulationResults) { result -> BunkResultCard(result) }
-            }
-        }
-    }
-
-    if (showCalendar) {
-        Dialog(onDismissRequest = { showCalendar = false }) {
-            Card(
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(12.dp),
-                modifier = Modifier.fillMaxWidth().padding(8.dp)
-            ) {
-                Column(modifier = Modifier.padding(20.dp)) {
-                    MinimalMultiCalendar(selectedDates, holidayMap.keys) { date ->
-                        selectedDates = if (selectedDates.contains(date)) selectedDates - date else selectedDates + date
-                    }
-                    Spacer(modifier = Modifier.height(24.dp))
-                    Button(
-                        onClick = { showCalendar = false },
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onSurface),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Text("CONFIRM SELECTION", color = MaterialTheme.colorScheme.surface, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
-                    }
+                items(simulationResults) { result ->
+                    val relatedAttendance = attendanceData.find { it.courseCode == result.courseCode && it.courseType == result.courseType }
+                    val lastUpdatedDate = relatedAttendance?.history?.firstOrNull()?.date ?: "Unknown Date"
+                    BunkResultCard(result, lastUpdatedDate)
                 }
             }
         }
     }
-}
 
-@SuppressLint("NewApi")
-@Composable
-fun MinimalMultiCalendar(selectedDates: Set<LocalDate>, blockedDateKeys: Set<String>, onDateToggled: (LocalDate) -> Unit) {
-    var currentMonth by remember { mutableStateOf(YearMonth.now()) }
-    val today = LocalDate.now()
+    if (showDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { millis ->
+                        val selected = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
+                        selectedDates = selectedDates + selected
+                        hasRun = false
+                    }
+                    showDatePicker = false
+                }) { Text("Add Date", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            },
+            colors = DatePickerDefaults.colors(containerColor = MaterialTheme.colorScheme.surface)
+        ) { DatePicker(state = datePickerState) }
+    }
 
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { currentMonth = currentMonth.minusMonths(1) }) { Text("<", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 22.sp, fontWeight = FontWeight.Black) }
-            Text("${currentMonth.month.name.lowercase().replaceFirstChar { it.uppercase() }} ${currentMonth.year}", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Black, fontSize = 18.sp)
-            IconButton(onClick = { currentMonth = currentMonth.plusMonths(1) }) { Text(">", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 22.sp, fontWeight = FontWeight.Black) }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            listOf("S", "M", "T", "W", "T", "F", "S").forEach {
-                Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), fontSize = 13.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        val firstDayOfMonth = currentMonth.atDay(1)
-        val startOffset = firstDayOfMonth.dayOfWeek.value % 7
-        val daysInMonth = currentMonth.lengthOfMonth()
-        val rows = ceil((startOffset + daysInMonth) / 7.0).toInt()
-
-        for (row in 0 until rows) {
-            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                for (col in 0 until 7) {
-                    val dayIndex = row * 7 + col - startOffset + 1
-                    if (dayIndex in 1..daysInMonth) {
-                        val date = currentMonth.atDay(dayIndex)
-                        val isHoliday = blockedDateKeys.contains(date.toString()) || blockedDateKeys.contains(date.format(DateTimeFormatter.ofPattern("dd-MM-yyyy")))
-                        val isPast = date.isBefore(today)
-                        val isSelected = selectedDates.contains(date)
-                        val isToday = date == today
-                        val isDisabled = isPast || isHoliday
-
-                        val bgColor by animateColorAsState(
-                            targetValue = when {
-                                isSelected -> MaterialTheme.colorScheme.primary
-                                isHoliday -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
-                                else -> Color.Transparent
-                            }, animationSpec = tween(200)
-                        )
-
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .aspectRatio(1f)
-                                .padding(4.dp)
-                                .clip(CircleShape)
-                                .background(bgColor)
-                                .border(
-                                    width = if (isToday && !isSelected) 2.dp else 0.dp,
-                                    color = if (isToday && !isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else Color.Transparent,
-                                    shape = CircleShape
-                                )
-                                .clickable(enabled = !isDisabled) { onDateToggled(date) },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = dayIndex.toString(),
-                                color = when {
-                                    isSelected -> MaterialTheme.colorScheme.onPrimary
-                                    isHoliday -> MaterialTheme.colorScheme.error
-                                    isPast -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                                    isToday -> MaterialTheme.colorScheme.primary
-                                    else -> MaterialTheme.colorScheme.onSurface
-                                },
-                                fontSize = 15.sp,
-                                fontWeight = if (isSelected || isToday) FontWeight.Black else FontWeight.SemiBold
-                            )
-                        }
-                    } else Spacer(modifier = Modifier.weight(1f))
+    if (errorMessage != null) {
+        AlertDialog(
+            onDismissRequest = { errorMessage = null },
+            title = {
+                Text("Notice", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+            },
+            text = {
+                Text(errorMessage!!, fontSize = 14.sp, lineHeight = 20.sp)
+            },
+            confirmButton = {
+                TextButton(onClick = { errorMessage = null }) {
+                    Text("Close", fontWeight = FontWeight.Bold)
                 }
-            }
-        }
+            },
+            containerColor = MaterialTheme.colorScheme.surface,
+            tonalElevation = 10.dp
+        )
     }
 }
 
 @Composable
-fun BunkResultCard(res: BunkProjectorResult) {
+fun BunkResultCard(res: BunkProjectorResult, lastUpdatedDate: String) {
     var expanded by remember { mutableStateOf(false) }
-    val pctColor = if (res.isDanger) MaterialTheme.colorScheme.error else Color(0xFF10B981)
+
+    val statusColor = when {
+        res.noData -> Color(0xFFF59E0B)
+        res.isDanger -> MaterialTheme.colorScheme.error
+        else -> Color(0xFF10B981)
+    }
+
+    val cardBgTint = statusColor.copy(alpha = 0.18f)
+    val cardBorder = statusColor.copy(alpha = 0.4f)
+
+    val currentInt = res.currentPct.roundToInt()
+    val projectedInt = floor(res.projectedPct).toInt()
+
+    val animatedProjected by animateFloatAsState(
+        targetValue = projectedInt.toFloat(),
+        animationSpec = tween(800, easing = FastOutSlowInEasing),
+        label = "projectedAnimation"
+    )
 
     Card(
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(containerColor = cardBgTint),
+        border = BorderStroke(1.dp, cardBorder),
         modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Box(
+                        modifier = Modifier
+                            .background(statusColor.copy(alpha = 0.2f), RoundedCornerShape(20.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = when {
+                                res.noData -> "⚠ Missing Data"
+                                res.isDanger -> "⚠ Danger"
+                                else -> "✓ Safe"
+                            },
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = statusColor
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(res.courseCode, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Black, fontSize = 16.sp)
                     Text(res.courseType, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("${res.currentPct.toInt()}%", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 26.dp)) {
+                    Text("$currentInt%", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     Text(" ➔ ", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
-                    Text("${res.projectedPct.toInt()}%", color = pctColor, fontSize = 18.sp, fontWeight = FontWeight.Black)
+                    Text("${if (res.noData) currentInt else animatedProjected.roundToInt()}%", color = statusColor, fontSize = 18.sp, fontWeight = FontWeight.Black)
                 }
             }
 
-            AnimatedVisibility(visible = expanded) {
-                Column(modifier = Modifier.padding(top = 16.dp)) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-                    Text("CALCULATION TRACE", color = MaterialTheme.colorScheme.primary, fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.5.sp)
-                    Spacer(modifier = Modifier.height(8.dp))
+            if (res.noData) {
+                Text(
+                    text = "Cannot simulate future attendance. VTOP has not recorded any class history for this subject yet.",
+                    color = statusColor,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            } else {
+                val currentFraction = (res.currentPct / 100f).coerceIn(0f, 1f).toFloat()
+                val projectedFraction = (res.projectedPct / 100f).coerceIn(0f, 1f).toFloat()
 
-                    Text("Base: ${res.currentTotal} + (Gap) ${res.gapClassesAdded} + (Missed) ${res.missedClassesAdded} = ${res.projectedTotal} Total", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                    val retroDeducted = res.missedClassesAdded - (res.projectedTotal - res.currentTotal - res.gapClassesAdded)
-                    Text("Attended: ${res.currentAttended} + (Gap) ${res.gapClassesAdded} - (Retro) ${maxOf(0, retroDeducted)} = ${res.projectedAttended}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+                val pulseAlpha by infiniteTransition.animateFloat(
+                    initialValue = 0.4f, targetValue = 1.0f,
+                    animationSpec = infiniteRepeatable(animation = tween(800, easing = LinearOutSlowInEasing), repeatMode = RepeatMode.Reverse),
+                    label = "alpha"
+                )
 
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Final: (${res.projectedAttended} / ${res.projectedTotal}) * 100 = ${res.projectedPct}%", color = pctColor, fontSize = 12.sp, fontWeight = FontWeight.Black)
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.TopStart) {
+                    Text("75% min", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f), modifier = Modifier.fillMaxWidth(0.75f).wrapContentWidth(Alignment.End))
+                }
+                Spacer(modifier = Modifier.height(4.dp))
 
-                    if (res.missedBreakdown.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text("CLASSES MISSED:", color = MaterialTheme.colorScheme.error, fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        res.missedBreakdown.forEach { log ->
-                            Text("• $log", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, bottom = 2.dp))
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(12.dp).clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                ) {
+                    if (currentFraction > projectedFraction) {
+                        Box(modifier = Modifier.fillMaxWidth(currentFraction).fillMaxHeight().clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.error.copy(alpha = pulseAlpha)))
+                    }
+                    Box(modifier = Modifier.fillMaxWidth(projectedFraction).fillMaxHeight().clip(RoundedCornerShape(50)).background(statusColor))
+                    Box(modifier = Modifier.fillMaxWidth(0.75f).fillMaxHeight(), contentAlignment = Alignment.CenterEnd) {
+                        Box(modifier = Modifier.width(2.dp).fillMaxHeight().background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)))
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("${animatedProjected.roundToInt()}%", fontSize = 10.sp, color = statusColor, fontWeight = FontWeight.Bold)
+                    Text("$currentInt%", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+
+                AnimatedVisibility(visible = expanded) {
+                    Column(modifier = Modifier.padding(top = 16.dp)) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Text("CALCULATION", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                            Text("Initial", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                            Text("${res.currentAttended} / ${res.currentTotal}", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        }
+
+                        if (res.gapClassesAdded > 0) {
+                            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                                Text("Gap", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                                Text("+${res.gapClassesAdded} attended", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
+                            }
+                        }
+
+                        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                            Text("Skipped", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                            Text("${res.missedClassesAdded} missed", color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
+                        }
+
+                        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                            Text("Final", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("${res.projectedAttended} / ${res.projectedTotal} = ${projectedInt}%", color = statusColor, fontSize = 14.sp, fontWeight = FontWeight.Black)
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                            Text("Last updated on VTOP", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                            Text(lastUpdatedDate, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        }
+
+                        if (res.missedBreakdown.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text("AFFECTED", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            res.missedBreakdown.forEach { log ->
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                                    Box(modifier = Modifier.size(5.dp).background(MaterialTheme.colorScheme.error.copy(alpha=0.6f), CircleShape))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(log, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                                }
+                            }
                         }
                     }
                 }
@@ -303,51 +558,51 @@ fun BunkResultCard(res: BunkProjectorResult) {
 }
 
 @SuppressLint("NewApi")
-fun buildComprehensiveHolidayMap(context: Context): Map<String, String> {
-    val map = mutableMapOf<String, String>()
+fun getCalendarContext(context: Context, selectedSemester: String): CalendarContext {
+    val allSems = mutableListOf<CalendarContext>()
     try {
-        // Updated to use academic_calendar.json explicitly
-        val jsonString = context.assets.open("academic_calendar.json").bufferedReader().use { it.readText() }
-        val root = JSONObject(jsonString)
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
-        val now = System.currentTimeMillis()
-
-        var activeSem: JSONObject? = null
-        val weekOffs = mutableListOf<String>()
-        var lastDay = ""
-
-        val keys = root.keys()
-        while (keys.hasNext()) {
-            val key = keys.next()
-            val semBlock = root.optJSONObject(key)
-            if (semBlock != null) {
-                val startStr = semBlock.optString("start_date", "")
-                val endStr = semBlock.optString("last_instructional_day", "")
-                if (startStr.isNotEmpty() && endStr.isNotEmpty()) {
-                    val startMs = sdf.parse(startStr)?.time ?: 0L
-                    val endMs = sdf.parse(endStr)?.time ?: 0L
-                    val extendedEndMs = endMs + (30L * 24 * 60 * 60 * 1000)
-                    if (now in startMs..extendedEndMs) {
-                        activeSem = semBlock
-                        break
-                    }
-                }
-            }
+        val jsonString = try {
+            com.vtop.utils.OtaManager.getCalendarJson(context)
+        } catch (e: Exception) {
+            context.assets.open("academic_calendar.json").bufferedReader().use { it.readText() }
         }
 
-        if (activeSem != null) {
-            lastDay = activeSem.optString("last_instructional_day", "")
+        val root = JSONObject(jsonString)
+        val keys = root.keys()
 
-            val hols = activeSem.optJSONObject("holidays")
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val semBlock = root.optJSONObject(key) ?: continue
+
+            val startStr = semBlock.optString("start_date", "").replace(" ", "")
+            val endStr = semBlock.optString("last_instructional_day", "").replace(" ", "")
+
+            var startDate = if (startStr.isNotEmpty()) LocalDate.parse(startStr) else LocalDate.MIN
+            var endDate = if (endStr.isNotEmpty()) LocalDate.parse(endStr) else LocalDate.MAX
+
+            if (startDate.isAfter(endDate) && startDate.year > endDate.year - 2) {
+                startDate = startDate.minusYears(1)
+            }
+
+            val weekOffs = mutableListOf<String>()
+            val wOffArr = semBlock.optJSONArray("week_off")
+            if (wOffArr != null) {
+                for (i in 0 until wOffArr.length()) {
+                    weekOffs.add(wOffArr.getString(i))
+                }
+            }
+
+            val holidaysMap = mutableMapOf<LocalDate, String>()
+            val hols = semBlock.optJSONObject("holidays")
             if (hols != null) {
                 val holKeys = hols.keys()
                 while (holKeys.hasNext()) {
                     val hk = holKeys.next()
-                    map[hk] = hols.getString(hk)
+                    try { holidaysMap[LocalDate.parse(hk.replace(" ", ""))] = hols.getString(hk) } catch (_: Exception) {}
                 }
             }
 
-            val exams = activeSem.optJSONObject("exams")
+            val exams = semBlock.optJSONObject("exams")
             if (exams != null) {
                 val examKeys = exams.keys()
                 while (examKeys.hasNext()) {
@@ -355,32 +610,45 @@ fun buildComprehensiveHolidayMap(context: Context): Map<String, String> {
                     val dates = exams.optJSONArray(examType)
                     if (dates != null) {
                         for (i in 0 until dates.length()) {
-                            map[dates.getString(i)] = "$examType Exam"
+                            try { holidaysMap[LocalDate.parse(dates.getString(i).replace(" ", ""))] = "$examType Exam" } catch (_: Exception) {}
                         }
                     }
                 }
             }
 
-            val wOffArr = activeSem.optJSONArray("week_off")
-            if (wOffArr != null) {
-                for (i in 0 until wOffArr.length()) {
-                    weekOffs.add(wOffArr.getString(i).uppercase(Locale.getDefault()))
-                }
-            }
-        }
+            val trueEndDate = holidaysMap.keys.maxOrNull()?.let {
+                if (it.isAfter(endDate)) it else endDate
+            } ?: endDate
 
-        if (lastDay.isNotEmpty() && weekOffs.isNotEmpty()) {
-            val endLocalDate = LocalDate.parse(lastDay)
-            var current = LocalDate.now()
-            while (!current.isAfter(endLocalDate)) {
-                val dayName = current.dayOfWeek.name
-                if (weekOffs.contains(dayName)) {
-                    map[current.toString()] = "Week Off"
-                }
-                current = current.plusDays(1)
-            }
+            allSems.add(CalendarContext(key, startDate, endDate, trueEndDate, weekOffs, holidaysMap))
         }
     } catch (_: Exception) {}
 
-    return map
+    if (allSems.isEmpty()) return CalendarContext(semesterName = selectedSemester)
+
+    // 1. EXACT MATCH
+    val exactMatch = allSems.find { it.semesterName.equals(selectedSemester, ignoreCase = true) }
+    if (exactMatch != null) return exactMatch
+
+    // 2. FUZZY MATCH (If VTOP calls it "Summer Semester" but JSON says "Short Summer")
+    val cleanSelected = selectedSemester.lowercase(Locale.ENGLISH).replace(Regex("[^a-z0-9]"), "")
+    val fuzzyMatch = allSems.find {
+        val cleanKey = it.semesterName.lowercase(Locale.ENGLISH).replace(Regex("[^a-z0-9]"), "")
+        cleanKey.contains(cleanSelected) || cleanSelected.contains(cleanKey) ||
+                (cleanSelected.contains("summer") && cleanKey.contains("summer")) ||
+                (cleanSelected.contains("winter") && cleanKey.contains("winter"))
+    }
+    if (fuzzyMatch != null) {
+        return fuzzyMatch.copy(semesterName = selectedSemester)
+    }
+
+    // 3. DATE FALLBACK (If names are totally mismatched, trust the current date)
+    val today = LocalDate.now()
+    val inSession = allSems.filter { !today.isBefore(it.startDate) && !today.isAfter(it.trueEndDate) }
+    if (inSession.isNotEmpty()) return inSession.first().copy(semesterName = selectedSemester)
+
+    val upcomingSems = allSems.filter { today.isBefore(it.startDate) }
+    if (upcomingSems.isNotEmpty()) return upcomingSems.minByOrNull { it.startDate }!!.copy(semesterName = selectedSemester)
+
+    return allSems.maxByOrNull { it.trueEndDate }?.copy(semesterName = selectedSemester) ?: CalendarContext(semesterName = selectedSemester)
 }
