@@ -69,6 +69,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.TimeUnit
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDp
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.sp
 
 class MainActivity : ComponentActivity() {
 
@@ -402,7 +411,229 @@ fun VtopSplashScreen() {
             Spacer(modifier = Modifier.height(24.dp))
             Text(text = "VTOP", color = MaterialTheme.colorScheme.onBackground, fontSize = 24.sp, fontWeight = FontWeight.Black, letterSpacing = 4.sp)
             Spacer(modifier = Modifier.height(32.dp))
-            CircularProgressIndicator(modifier = Modifier.size(32.dp), color = MaterialTheme.colorScheme.primary, strokeWidth = 3.dp)
+            UiverseLoader()
+        }
+    }
+}
+
+@Composable
+fun UiverseLoader() {
+
+    val barWidth = remember {
+        androidx.compose.animation.core.Animatable(16f)
+    }
+
+    val barOffset = remember {
+        androidx.compose.animation.core.Animatable(0f)
+    }
+
+    val textOffset = remember {
+        androidx.compose.animation.core.Animatable(0f)
+    }
+
+    val letterSpacing = remember {
+        androidx.compose.animation.core.Animatable(1f)
+    }
+
+    // =====================================================
+    // MAIN LOOP
+    // =====================================================
+
+    LaunchedEffect(Unit) {
+
+        while (true) {
+
+            // =============================================
+            // PHASE 1
+            // =============================================
+
+            launch {
+
+                barWidth.animateTo(
+                    targetValue = 80f,
+                    animationSpec = tween(1400)
+                )
+            }
+
+            launch {
+
+                textOffset.animateTo(
+                    targetValue = 26f,
+                    animationSpec = tween(1400)
+                )
+            }
+
+            launch {
+
+                letterSpacing.animateTo(
+                    targetValue = 2f,
+                    animationSpec = tween(1400)
+                )
+            }
+
+            kotlinx.coroutines.delay(1400)
+
+            // =============================================
+            // PHASE 2
+            // =============================================
+
+            launch {
+
+                barWidth.animateTo(
+                    targetValue = 16f,
+                    animationSpec = tween(1400)
+                )
+            }
+
+            launch {
+
+                barOffset.animateTo(
+                    targetValue = 64f,
+                    animationSpec = tween(1400)
+                )
+            }
+
+            launch {
+
+                textOffset.animateTo(
+                    targetValue = 32f,
+                    animationSpec = tween(1400)
+                )
+            }
+
+            launch {
+
+                letterSpacing.animateTo(
+                    targetValue = 1f,
+                    animationSpec = tween(1400)
+                )
+            }
+
+            kotlinx.coroutines.delay(1400)
+
+            // =============================================
+            // RESET
+            // =============================================
+
+            launch {
+
+                barWidth.animateTo(
+                    targetValue = 80f,
+                    animationSpec = tween(350)
+                )
+            }
+
+            launch {
+
+                barOffset.animateTo(
+                    targetValue = 0f,
+                    animationSpec = tween(350)
+                )
+            }
+
+            launch {
+
+                textOffset.animateTo(
+                    targetValue = 0f,
+                    animationSpec = tween(350)
+                )
+            }
+
+            launch {
+
+                letterSpacing.animateTo(
+                    targetValue = 2f,
+                    animationSpec = tween(350)
+                )
+            }
+
+            kotlinx.coroutines.delay(350)
+
+            // =============================================
+            // FINAL RESET
+            // =============================================
+
+            launch {
+
+                barWidth.animateTo(
+                    targetValue = 16f,
+                    animationSpec = tween(350)
+                )
+            }
+
+            launch {
+
+                letterSpacing.animateTo(
+                    targetValue = 1f,
+                    animationSpec = tween(350)
+                )
+            }
+
+            kotlinx.coroutines.delay(350)
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .width(80.dp)
+            .height(50.dp)
+    ) {
+
+        // =================================================
+        // TEXT
+        // =================================================
+
+        Text(
+
+            text = "loading",
+
+            color = MaterialTheme.colorScheme.primary,
+
+            fontSize = 12.sp,
+
+            letterSpacing = letterSpacing.value.sp,
+
+            modifier = Modifier.offset(
+                x = textOffset.value.dp
+            )
+        )
+
+        // =================================================
+        // MAIN BAR
+        // =================================================
+
+        Box(
+
+            modifier = Modifier
+
+                .offset(
+                    x = barOffset.value.dp,
+                    y = 30.dp
+                )
+
+                .width(barWidth.value.dp)
+
+                .height(16.dp)
+
+                .clip(RoundedCornerShape(50.dp))
+
+                .background(MaterialTheme.colorScheme.primary)
+        ) {
+
+            Box(
+
+                modifier = Modifier
+
+                    .fillMaxHeight()
+
+                    .fillMaxWidth(0.8f)
+
+                    .clip(RoundedCornerShape(50.dp))
+
+                    .background(
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                    )
+            )
         }
     }
 }
