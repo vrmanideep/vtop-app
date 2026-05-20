@@ -91,10 +91,22 @@ fun calculateBunkBudget(attended: Int, total: Int, target: Float = 0.75f): BunkS
 
 @Composable
 fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
-    // Override raw API percentages with our True Count engine
-    val (attended, total) = getRealAttendanceCounts(item)
-    val percentage = if (total > 0) ((attended.toFloat() / total) * 100).toInt() else 0
-    val progress = if (total > 0) attended.toFloat() / total else 0f
+    // Use values directly from AttendanceModel
+
+    val attended =
+        item.attendedClasses.toIntOrNull() ?: 0
+
+    val total =
+        item.totalClasses.toIntOrNull() ?: 0
+
+    val percentage =
+        item.attendancePercentage
+            .toFloatOrNull()
+            ?.toInt()
+            ?: 0
+
+    val progress =
+        (percentage / 100f).coerceIn(0f, 1f)
 
     val statusColor = when {
         percentage < 75 -> MaterialTheme.colorScheme.error
