@@ -65,6 +65,18 @@ data class SemesterCalendar(
     val isCurrent: Boolean
 )
 
+// Internal data class used solely for the timeline engine calculations
+private data class SemTemp(
+    val key: String,
+    val id: String,
+    val startMs: Long,
+    val trueEndMs: Long,
+    val events: List<AcademicEvent>,
+    val startDateFmt: String,
+    val lastDayFmt: String,
+    val weekOffs: String
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SimpleDateFormat")
 @Composable
@@ -86,9 +98,17 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
     val semesters = remember {
         val list = mutableListOf<SemesterCalendar>()
         try {
-            val jsonString = context.assets.open("academic_calendar.json").bufferedReader().use { it.readText() }
+            val jsonString = try {
+                com.vtop.utils.OtaManager.getCalendarJson(context)
+            } catch (e: Exception) {
+                context.assets.open("academic_calendar.json").bufferedReader().use { it.readText() }
+            }
+
             val root = JSONObject(jsonString)
-            val activeSemName = Vault.getSelectedSemester(context)[1] ?: "Current Semester"
+
+            val registeredSemesters = Vault.getSemesterOptions(context)
+            val registeredIds = registeredSemesters.map { it.id }
+            val now = System.currentTimeMillis()
 
             val formats = listOf("yyyy-MM-dd", "dd-MM-yyyy", "dd-MM", "dd/MM/yyyy")
             fun parseDateSafely(dateStr: String): Date? {
@@ -185,24 +205,51 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
             val sdfDisplay = SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH)
             val sdfParse = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
 
+            val parsedSems = mutableListOf<SemTemp>()
+
             while (semesterKeys.hasNext()) {
                 val semKey = semesterKeys.next()
-                if (semKey == "blocked_dates") continue // Ignore legacy array structure
+                if (semKey == "blocked_dates") continue
 
                 val semObj = root.optJSONObject(semKey)
-
                 if (semObj != null) {
+                    val id = semObj.optString("id", semKey)
                     val semesterEvents = mutableListOf<AcademicEvent>()
                     if (semObj.has("holidays")) semesterEvents.addAll(parseCategory(semObj.getJSONObject("holidays"), "Holiday"))
                     if (semObj.has("exams")) semesterEvents.addAll(parseCategory(semObj.getJSONObject("exams"), "Exam"))
                     if (semObj.has("events")) semesterEvents.addAll(parseCategory(semObj.getJSONObject("events"), "Event"))
 
                     semesterEvents.sortBy { it.sortIndex }
-                    val isCurrent = semKey.equals(activeSemName, ignoreCase = true) || semObj.optString("is_current") == "true"
 
-                    // Extract and format new metadata fields
                     val startDateRaw = semObj.optString("start_date", "")
                     val lastDayRaw = semObj.optString("last_instructional_day", "")
+
+                    val startMs = try { sdfParse.parse(startDateRaw.replace(" ", ""))?.time ?: 0L } catch(e: Exception) { 0L }
+                    var endMs = try { sdfParse.parse(lastDayRaw.replace(" ", ""))?.time ?: Long.MAX_VALUE } catch(e: Exception) { Long.MAX_VALUE }
+
+                    var trueEndMs = endMs
+                    val examsObj = semObj.optJSONObject("exams")
+                    if (examsObj != null && trueEndMs != Long.MAX_VALUE) {
+                        val examKeys = examsObj.keys()
+                        while (examKeys.hasNext()) {
+                            val examType = examKeys.next()
+                            val datesArray = examsObj.optJSONArray(examType)
+                            if (datesArray != null) {
+                                for (i in 0 until datesArray.length()) {
+                                    val dateStr = datesArray.optString(i, "")
+                                    val examMs = try { sdfParse.parse(dateStr.replace(" ", ""))?.time ?: 0L } catch (e: Exception) { 0L }
+                                    if (examMs > trueEndMs && examMs != 0L) {
+                                        trueEndMs = examMs
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // THE OVERLAP FIX: Add exactly 23 hours, 59 mins, 59 secs to the true end date
+                    if (trueEndMs != Long.MAX_VALUE) {
+                        trueEndMs += (23L * 3600 + 59 * 60 + 59) * 1000
+                    }
 
                     val startDateFmt = try { sdfDisplay.format(sdfParse.parse(startDateRaw)!!) } catch(e: Exception) { startDateRaw }
                     val lastDayFmt = try { sdfDisplay.format(sdfParse.parse(lastDayRaw)!!) } catch(e: Exception) { lastDayRaw }
@@ -211,12 +258,72 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                     val weekOffs = if (weekOffArr != null) {
                         (0 until weekOffArr.length()).map { weekOffArr.getString(it) }.joinToString(", ")
                     } else {
-                        "Sunday" // Fallback
+                        "Sunday"
                     }
 
-                    list.add(SemesterCalendar(semKey, startDateFmt, lastDayFmt, weekOffs, semesterEvents, isCurrent))
+                    parsedSems.add(SemTemp(semKey, id, startMs, trueEndMs, semesterEvents, startDateFmt, lastDayFmt, weekOffs))
                 }
             }
+
+            // =========================================================
+            // MULTI-CURRENT SEMESTER ENGINE
+            // =========================================================
+
+            // A semester is CURRENT if:
+            // now ∈ [startMs, trueEndMs]
+            //
+            // Multiple semesters may be current simultaneously.
+            // Example:
+            // - Long Summer
+            // - Short Summer 1
+            //
+            // Both receive CURRENT tag
+            // Both remain fully visible
+            // Neither gets faded
+
+            val activeSemesterKeys = parsedSems
+                .filter { now in it.startMs..it.trueEndMs }
+                .map { it.key }
+                .toSet()
+
+            // Build final semester list
+            parsedSems.forEach { temp ->
+
+                val isCurrent = activeSemesterKeys.contains(temp.key)
+
+                list.add(
+                    SemesterCalendar(
+                        semesterName = temp.key,
+                        startDateFormatted = temp.startDateFmt,
+                        lastInstructionalDayFormatted = temp.lastDayFmt,
+                        weekOffs = temp.weekOffs,
+                        events = temp.events,
+                        isCurrent = isCurrent
+                    )
+                )
+            }
+
+            // =========================================================
+            // SORTING RULES
+            // =========================================================
+            //
+            // 1. Current semesters first
+            // 2. Future semesters next
+            // 3. Past semesters last
+            //
+            // Within groups:
+            // - current/future -> ascending start date
+            // - past -> descending end date
+            //
+            // This keeps:
+            // - active overlaps grouped together
+            // - upcoming semesters intuitive
+            // - old semesters naturally pushed downward
+
+            list.sortWith(
+                compareByDescending<SemesterCalendar> { it.isCurrent }
+            )
+
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -250,11 +357,12 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
             if (filteredEvents.isEmpty() && selectedFilter != "All") null else sem.copy(events = filteredEvents)
         }
     }
+    // Multiple semesters may be current simultaneously.
+    // Therefore, fading is based ONLY on whether a semester
+    // is current or not — not distance from a single index.
 
-    // Find the index of the "Current" semester for dimming calculations
-    val currentSemIndex = remember(filteredSemesters) {
-        val idx = filteredSemesters.indexOfFirst { it.isCurrent }
-        if (idx >= 0) idx else 0
+    val hasCurrentSemester = remember(filteredSemesters) {
+        filteredSemesters.any { it.isCurrent }
     }
 
     Scaffold(
@@ -318,11 +426,30 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                     }
                 } else {
                     itemsIndexed(filteredSemesters) { index, semester ->
-                        // Calculate opacity based on distance from current semester
-                        val distance = abs(index - currentSemIndex)
-                        val baseOpacity = (1f - (distance * 0.25f)).coerceIn(0.35f, 1f)
+                        // =====================================================
+                        // MULTI-CURRENT FADE ENGINE
+                        // =====================================================
+                        //
+                        // RULES:
+                        // - ALL current semesters stay fully visible
+                        // - ALL overlapping active semesters remain equal
+                        // - ONLY inactive semesters get faded
+                        //
+                        // This fixes:
+                        // - Long Summer vs Short Summer overlap issue
+                        // - Incorrect dimming during simultaneous sessions
 
-                        SemesterTimelineCard(semester, todayDate, baseOpacity)
+                        val baseOpacity = when {
+                            semester.isCurrent -> 1f
+                            hasCurrentSemester -> 0.45f
+                            else -> 1f
+                        }
+
+                        SemesterTimelineCard(
+                            semester = semester,
+                            todayDate = todayDate,
+                            baseOpacity = baseOpacity
+                        )
                     }
                 }
             }
