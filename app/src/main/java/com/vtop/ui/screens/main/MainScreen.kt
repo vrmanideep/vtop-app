@@ -59,6 +59,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
+import com.vtop.ui.pages.*
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -145,14 +146,17 @@ fun MainScreen(
         navItems.indexOf("OUTINGS")
     } else 0
 
-    val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { navItems.size })
+    var currentTab by remember {
+
+        mutableStateOf(
+            navItems[initialPage]
+        )
+    }
     val coroutineScope = rememberCoroutineScope()
 
     var activeOverlay by remember {
         mutableStateOf<String?>(if (initialShortcutAction == "com.vtop.SHORTCUT_SIMULATOR") "SIMULATOR" else null)
     }
-
-    val currentTab = navItems.getOrNull(pagerState.currentPage) ?: navItems.last()
 
     val handleSyncAndUpdateWidget = { screen: String, forceNewSession: Boolean ->
         onSyncClick(screen, forceNewSession)
@@ -162,11 +166,19 @@ fun MainScreen(
         Unit
     }
 
-    BackHandler(enabled = activeOverlay != null || pagerState.currentPage != 0) {
+    BackHandler(
+        enabled =
+            activeOverlay != null ||
+                    currentTab != "HOME"
+    ) {
+
         if (activeOverlay != null) {
-            activeOverlay = if (activeOverlay == "ANALYTICS" || activeOverlay == "PORTAL") null else null
+
+            activeOverlay = null
+
         } else {
-            coroutineScope.launch { pagerState.scrollToPage(0) }
+
+            currentTab = "HOME"
         }
     }
 
@@ -176,16 +188,19 @@ fun MainScreen(
     val screenHeightPx = with(density) { config.screenHeightDp.dp.toPx() }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
-    var isRefreshing by remember { mutableStateOf(false) }
+    val isRefreshing by remember {
+
+        derivedStateOf {
+
+            AppBridge.syncStatus.value != "IDLE"
+        }
+    }
 
     val pullRefreshState = rememberPullRefreshState(
         refreshing = isRefreshing,
         onRefresh = {
-            isRefreshing = true
             handleSyncAndUpdateWidget(currentTab, false)
             coroutineScope.launch {
-                delay(1500)
-                isRefreshing = false
             }
         }
     )
@@ -205,172 +220,297 @@ fun MainScreen(
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 GlobalTopBar(
+
                     currentScreen = currentTab,
-                    onProfileClick = { coroutineScope.launch { pagerState.scrollToPage(navItems.indexOf("PROFILE")) } }
+
+                    onProfileClick = {
+
+                        coroutineScope.launch {
+
+                            currentTab = "PROFILE"
+
+                        }
+                    },
+
+                    onExportTimetable = {
+
+                        coroutineScope.launch {
+
+                            try {
+
+                                android.util.Log.d(
+                                    "TT_EXPORT",
+                                    "Download button clicked"
+                                )
+
+                                Toast.makeText(
+                                    context,
+                                    "Starting export...",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+
+                                var client =
+                                    AppBridge.activeClient
+                                android.util.Log.d(
+                                    "TT_EXPORT",
+                                    "Retrieved global client: $client"
+                                )
+
+                                android.util.Log.d(
+                                    "TT_EXPORT",
+                                    "Existing client = $client"
+                                )
+
+                                if (client == null) {
+
+                                    val creds =
+                                        Vault.getCredentials(context)
+
+                                    android.util.Log.d(
+                                        "TT_EXPORT",
+                                        "Creating fallback client"
+                                    )
+
+                                    client =
+                                        com.vtop.network.VtopClient(
+                                            context,
+                                            creds[0] ?: "",
+                                            creds[1] ?: ""
+                                        )
+
+                                    AppBridge.activeClient = client
+                                }
+
+                                android.util.Log.d(
+                                    "TT_EXPORT",
+                                    "Starting export pipeline"
+                                )
+
+                                val result =
+                                    com.vtop.services.TTExport
+                                        .exportCurrentSemesterTimetable(
+                                            context,
+                                            client
+                                        )
+
+                                android.util.Log.d(
+                                    "TT_EXPORT",
+                                    "Export returned"
+                                )
+
+                                result.onSuccess {
+
+                                    android.util.Log.d(
+                                        "TT_EXPORT",
+                                        "Export success"
+                                    )
+
+                                    Toast.makeText(
+                                        context,
+                                        "Timetable exported successfully",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+
+                                result.onFailure {
+
+                                    android.util.Log.e(
+                                        "TT_EXPORT",
+                                        "Export failure",
+                                        it
+                                    )
+
+                                    it.printStackTrace()
+
+                                    Toast.makeText(
+                                        context,
+                                        it.message ?: "Export failed",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+
+                            } catch (e: Exception) {
+
+                                android.util.Log.e(
+                                    "TT_EXPORT",
+                                    "Outer crash",
+                                    e
+                                )
+
+                                e.printStackTrace()
+
+                                Toast.makeText(
+                                    context,
+                                    e.message ?: "Export failed",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    }
                 )
 
-                HorizontalPager(
-                    state = pagerState,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    userScrollEnabled = true,
-                    key = { index -> navItems.getOrNull(index) ?: index }
-                ) { page ->
-                    val pageName = navItems.getOrNull(page) ?: return@HorizontalPager
+                Box(
+                    modifier =
+                        Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                ) {
 
-                    when (pageName) {
+                    when (currentTab) {
+
                         "HOME" -> {
-                            /*
-                            if (AppBridge.isSemesterCompleted.value) {
-                                //SemesterCompletedView()
-                            }
-                            */if (timetable.scheduleMap.isNotEmpty() || examsData.isNotEmpty()) {
 
-                                val holidaysMap = remember {
-                                    val map = mutableMapOf<String, String>()
-                                    try {
-                                        // CHANGED: Now pulls from OtaManager
-                                        val jsonString = com.vtop.utils.OtaManager.getCalendarJson(context)
-                                        val jsonObject = org.json.JSONObject(jsonString)
-                                        val semesters = jsonObject.keys()
-
-                                        while (semesters.hasNext()) {
-                                            val semObj = jsonObject.getJSONObject(semesters.next())
-                                            if (semObj.has("holidays")) {
-                                                val hObj = semObj.getJSONObject("holidays")
-                                                val hKeys = hObj.keys()
-                                                while (hKeys.hasNext()) {
-                                                    val dateStr = hKeys.next()
-                                                    map[dateStr] = hObj.getString(dateStr)
-                                                }
-                                            }
-                                        }
-                                    } catch (e: Exception) { e.printStackTrace() }
-                                    map
-                                }
-
-                                Timetable(
-                                    timetable = timetable,
-                                    attendanceData = attendanceData,
-                                    examsData = examsData,
-                                    holidays = holidaysMap
-                                )
-                            } else {
-                                Box(Modifier.fillMaxSize(), Alignment.Center) {
-                                    Text("No Timetable Data Found", color = MaterialTheme.colorScheme.onBackground)
-                                }
-                            }
-                        }
-                        "ATTENDANCE" -> {
-                            if (AppBridge.isSemesterCompleted.value) {
-                                //SemesterCompletedView()
-                                Attendance(attendanceData = attendanceData, onLaunchSimulator = { activeOverlay = "SIMULATOR" })
-                            } else {
-                                Attendance(attendanceData = attendanceData, onLaunchSimulator = { activeOverlay = "SIMULATOR" })
-                            }
-                        }
-                        "EXAMS" -> {
-                            if (AppBridge.isSemesterCompleted.value) {
-                              //  SemesterCompletedView()
-                                Exams(exams = examsData)
-                            } else {
-                                Exams(exams = examsData)
-                            }
-                        }
-                        "MARKS" -> {
-                            // Marks remains visible even if semester is completed so users can see FAT results
-                            Marks(
-                                marksData = AppBridge.marksState.value,
-                                historySummary = AppBridge.historySummaryState.value,
-                                historyData = AppBridge.historyItemsState.value,
-                                onHistoryLoad = { handleSyncAndUpdateWidget("MARKS", false) }
+                            Timetable(
+                                timetable = timetable,
+                                attendanceData = attendanceData,
+                                examsData = examsData
                             )
                         }
-                        "OUTINGS" -> VtopOutingsTab(outingsData = AppBridge.outingsState.value, handler = outingHandler)
+
+                        "ATTENDANCE" -> {
+
+                            Attendance(attendanceData)
+                        }
+
+                        "EXAMS" -> {
+
+                            Exams(examsData)
+                        }
+
+                        "MARKS" -> {
+
+                            Marks(
+                                marksData =
+                                    AppBridge.marksState.value,
+
+                                historySummary =
+                                    AppBridge.historySummaryState.value,
+
+                                historyData =
+                                    AppBridge.historyItemsState.value,
+
+                                onHistoryLoad = {}
+                            )
+                        }
+
+                        "OUTINGS" -> {
+
+                            VtopOutingsTab(
+                                outingsData =
+                                    AppBridge.outingsState.value,
+
+                                handler =
+                                    outingHandler
+                            )
+                        }
+
                         "PROFILE" -> {
-                            var semInfo by remember { mutableStateOf(Vault.getSelectedSemester(context)) }
-                            var creds by remember { mutableStateOf(Vault.getCredentials(context)) }
-                            var actualReminders by remember { mutableStateOf(ReminderManager.loadReminders(context)) }
-                            val semesterOptions = remember { Vault.getSemesterOptions(context) }
-                            val lastSyncTime = remember { Vault.getLastSyncTime(context) }
-
-                            val profileStateValue = AppBridge.profileState.value
-                            val profileMap = remember(profileStateValue) {
-                                profileStateValue?.takeIf { it.isNotEmpty() } ?: Vault.getProfile(context)
-                            }
-
-                            val allSemesters = remember(semesterOptions, semInfo) {
-                                if (semesterOptions.isNotEmpty()) {
-                                    semesterOptions
-                                } else {
-                                    listOf(SemesterOption(id = semInfo[0] ?: "", name = semInfo[1] ?: "Unknown Semester"))
-                                }
-                            }
 
                             Profile(
-                                onBack = { coroutineScope.launch { pagerState.scrollToPage(0) } },
+                                onBack = {
+                                    currentTab = "HOME"
+                                },
+
                                 timetable = timetable,
+
                                 examsData = examsData,
-                                onOpenPortal = { activeOverlay = "PORTAL" },
-                                currentTheme = ThemeManager.themeMode.value,
-                                onThemeChange = { newTheme ->
-                                    ThemeManager.themeMode.value = newTheme
-                                    sharedPrefs.edit { putString("APP_THEME", newTheme.name) }
+
+                                onOpenPortal = {
+                                    activeOverlay = "PORTAL"
                                 },
-                                useDynamicColor = ThemeManager.useDynamicColor.value,
-                                onDynamicColorChange = { dyn ->
-                                    ThemeManager.useDynamicColor.value = dyn
-                                    sharedPrefs.edit { putBoolean("USE_DYNAMIC_COLOR", dyn) }
+
+                                currentTheme =
+                                    ThemeManager.themeMode.value,
+
+                                onThemeChange = {
+                                    ThemeManager.themeMode.value = it
                                 },
-                                customAccent = ThemeManager.customAccent.value,
-                                onAccentChange = { color ->
-                                    ThemeManager.customAccent.value = color
-                                    sharedPrefs.edit { putInt("CUSTOM_ACCENT", color.toArgb()) }
+
+                                useDynamicColor =
+                                    ThemeManager.useDynamicColor.value,
+
+                                onDynamicColorChange = {
+                                    ThemeManager.useDynamicColor.value = it
                                 },
+
+                                customAccent =
+                                    ThemeManager.customAccent.value,
+
+                                onAccentChange = {
+                                    ThemeManager.customAccent.value = it
+                                },
+
                                 currentNavStyle = navStyle,
-                                onNavStyleChange = { newStyle ->
-                                    navStyle = newStyle
-                                    sharedPrefs.edit { putBoolean("NAV_STYLE_SET", true) }
-                                    Vault.saveNavStyle(context, newStyle)
+
+                                onNavStyleChange = {
+                                    navStyle = it
                                 },
+
                                 mergeLabs = mergeLabs,
-                                onMergeLabsChange = { v -> mergeLabs = v; sharedPrefs.edit { putBoolean("MERGE_LABS", v) } },
+
+                                onMergeLabsChange = {
+                                    mergeLabs = it
+                                },
+
                                 mergeMarks = mergeMarks,
-                                onMergeMarksChange = { v -> mergeMarks = v; sharedPrefs.edit { putBoolean("MERGE_MARKS", v) } },
+
+                                onMergeMarksChange = {
+                                    mergeMarks = it
+                                },
+
                                 showOutings = showOutings,
-                                onShowOutingsChange = { v ->
-                                    showOutings = v
-                                    sharedPrefs.edit { putBoolean("SHOW_OUTINGS", v) }
+
+                                onShowOutingsChange = {
+                                    showOutings = it
                                 },
-                                onLogout = { onLogoutClick.run() },
-                                profileData = profileMap,
-                                selectedSemester = semInfo[1] ?: semInfo[0] ?: "Unknown Semester",
-                                availableSemesters = allSemesters,
-                                onSemesterChange = { newSemName ->
-                                    val selectedOption = semesterOptions.find { it.name == newSemName }
-                                    if (selectedOption != null) {
-                                        Vault.saveSelectedSemester(context, selectedOption.id, selectedOption.name)
-                                        semInfo = Vault.getSelectedSemester(context)
-                                        handleSyncAndUpdateWidget("PROFILE", false)
-                                    }
+
+                                onLogout = {
+                                    onLogoutClick.run()
                                 },
-                                currentRegNo = creds[0] ?: "",
-                                currentPass = creds[1] ?: "",
-                                onCredentialsSave = { newReg, newPass ->
-                                    Vault.saveCredentials(context, newReg, newPass)
-                                    creds = Vault.getCredentials(context)
-                                    handleSyncAndUpdateWidget("PROFILE", true) // Force sync on new creds
+                                profileData = emptyMap(),
+
+                                selectedSemester =
+                                    Vault.getSelectedSemester(context)[0]
+                                        ?: "",
+
+                                availableSemesters = emptyList<SemesterOption>(),
+
+                                onSemesterChange = {},
+
+                                currentRegNo =
+                                    Vault.getCredentials(context)[0]
+                                        ?: "",
+
+                                currentPass =
+                                    Vault.getCredentials(context)[1]
+                                        ?: "",
+
+                                onCredentialsSave = { _, _ -> },
+
+                                reminders =
+                                    ReminderManager.loadReminders(context),
+
+                                onDeleteReminder = {},
+
+                                onNavigateToAnalytics = {
+                                    activeOverlay = "ANALYTICS"
                                 },
-                                reminders = actualReminders,
-                                onDeleteReminder = { idToDelete ->
-                                    val updated = actualReminders.filter { it.id != idToDelete }
-                                    ReminderManager.saveReminders(context, updated)
-                                    actualReminders = updated
-                                    handleSyncAndUpdateWidget("NONE", false)
+
+                                lastSyncTime =
+                                    Vault.getLastSyncTimestamp(context)
+                                        .toString(),
+
+                                onSyncClick = {
+
+                                    handleSyncAndUpdateWidget(
+                                        currentTab,
+                                        it
+                                    )
                                 },
-                                onNavigateToAnalytics = { activeOverlay = "ANALYTICS" },
-                                lastSyncTime = lastSyncTime,
-                                onSyncClick = { forceNewSession -> handleSyncAndUpdateWidget("PROFILE", forceNewSession) },
-                                onNavigateToFaculty = { activeOverlay = "FACULTY" }
+
+                                onNavigateToFaculty = {
+                                    activeOverlay = "FACULTY"
+                                }
                             )
                         }
                     }
@@ -387,9 +527,12 @@ fun MainScreen(
 
             if (navStyle == "STATIC" && currentTab != "PROFILE") {
                 Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding()) {
-                    BottomNavigation(currentTab, navItems) { tabName ->
-                        val targetPage = navItems.indexOf(tabName)
-                        if (targetPage != -1) coroutineScope.launch { pagerState.scrollToPage(targetPage) }
+                    BottomNavigation(
+                        currentTab,
+                        navItems
+                    ) { tabName ->
+
+                        currentTab = tabName
                     }
                 }
             }
@@ -410,9 +553,17 @@ fun MainScreen(
                             }
                         }
                 ) {
-                    FloatingDockContainer(currentTab, navItems, offsetX, offsetY, screenWidthPx, screenHeightPx, handleSyncAndUpdateWidget) { tabName ->
-                        val targetPage = navItems.indexOf(tabName)
-                        if (targetPage != -1) coroutineScope.launch { pagerState.scrollToPage(targetPage) }
+                    FloatingDockContainer(
+                        currentTab,
+                        navItems,
+                        offsetX,
+                        offsetY,
+                        screenWidthPx,
+                        screenHeightPx,
+                        handleSyncAndUpdateWidget
+                    ) { tabName ->
+
+                        currentTab = tabName
                     }
                 }
             }
@@ -441,6 +592,7 @@ fun MainScreen(
                     "PORTAL" -> {
                         val creds = Vault.getCredentials(context)
                         val client = remember { com.vtop.network.VtopClient(context, creds[0] ?: "", creds[1] ?: "") }
+                        AppBridge.activeClient = client
                         VtopPortalScreen(vtopClient = client, onClose = { activeOverlay = null })
                     }
                     "FACULTY" -> {
@@ -453,55 +605,118 @@ fun MainScreen(
 
         // Replace the bottom block in MainScreen.kt with this:
 
-        val otpResolver = AppBridge.currentOtpResolver.value
+        val otpResolver =
+            AppBridge.currentOtpResolver.value
+
         if (otpResolver != null) {
-            var showCancelConfirm by remember { mutableStateOf(false) }
 
-            if (showCancelConfirm) {
-                if (showCancelConfirm) {
-                    AlertDialog(
-                        onDismissRequest = { showCancelConfirm = false },
-                        title = { Text("Cancel Sync?", fontWeight = FontWeight.Bold) },
-                        text = { Text("Do you want to cancel the synchronization process?") },
-                        confirmButton = {
-                            TextButton(onClick = {
-                                showCancelConfirm = false
-                                otpResolver.cancel()
-                                AppBridge.currentOtpResolver.value = null
-                                GlobalSyncer.cancelActiveSync() // Immediately aborts the background loop
-
-                                // --- NEW: Close portal and jump to profile ---
-                                if (activeOverlay == "PORTAL") {
-                                    activeOverlay = null
-                                }
-                                coroutineScope.launch {
-                                    val profileIndex = navItems.indexOf("PROFILE")
-                                    if (profileIndex != -1) pagerState.scrollToPage(profileIndex)
-                                }
-                                // ---------------------------------------------
-                            }) {
-                                Text("Yes")
-                            }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { showCancelConfirm = false }) {
-                                Text("No")
-                            }
-                        },
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        titleContentColor = MaterialTheme.colorScheme.onSurface,
-                        textContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+            var showCancelConfirm by remember {
+                mutableStateOf(false)
             }
 
-            Box(modifier = Modifier.fillMaxSize().zIndex(100f)) {
-                OtpForm(
-                    onVerify = { otp ->
-                        otpResolver.submit(otp)
-                        AppBridge.currentOtpResolver.value = null
+            if (showCancelConfirm) {
+
+                AlertDialog(
+
+                    onDismissRequest = {
+                        showCancelConfirm = false
                     },
-                    onCancel = { showCancelConfirm = true } // Triggers the dialog instead of instantly closing
+
+                    title = {
+                        Text(
+                            "Cancel Sync?",
+                            fontWeight = FontWeight.Bold
+                        )
+                    },
+
+                    text = {
+                        Text(
+                            "Do you want to cancel the synchronization process?"
+                        )
+                    },
+
+                    confirmButton = {
+
+                        TextButton(
+
+                            onClick = {
+
+                                showCancelConfirm = false
+
+                                otpResolver.cancel()
+
+                                AppBridge.currentOtpResolver.value =
+                                    null
+
+                                GlobalSyncer.cancelActiveSync()
+
+                                if (activeOverlay == "PORTAL") {
+
+                                    activeOverlay = null
+                                }
+
+                                coroutineScope.launch {
+
+                                    val profileIndex =
+                                        navItems.indexOf("PROFILE")
+
+                                    if (profileIndex != -1) {
+
+                                        currentTab = "PROFILE"
+                                    }
+                                }
+                            }
+                        ) {
+
+                            Text("Yes")
+                        }
+                    },
+
+                    dismissButton = {
+
+                        TextButton(
+
+                            onClick = {
+                                showCancelConfirm = false
+                            }
+                        ) {
+
+                            Text("No")
+                        }
+                    },
+
+                    containerColor =
+                        MaterialTheme.colorScheme.surface,
+
+                    titleContentColor =
+                        MaterialTheme.colorScheme.onSurface,
+
+                    textContentColor =
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Box(
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .zIndex(100f)
+            ) {
+
+                OtpForm(
+
+                    onVerify = { otp ->
+
+                        otpResolver.submit(otp)
+
+                        AppBridge.currentOtpResolver.value =
+                            null
+                    },
+
+                    onCancel = {
+
+                        showCancelConfirm = true
+                    }
                 )
             }
         }
@@ -522,59 +737,234 @@ fun SemesterCompletedView() {
 }
 
 @Composable
-fun GlobalTopBar(currentScreen: String, onProfileClick: () -> Unit) {
+fun GlobalTopBar(
+    currentScreen: String,
+    onProfileClick: () -> Unit,
+    onExportTimetable: () -> Unit
+) {
+
     val context = LocalContext.current
-    var timeAgoText by remember { mutableStateOf("Calculating...") }
+
     val syncStatus by AppBridge.syncStatus
 
-    LaunchedEffect(Unit) {
+    var subtitleText by remember {
+        mutableStateOf("Loading...")
+    }
+
+    LaunchedEffect(syncStatus) {
+
         while (true) {
-            val lastSyncMillis = Vault.getLastSyncTimestamp(context)
-            if (lastSyncMillis == 0L) {
-                timeAgoText = "Never synced"
-            } else {
-                val diffSeconds = (System.currentTimeMillis() - lastSyncMillis) / 1000
-                timeAgoText = when {
-                    diffSeconds < 60 -> "Just now"
-                    diffSeconds < 3600 -> "${diffSeconds / 60} mins ago"
-                    diffSeconds < 86400 -> "${diffSeconds / 3600} hours ago"
-                    else -> "${diffSeconds / 86400} days ago"
+
+            val text =
+                if (syncStatus != "IDLE") {
+
+                    syncStatus
+
+                } else {
+
+                    val lastSyncMillis =
+                        Vault.getLastSyncTimestamp(context)
+
+                    if (lastSyncMillis == 0L) {
+
+                        "Never synced"
+
+                    } else {
+
+                        val diffMinutes =
+                            (
+                                    System.currentTimeMillis() -
+                                            lastSyncMillis
+                                    ) / 60000
+
+                        when {
+
+                            diffMinutes <= 1L ->
+                                "Synced just now"
+
+                            diffMinutes < 60L ->
+                                "Synced $diffMinutes mins ago"
+
+                            diffMinutes < 1440L ->
+                                "Synced ${diffMinutes / 60L} hrs ago"
+
+                            else ->
+                                "Synced ${diffMinutes / 1440L} days ago"
+                        }
+                    }
                 }
-            }
-            delay(1000)
+
+            subtitleText = text
+
+            delay(60000)
         }
     }
 
-    val displayTitle = when (currentScreen.uppercase(Locale.ROOT)) {
-        "HOME" -> "Timetable"
-        "ATTENDANCE" -> "Attendance"
-        "EXAMS" -> "Exam Schedule"
-        "MARKS" -> "Marks & Grades"
-        "OUTINGS" -> "Outings"
-        "PROFILE" -> "Settings"
-        else -> currentScreen
+    val displayTitle = remember(currentScreen) {
+
+        when (
+            currentScreen.uppercase(Locale.ROOT)
+        ) {
+
+            "HOME" ->
+                "Timetable"
+
+            "ATTENDANCE" ->
+                "Attendance"
+
+            "EXAMS" ->
+                "Exam Schedule"
+
+            "MARKS" ->
+                "Marks & Grades"
+
+            "OUTINGS" ->
+                "Outings"
+
+            "PROFILE" ->
+                "Settings"
+
+            else ->
+                currentScreen
+        }
     }
 
-    val subtitleText = if (syncStatus == "IDLE") {
-        "Last synced: $timeAgoText"
-    } else {
-        syncStatus // Displays exactly what the Syncer is currently doing
-    }
+    val pulseAlpha by animateFloatAsState(
 
-    val alpha by animateFloatAsState(targetValue = if (syncStatus != "IDLE") 0.5f else 1f, animationSpec = infiniteRepeatable(animation = tween(800), repeatMode = RepeatMode.Reverse), label = "syncAlpha")
+        targetValue =
+            if (syncStatus != "IDLE") {
+                0.55f
+            } else {
+                1f
+            },
 
-    Row(
-        modifier = Modifier.fillMaxWidth().background(Color.Transparent).statusBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        animationSpec = tween(700),
+
+        label = "syncPulse"
+    )
+
+    Surface(
+
+        modifier =
+            Modifier.fillMaxWidth(),
+
+        color =
+            MaterialTheme.colorScheme.background
+                .copy(alpha = 0.72f)
     ) {
-        Column {
-            Text(text = displayTitle, color = MaterialTheme.colorScheme.onBackground, fontSize = 28.sp, fontWeight = FontWeight.Black)
-            Text(text = subtitleText, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha), fontSize = 12.sp, fontWeight = FontWeight.Medium)
-        }
-        if (currentScreen != "PROFILE") {
-            IconButton(onClick = onProfileClick, modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)) {
-                Icon(Lucide.User, contentDescription = "Profile", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+
+        Row(
+
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(
+                    horizontal = 20.dp,
+                    vertical = 14.dp
+                ),
+
+            horizontalArrangement =
+                Arrangement.SpaceBetween,
+
+            verticalAlignment =
+                Alignment.CenterVertically
+        ) {
+
+            Column {
+
+                Text(
+                    text = displayTitle,
+
+                    color =
+                        MaterialTheme.colorScheme
+                            .onBackground,
+
+                    fontSize = 28.sp,
+
+                    fontWeight = FontWeight.Black
+                )
+
+                Text(
+
+                    text = subtitleText,
+
+                    color =
+                        MaterialTheme.colorScheme
+                            .onSurfaceVariant
+                            .copy(alpha = pulseAlpha),
+
+                    fontSize = 12.sp,
+
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            if (currentScreen != "PROFILE") {
+
+                Row(
+                    verticalAlignment =
+                        Alignment.CenterVertically
+                ) {
+
+                    if (currentScreen == "HOME") {
+
+                        IconButton(
+
+                            onClick =
+                                onExportTimetable,
+
+                            modifier =
+                                Modifier
+                                    .padding(end = 8.dp)
+                                    .background(
+                                        MaterialTheme.colorScheme.surfaceVariant
+                                            .copy(alpha = 0.7f),
+
+                                        CircleShape
+                                    )
+                        ) {
+
+                            Icon(
+
+                                Icons.Default.Download,
+
+                                contentDescription =
+                                    "Export Timetable",
+
+                                tint =
+                                    MaterialTheme.colorScheme
+                                        .onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    IconButton(
+
+                        onClick =
+                            onProfileClick,
+
+                        modifier =
+                            Modifier.background(
+                                MaterialTheme.colorScheme.surfaceVariant
+                                    .copy(alpha = 0.7f),
+
+                                CircleShape
+                            )
+                    ) {
+
+                        Icon(
+
+                            Lucide.User,
+
+                            contentDescription =
+                                "Profile",
+
+                            tint =
+                                MaterialTheme.colorScheme
+                                    .onSurfaceVariant
+                        )
+                    }
+                }
             }
         }
     }
@@ -621,11 +1011,39 @@ fun BottomNavigation(currentTab: String, availableTabs: List<String>, onSelect: 
 @Composable
 fun FloatingDockContainer(currentScreen: String, items: List<String>, offsetX: Float, offsetY: Float, screenWidthPx: Float, screenHeightPx: Float, onSyncClick: (String, Boolean) -> Unit, onSelect: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    val position = when {
-        offsetX < -(screenWidthPx * 0.35f) -> DockPosition.LEFT
-        offsetX > (screenWidthPx * 0.35f) -> DockPosition.RIGHT
-        offsetY < -(screenHeightPx * 0.7f) -> DockPosition.TOP
-        else -> DockPosition.BOTTOM
+    val position by remember(
+        offsetX,
+        offsetY
+    ) {
+
+        derivedStateOf {
+
+            when {
+
+                offsetX <
+                        -(screenWidthPx * 0.35f) -> {
+
+                    DockPosition.LEFT
+                }
+
+                offsetX >
+                        (screenWidthPx * 0.35f) -> {
+
+                    DockPosition.RIGHT
+                }
+
+                offsetY <
+                        -(screenHeightPx * 0.7f) -> {
+
+                    DockPosition.TOP
+                }
+
+                else -> {
+
+                    DockPosition.BOTTOM
+                }
+            }
+        }
     }
     val transformOrigin = when (position) {
         DockPosition.LEFT -> TransformOrigin(0f, 0.5f)
