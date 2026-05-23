@@ -580,32 +580,75 @@ fun VtopPortalScreen(
                                     val bytes =
                                         response.body?.bytes()
 
-                                    if (response.isSuccessful && bytes != null) {
+                                    if (
+                                        response.isSuccessful &&
+                                        bytes != null
+                                    ) {
 
-                                        val dir =
-                                            context.getExternalFilesDir(
-                                                android.os.Environment.DIRECTORY_DOWNLOADS
+                                        val resolver =
+                                            context.contentResolver
+
+                                        val values =
+                                            android.content.ContentValues().apply {
+
+                                                put(
+                                                    android.provider.MediaStore.MediaColumns.DISPLAY_NAME,
+                                                    fileName
+                                                )
+
+                                                put(
+                                                    android.provider.MediaStore.MediaColumns.MIME_TYPE,
+                                                    mimeType ?: "application/pdf"
+                                                )
+
+                                                put(
+                                                    android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+                                                    android.os.Environment.DIRECTORY_DOWNLOADS
+                                                )
+                                            }
+
+                                        val collection =
+                                            if (android.os.Build.VERSION.SDK_INT >= 29) {
+
+                                                android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+
+                                            } else {
+
+                                                android.provider.MediaStore.Files.getContentUri("external")
+                                            }
+
+                                        val uri =
+                                            resolver.insert(
+                                                collection,
+                                                values
                                             )
 
-                                        if (dir != null && !dir.exists()) {
-                                            dir.mkdirs()
+                                        if (uri == null) {
+
+                                            throw Exception("Failed creating download entry")
                                         }
 
-                                        val downloadedFile =
-                                            File(dir, fileName)
+                                        resolver.openOutputStream(uri)?.use {
 
-                                        downloadedFile.writeBytes(bytes)
+                                            it.write(bytes)
+                                        }
 
                                         withContext(Dispatchers.Main) {
 
                                             NotificationHelper
-                                                .showDownloadNotification(
+                                                .showDownloadNotificationFromUri(
                                                     context = context,
-                                                    file = downloadedFile,
+                                                    uri = uri,
+                                                    fileName = fileName,
                                                     title = "Download Complete",
-                                                    description =
-                                                        "Tap to open ${downloadedFile.name}"
+                                                    description = "Tap to open $fileName"
                                                 )
+
+                                            Toast.makeText(
+                                                context,
+                                                "Saved to Downloads",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
                                         }
 
                                     } else {
@@ -627,7 +670,7 @@ fun VtopPortalScreen(
                                         Toast.makeText(
                                             context,
                                             "Failed: ${e.message}",
-                                            Toast.LENGTH_SHORT
+                                            Toast.LENGTH_LONG
                                         ).show()
                                     }
                                 }

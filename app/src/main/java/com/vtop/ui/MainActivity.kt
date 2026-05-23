@@ -270,33 +270,159 @@ class MainActivity : ComponentActivity() {
                                     callback.onResult(dummyData)
                                 }
 
-                                override fun onViewPass(id: String, isWeekend: Boolean, onReady: (File?) -> Unit) {
-                                    lifecycleScope.launch(Dispatchers.IO) {
-                                        try {
-                                            val creds = Vault.getCredentials(this@MainActivity)
-                                            val regNo = Vault.getRegNo(this@MainActivity)
+                                override fun onViewPass(
+                                    id: String,
+                                    isWeekend: Boolean,
+                                    onReady: (File?) -> Unit
+                                ) {
 
-                                            val client = VtopClient(this@MainActivity, creds[0]!!, creds[1]!!)
+                                    lifecycleScope.launch(Dispatchers.IO) {
+
+                                        try {
+
+                                            val creds =
+                                                Vault.getCredentials(
+                                                    this@MainActivity
+                                                )
+
+                                            val regNo =
+                                                Vault.getRegNo(
+                                                    this@MainActivity
+                                                )
+
+                                            val client =
+                                                VtopClient(
+                                                    this@MainActivity,
+                                                    creds[0]!!,
+                                                    creds[1]!!
+                                                )
+
                                             client.setAuthorizedId(regNo)
 
-                                            val destinationFile = File(cacheDir, "outpass_$id.pdf")
-                                            val success = client.downloadAndCacheOutpass(id, isWeekend, regNo, destinationFile)
+                                            val tempFile =
+                                                File(
+                                                    cacheDir,
+                                                    "outpass_$id.pdf"
+                                                )
 
-                                            withContext(Dispatchers.Main) {
-                                                if (success && destinationFile.exists()) {
-                                                    NotificationHelper.showDownloadNotification(
-                                                        context = this@MainActivity,
-                                                        file = destinationFile,
-                                                        title = "Outpass Downloaded",
-                                                        description = "Tap to open outpass_$id.pdf"
+                                            val success =
+                                                client.downloadAndCacheOutpass(
+                                                    id,
+                                                    isWeekend,
+                                                    regNo,
+                                                    tempFile
+                                                )
+
+                                            if (
+                                                success &&
+                                                tempFile.exists()
+                                            ) {
+
+                                                val resolver =
+                                                    contentResolver
+
+                                                val fileName =
+                                                    "outpass_$id.pdf"
+
+                                                val values =
+                                                    android.content.ContentValues().apply {
+
+                                                        put(
+                                                            android.provider.MediaStore.MediaColumns.DISPLAY_NAME,
+                                                            fileName
+                                                        )
+
+                                                        put(
+                                                            android.provider.MediaStore.MediaColumns.MIME_TYPE,
+                                                            "application/pdf"
+                                                        )
+
+                                                        put(
+                                                            android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+                                                            android.os.Environment.DIRECTORY_DOWNLOADS
+                                                        )
+                                                    }
+
+                                                val collection =
+                                                    if (android.os.Build.VERSION.SDK_INT >= 29) {
+
+                                                        android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+
+                                                    } else {
+
+                                                        android.provider.MediaStore.Files.getContentUri(
+                                                            "external"
+                                                        )
+                                                    }
+
+                                                val uri =
+                                                    resolver.insert(
+                                                        collection,
+                                                        values
                                                     )
-                                                    onReady(destinationFile)
-                                                } else {
-                                                    Toast.makeText(this@MainActivity, "Failed to download PDF", Toast.LENGTH_SHORT).show()
+
+                                                if (uri == null) {
+
+                                                    throw Exception(
+                                                        "Failed creating MediaStore entry"
+                                                    )
+                                                }
+
+                                                resolver.openOutputStream(uri)?.use { output ->
+
+                                                    tempFile.inputStream().use { input ->
+
+                                                        input.copyTo(output)
+                                                    }
+                                                }
+
+                                                withContext(Dispatchers.Main) {
+
+                                                    NotificationHelper
+                                                        .showDownloadNotificationFromUri(
+                                                            context = this@MainActivity,
+                                                            uri = uri,
+                                                            fileName = fileName,
+                                                            title = "Outpass Downloaded",
+                                                            description = "Tap to open $fileName"
+                                                        )
+
+                                                    Toast.makeText(
+                                                        this@MainActivity,
+                                                        "Outpass saved to Downloads",
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
+
+                                                    onReady(tempFile)
+                                                }
+
+                                            } else {
+
+                                                withContext(Dispatchers.Main) {
+
+                                                    Toast.makeText(
+                                                        this@MainActivity,
+                                                        "Failed to download outpass",
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
+
                                                     onReady(null)
                                                 }
                                             }
-                                        } catch (_: Exception) { withContext(Dispatchers.Main) { onReady(null) } }
+
+                                        } catch (e: Exception) {
+
+                                            withContext(Dispatchers.Main) {
+
+                                                Toast.makeText(
+                                                    this@MainActivity,
+                                                    "Error: ${e.message}",
+                                                    Toast.LENGTH_LONG
+                                                ).show()
+
+                                                onReady(null)
+                                            }
+                                        }
                                     }
                                 }
 
