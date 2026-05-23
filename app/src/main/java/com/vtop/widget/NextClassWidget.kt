@@ -317,7 +317,7 @@ class NextClassWidget : GlanceAppWidget() {
                         }
                         todayHoliday != null && !todayHoliday.lowercase(Locale.getDefault()).contains("exam") -> HolidayWidgetContent(todayHoliday)
 
-                        // THE FIX: If there are exams today but they are all in the past, show this instead of falling back to classes.
+                        // If there are exams today but they are all in the past, show this instead of falling back to classes.
                         todayExams.isNotEmpty() -> EmptyWidgetContent("No more exams today")
 
                         else -> EmptyWidgetContent("No more classes today")

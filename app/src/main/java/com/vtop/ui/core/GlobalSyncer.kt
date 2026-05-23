@@ -61,6 +61,7 @@ object GlobalSyncer {
                     isSyncing.value = true
                     // UPDATED: Standardized casing
                     AppBridge.syncStatus.value = "Logging in..."
+
                 }
 
                 val creds = Vault.getCredentials(context)
@@ -68,6 +69,17 @@ object GlobalSyncer {
                 val password = creds[1]
 
                 val client = VtopClient(context, username, password)
+                android.util.Log.d(
+                    "TT_EXPORT",
+                    "GlobalSyncer created client: $client"
+                )
+
+                AppBridge.activeClient = client
+
+                android.util.Log.d(
+                    "TT_EXPORT",
+                    "AppBridge.activeClient assigned"
+                )
 
                 if (forceNewSession) {
                     Log.i(TAG, "Force Refresh Requested: Wiping existing session cookies.")

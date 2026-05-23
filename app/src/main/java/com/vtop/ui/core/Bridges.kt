@@ -15,6 +15,8 @@ import com.vtop.ui.theme.AuthState
 import kotlinx.coroutines.CompletableDeferred
 
 object AppBridge {
+    var activeClient:
+            com.vtop.network.VtopClient? = null
     var isAppInForeground = false
     var pendingOtpDeferred: CompletableDeferred<String?>? = null
     val profileState = mutableStateOf<Map<String, Map<String, String>>?>(null)
