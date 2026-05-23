@@ -1,3 +1,6 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -5,19 +8,24 @@ plugins {
     id("com.google.firebase.crashlytics")
 }
 
+// Explicitly defining the type as java.io.File fixes the "inferred from platform call" warning
+val keystorePropertiesFile: java.io.File = rootProject.file("local.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace = "com.vtop"
     compileSdk = 36
 
-    // 1. Define the signing configuration using your retrieved password
+    // 1. Define the signing configuration
     signingConfigs {
         create("release") {
-            // Replace with your actual .jks file path.
-            // Tip: Use forward slashes (/) even on Windows to avoid escape character errors.
-            storeFile = file("C:/Users/manid/Downloads/vtopbs/vtop_keystore.jks")
-            storePassword = "M@nideep14"
-            keyAlias = "key0" // Or your specific alias
-            keyPassword = "M@nideep14"
+            storeFile = file(keystoreProperties.getProperty("KEYSTORE_PATH") ?: "")
+            storePassword = keystoreProperties.getProperty("KEYSTORE_PASSWORD") ?: ""
+            keyAlias = keystoreProperties.getProperty("KEY_ALIAS") ?: ""
+            keyPassword = keystoreProperties.getProperty("KEY_PASSWORD") ?: ""
         }
     }
     defaultConfig {
@@ -27,11 +35,13 @@ android {
         versionCode = 2 // Incremented for the new update
         versionName = "1.1.5"
 
+
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
     }
 
     buildTypes {
