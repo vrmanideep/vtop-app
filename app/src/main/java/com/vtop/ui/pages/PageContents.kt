@@ -91,7 +91,7 @@ fun ProfilePageContent(
     profileData: Map<String, Map<String, String>>,
     selectedSemester: String,
     availableSemesters: List<SemesterOption>,
-    onSemesterChange: (String) -> Unit,
+    onSemesterChange: (SemesterOption) -> Unit,
     currentRegNo: String,
     currentPass: String,
     onCredentialsSave: (String, String) -> Unit,

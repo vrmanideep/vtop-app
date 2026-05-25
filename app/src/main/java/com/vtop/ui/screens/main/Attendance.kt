@@ -93,6 +93,7 @@ fun calculateBunkBudget(attended: Int, total: Int, target: Float = 0.75f): BunkS
 fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
     // Use values directly from AttendanceModel
 
+
     val attended =
         item.attendedClasses.toIntOrNull() ?: 0
 
@@ -114,7 +115,14 @@ fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
         else -> Color(0xFF4CAF50) // Success Green
     }
 
-    val bunkState = calculateBunkBudget(attended, total)
+    val bunkState =
+        remember(attended, total) {
+
+            calculateBunkBudget(
+                attended,
+                total
+            )
+        }
 
     val cType = item.courseType ?: ""
     val categoryLabel = when {
@@ -228,7 +236,12 @@ fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> U
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 120.dp),
+        contentPadding = PaddingValues(
+            start = 20.dp,
+            end = 20.dp,
+            top = 96.dp,
+            bottom = 120.dp
+        ),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
@@ -284,7 +297,7 @@ fun AttendanceBottomSheetContent(course: AttendanceModel, onSimulateClick: () ->
     val scrollState = rememberScrollState()
     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
 
-    Column(modifier = Modifier.fillMaxWidth().heightIn(max = screenHeight * 0.85f).navigationBarsPadding().verticalScroll(scrollState).padding(horizontal = 24.dp, vertical = 16.dp).padding(bottom = 32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(modifier = Modifier.fillMaxWidth().heightIn(max = screenHeight * 0.85f).verticalScroll(scrollState).padding(horizontal = 24.dp, vertical = 16.dp).padding(bottom = 32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack, modifier = Modifier.offset(x = (-12).dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = MaterialTheme.colorScheme.onSurface) }
             Text(text = "${course.courseCode} · $categoryLabel", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Bold)

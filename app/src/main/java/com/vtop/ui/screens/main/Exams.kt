@@ -27,7 +27,6 @@ import java.util.*
 import com.composables.icons.lucide.*
 import com.vtop.utils.AnalyticsManager
 
-// Extracts a safe parsable time, falling back to reporting time or a default to prevent ParseExceptions
 private fun getSafeStartTime(exam: ExamScheduleModel): String {
     val eTime = exam.examTime.trim()
     if (eTime.isNotBlank() && eTime != "-") return eTime.split("-")[0].trim()
@@ -47,7 +46,7 @@ fun Exams(exams: List<ExamScheduleModel>) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     if (exams.isEmpty()) {
-        Box(Modifier.fillMaxSize().padding(bottom = 80.dp), Alignment.Center) {
+        Box(Modifier.fillMaxSize().padding(bottom = 92.dp), Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Lucide.CalendarDays, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(16.dp))
@@ -80,7 +79,6 @@ private fun ExamListScreen(exams: List<ExamScheduleModel>, onExamClick: (ExamSch
         while (true) { delay(60000); currentTime = Date() }
     }
 
-    // Safely find the next exam only if it actually has a valid scheduled date from VTOP
     val nextExam = remember(exams, currentTime) {
         exams.filter { it.examDate.isNotBlank() && it.examDate != "-" }
             .mapNotNull { exam ->
@@ -91,7 +89,6 @@ private fun ExamListScreen(exams: List<ExamScheduleModel>, onExamClick: (ExamSch
             }.minByOrNull { it.second }?.first
     }
 
-    // Only flag a clash if the exam has a genuine date and time assigned
     val clashingExams = remember(exams) {
         exams.filter { it.examDate.isNotBlank() && it.examDate != "-" && getSafeStartTime(it) != "12:00 AM" }
             .groupBy { "${it.examDate} ${getSafeStartTime(it)}" }
@@ -106,71 +103,75 @@ private fun ExamListScreen(exams: List<ExamScheduleModel>, onExamClick: (ExamSch
         if (selectedFilter == "All") exams else exams.filter { it.examType.replace("-", " ").contains(selectedFilter.replace("-", " "), true) }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            items(dynamicFilters) { filter ->
-                val isSelected = selectedFilter == filter
-                Box(
-                    modifier = Modifier
-                        .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent, RoundedCornerShape(24.dp))
-                        .border(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha=0.2f), RoundedCornerShape(24.dp))
-                        .clickable { selectedFilter = filter }
-                        .padding(horizontal = 24.dp, vertical = 10.dp)
-                ) {
-                    Text(
-                        text = filter,
-                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 14.sp, fontWeight = FontWeight.Bold
-                    )
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(top = 96.dp, bottom = 120.dp), // Inner padding for glassmorphism
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item {
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(dynamicFilters) { filter ->
+                    val isSelected = selectedFilter == filter
+                    Box(
+                        modifier = Modifier
+                            .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent, RoundedCornerShape(24.dp))
+                            .border(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha=0.2f), RoundedCornerShape(24.dp))
+                            .clickable { selectedFilter = filter }
+                            .padding(horizontal = 24.dp, vertical = 10.dp)
+                    ) {
+                        Text(
+                            text = filter,
+                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 14.sp, fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }
 
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 120.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            if (filteredExams.isEmpty()) {
-                item {
-                    Column(modifier = Modifier.fillMaxWidth().padding(top = 60.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Lucide.CalendarDays, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), modifier = Modifier.size(64.dp))
-                        Spacer(Modifier.height(16.dp))
-                        Text("No exams found", color = MaterialTheme.colorScheme.onBackground, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    }
+        if (filteredExams.isEmpty()) {
+            item {
+                Column(modifier = Modifier.fillMaxWidth().padding(top = 60.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Lucide.CalendarDays, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), modifier = Modifier.size(64.dp))
+                    Spacer(Modifier.height(16.dp))
+                    Text("No exams found", color = MaterialTheme.colorScheme.onBackground, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 }
-            } else {
-                if (selectedFilter == "All" && nextExam != null) {
-                    item {
+            }
+        } else {
+            if (selectedFilter == "All" && nextExam != null) {
+                item {
+                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
                         Text("NEXT UP", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp, modifier = Modifier.padding(bottom = 4.dp))
                         NextUpCard(exam = nextExam, currentTime = currentTime, onClick = { onExamClick(nextExam) })
                         Spacer(modifier = Modifier.height(16.dp))
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha=0.1f))
                     }
                 }
-                items(filteredExams) { exam ->
-                    val hasValidDate = exam.examDate.isNotBlank() && exam.examDate != "-"
+            }
+            items(filteredExams) { exam ->
+                val hasValidDate = exam.examDate.isNotBlank() && exam.examDate != "-"
 
-                    val urgencyColor = if (!hasValidDate) {
-                        Color.Transparent
-                    } else {
-                        val targetDate = try {
-                            sdfFull.parse("${exam.examDate} ${getSafeStartTime(exam)}") ?: currentTime
-                        } catch (e: Exception) { currentTime }
+                val urgencyColor = if (!hasValidDate) {
+                    Color.Transparent
+                } else {
+                    val targetDate = try {
+                        sdfFull.parse("${exam.examDate} ${getSafeStartTime(exam)}") ?: currentTime
+                    } catch (e: Exception) { currentTime }
 
-                        val diffDays = ((targetDate.time - currentTime.time) / (1000 * 60 * 60 * 24)).toInt()
-                        when {
-                            diffDays < 0 -> Color.Transparent
-                            diffDays <= 3 -> Color(0xFFF59E0B) // Swapped to a cleaner Amber/Orange
-                            diffDays <= 7 -> Color(0xFF60A5FA)
-                            else -> Color.Transparent
-                        }
+                    val diffDays = ((targetDate.time - currentTime.time) / (1000 * 60 * 60 * 24)).toInt()
+                    when {
+                        diffDays < 0 -> Color.Transparent
+                        diffDays <= 3 -> Color(0xFFF59E0B)
+                        diffDays <= 7 -> Color(0xFF60A5FA)
+                        else -> Color.Transparent
                     }
+                }
 
+                Box(modifier = Modifier.padding(horizontal = 20.dp)) {
                     StandardExamCard(exam = exam, urgencyColor = urgencyColor, isClashing = clashingExams.contains(exam), onClick = { onExamClick(exam) })
                 }
             }

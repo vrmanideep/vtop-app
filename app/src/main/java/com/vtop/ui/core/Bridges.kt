@@ -24,7 +24,6 @@ object AppBridge {
     var attendanceState = mutableStateOf<List<AttendanceModel>>(emptyList())
     var examsState = mutableStateOf<List<ExamScheduleModel>>(emptyList())
     var outingsState = mutableStateOf<List<OutingModel>>(emptyList())
-
     var semestersState = mutableStateOf<List<SemesterOption>>(emptyList())
     var marksState = mutableStateOf<List<CourseMark>>(emptyList())
     var gradesState = mutableStateOf<List<CourseGrade>>(emptyList())

@@ -120,7 +120,8 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                             if (cal.get(Calendar.YEAR) == 1970) cal.set(Calendar.YEAR, 2026)
                             return cal.time
                         }
-                    } catch (_: Exception) {}
+                    } catch (_: Exception) {
+                    }
                 }
                 return null
             }
@@ -142,7 +143,10 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                         }
                     } else if (value is String) {
                         val title = value
-                        val isGenericWeekend = title.equals("Sunday", true) || title.equals("Monday", true) || title.startsWith("Sunday (", true)
+                        val isGenericWeekend = title.equals("Sunday", true) || title.equals(
+                            "Monday",
+                            true
+                        ) || title.startsWith("Sunday (", true)
 
                         if (!isGenericWeekend) {
                             val date = parseDateSafely(key)
@@ -215,17 +219,43 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                 if (semObj != null) {
                     val id = semObj.optString("id", semKey)
                     val semesterEvents = mutableListOf<AcademicEvent>()
-                    if (semObj.has("holidays")) semesterEvents.addAll(parseCategory(semObj.getJSONObject("holidays"), "Holiday"))
-                    if (semObj.has("exams")) semesterEvents.addAll(parseCategory(semObj.getJSONObject("exams"), "Exam"))
-                    if (semObj.has("events")) semesterEvents.addAll(parseCategory(semObj.getJSONObject("events"), "Event"))
+                    if (semObj.has("holidays")) semesterEvents.addAll(
+                        parseCategory(
+                            semObj.getJSONObject(
+                                "holidays"
+                            ), "Holiday"
+                        )
+                    )
+                    if (semObj.has("exams")) semesterEvents.addAll(
+                        parseCategory(
+                            semObj.getJSONObject(
+                                "exams"
+                            ), "Exam"
+                        )
+                    )
+                    if (semObj.has("events")) semesterEvents.addAll(
+                        parseCategory(
+                            semObj.getJSONObject(
+                                "events"
+                            ), "Event"
+                        )
+                    )
 
                     semesterEvents.sortBy { it.sortIndex }
 
                     val startDateRaw = semObj.optString("start_date", "")
                     val lastDayRaw = semObj.optString("last_instructional_day", "")
 
-                    val startMs = try { sdfParse.parse(startDateRaw.replace(" ", ""))?.time ?: 0L } catch(e: Exception) { 0L }
-                    var endMs = try { sdfParse.parse(lastDayRaw.replace(" ", ""))?.time ?: Long.MAX_VALUE } catch(e: Exception) { Long.MAX_VALUE }
+                    val startMs = try {
+                        sdfParse.parse(startDateRaw.replace(" ", ""))?.time ?: 0L
+                    } catch (e: Exception) {
+                        0L
+                    }
+                    var endMs = try {
+                        sdfParse.parse(lastDayRaw.replace(" ", ""))?.time ?: Long.MAX_VALUE
+                    } catch (e: Exception) {
+                        Long.MAX_VALUE
+                    }
 
                     var trueEndMs = endMs
                     val examsObj = semObj.optJSONObject("exams")
@@ -237,7 +267,11 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                             if (datesArray != null) {
                                 for (i in 0 until datesArray.length()) {
                                     val dateStr = datesArray.optString(i, "")
-                                    val examMs = try { sdfParse.parse(dateStr.replace(" ", ""))?.time ?: 0L } catch (e: Exception) { 0L }
+                                    val examMs = try {
+                                        sdfParse.parse(dateStr.replace(" ", ""))?.time ?: 0L
+                                    } catch (e: Exception) {
+                                        0L
+                                    }
                                     if (examMs > trueEndMs && examMs != 0L) {
                                         trueEndMs = examMs
                                     }
@@ -251,17 +285,37 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                         trueEndMs += (23L * 3600 + 59 * 60 + 59) * 1000
                     }
 
-                    val startDateFmt = try { sdfDisplay.format(sdfParse.parse(startDateRaw)!!) } catch(e: Exception) { startDateRaw }
-                    val lastDayFmt = try { sdfDisplay.format(sdfParse.parse(lastDayRaw)!!) } catch(e: Exception) { lastDayRaw }
+                    val startDateFmt = try {
+                        sdfDisplay.format(sdfParse.parse(startDateRaw)!!)
+                    } catch (e: Exception) {
+                        startDateRaw
+                    }
+                    val lastDayFmt = try {
+                        sdfDisplay.format(sdfParse.parse(lastDayRaw)!!)
+                    } catch (e: Exception) {
+                        lastDayRaw
+                    }
 
                     val weekOffArr = semObj.optJSONArray("week_off")
                     val weekOffs = if (weekOffArr != null) {
-                        (0 until weekOffArr.length()).map { weekOffArr.getString(it) }.joinToString(", ")
+                        (0 until weekOffArr.length()).map { weekOffArr.getString(it) }
+                            .joinToString(", ")
                     } else {
                         "Sunday"
                     }
 
-                    parsedSems.add(SemTemp(semKey, id, startMs, trueEndMs, semesterEvents, startDateFmt, lastDayFmt, weekOffs))
+                    parsedSems.add(
+                        SemTemp(
+                            semKey,
+                            id,
+                            startMs,
+                            trueEndMs,
+                            semesterEvents,
+                            startDateFmt,
+                            lastDayFmt,
+                            weekOffs
+                        )
+                    )
                 }
             }
 
@@ -351,7 +405,8 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
             val filteredEvents = if (selectedFilter == "All") {
                 sem.events
             } else {
-                val targetCategory = if (selectedFilter == "Exams") "Exam" else if (selectedFilter == "Holidays") "Holiday" else "Event"
+                val targetCategory =
+                    if (selectedFilter == "Exams") "Exam" else if (selectedFilter == "Holidays") "Holiday" else "Event"
                 sem.events.filter { it.category.equals(targetCategory, ignoreCase = true) }
             }
             if (filteredEvents.isEmpty() && selectedFilter != "All") null else sem.copy(events = filteredEvents)
@@ -364,41 +419,67 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
     val hasCurrentSemester = remember(filteredSemesters) {
         filteredSemesters.any { it.isCurrent }
     }
-
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Academic Calendar", fontSize = 20.sp, fontWeight = FontWeight.Medium) },
-                navigationIcon = {
-                    IconButton(
-                        onClick = onBack,
-                        modifier = Modifier.padding(start = 4.dp)
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    scrolledContainerColor = MaterialTheme.colorScheme.background,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onBackground
+            // Adds a 96.dp gap above the header so it sits cleanly below your GlobalTopBar
+            Box(modifier = Modifier.padding(top = 96.dp)) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            "Academic Calendar",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(
+                            onClick = onBack,
+                            modifier = Modifier.padding(start = 4.dp)
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        scrolledContainerColor = MaterialTheme.colorScheme.background,
+                        titleContentColor = MaterialTheme.colorScheme.onBackground,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onBackground
+                    )
                 )
-            )
+            }
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { paddingValues ->
+
         if (semesters.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize().padding(paddingValues), contentAlignment = Alignment.Center) {
+            // Uses paddingValues to ensure the empty state stays centered within the remaining space
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentAlignment = Alignment.Center
+            ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.Event, null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                    Icon(
+                        Icons.Default.Event,
+                        null,
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
                     Spacer(Modifier.height(16.dp))
-                    Text("No calendar data found", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp)
+                    Text(
+                        "No calendar data found",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 16.sp
+                    )
                 }
             }
         } else {
             LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(paddingValues),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues), // Automatically handles the top offset including your 96.dp buffer
+                contentPadding = PaddingValues(bottom = 40.dp, start = 16.dp, end = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 if (nextExam != null || nextHoliday != null) {
@@ -426,19 +507,6 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                     }
                 } else {
                     itemsIndexed(filteredSemesters) { index, semester ->
-                        // =====================================================
-                        // MULTI-CURRENT FADE ENGINE
-                        // =====================================================
-                        //
-                        // RULES:
-                        // - ALL current semesters stay fully visible
-                        // - ALL overlapping active semesters remain equal
-                        // - ONLY inactive semesters get faded
-                        //
-                        // This fixes:
-                        // - Long Summer vs Short Summer overlap issue
-                        // - Incorrect dimming during simultaneous sessions
-
                         val baseOpacity = when {
                             semester.isCurrent -> 1f
                             hasCurrentSemester -> 0.45f

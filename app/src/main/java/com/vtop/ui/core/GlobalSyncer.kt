@@ -317,7 +317,26 @@ object GlobalSyncer {
 
     private suspend fun syncOutings(context: Context, client: VtopClient, authorizedId: String) {
         val genHtml = client.fetchGeneralOutingRawHtml(authorizedId, null)
-        val weekHtml = client.fetchWeekendOutingRawHtml(authorizedId, null)
+        val weekHtml =
+            client.fetchWeekendOutingRawHtml(
+                authorizedId,
+                null
+            )
+
+        Log.d(
+            "WKND_HTML",
+            weekHtml?.take(2000) ?: "NULL"
+        )
+
+        val weekendParsed =
+            OutingParser.parseWeekend(
+                weekHtml ?: ""
+            )
+
+        Log.d(
+            "WKND_COUNT",
+            weekendParsed.size.toString()
+        )
         val allOutings = OutingParser.parseGeneral(genHtml ?: "") + OutingParser.parseWeekend(weekHtml ?: "")
         Vault.saveOutings(context, allOutings)
         withContext(Dispatchers.Main) { AppBridge.outingsState.value = allOutings }

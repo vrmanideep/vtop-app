@@ -1,5 +1,6 @@
 package com.vtop.logic
 
+import android.util.Log
 import com.vtop.models.OutingModel
 import org.jsoup.Jsoup
 
@@ -56,44 +57,82 @@ object OutingParser {
             val table = doc.selectFirst("table#BookingRequests") ?: return records
 
             val rows = table.select("tr")
+            Log.d(
+                "WKND_OUTING_ROWS",
+                "total rows = ${rows.size}"
+            )
             for (i in 1 until rows.size) {
                 val cells = rows[i].select("td")
+                Log.d(
+                    "WKND_OUTING_CELLS",
+                    "row=$i cells=${cells.size}"
+                )
+
+                Log.d(
+                    "WKND_ROW",
+                    rows[i].text()
+                )
 
                 // Weekend table has 14 columns (Indices 0 through 13)
-                if (cells.size >= 14) {
-                    val place = cells[4].text().trim()
-                    val purpose = cells[5].text().trim()
-                    val timeStr = cells[6].text().trim()
+                if (cells.size >= 11) {
 
-                    // Correct Indices based on VTOP HTML
-                    val dateStr = cells[9].text().trim().split(" ").firstOrNull() ?: ""
-                    var leaveId = cells[10].text().trim()
-                    var status = cells[12].text().trim()
+                    val place =
+                        cells[4].text().trim()
 
-                    // Clean up VTOP's long status string for the UI
-                    if (status.contains("Accepted", ignoreCase = true)) {
+                    val purpose =
+                        cells[5].text().trim()
+
+                    val timeStr =
+                        cells[6].text().trim()
+
+                    val dateStr =
+                        cells[7].text()
+                            .trim()
+                            .split(" ")
+                            .firstOrNull()
+                            ?: ""
+
+                    var status =
+                        cells[9].text().trim()
+
+                    var leaveId =
+                        cells[1].text().trim()
+
+                    if (
+                        status.contains(
+                            "Accepted",
+                            ignoreCase = true
+                        )
+                    ) {
                         status = "Approved"
                     }
 
-                    // Check column 13 for the download button
-                    var canDownload = false
-                    val downloadCellHtml = cells[13].html()
-                    if (downloadCellHtml.contains("downloadOutingForm", ignoreCase = true) ||
-                        downloadCellHtml.contains("Download", ignoreCase = true)) {
-                        canDownload = true
+                    val canDownload =
+                        cells[10]
+                            .text()
+                            .contains(
+                                "Download",
+                                ignoreCase = true
+                            )
+
+                    if (leaveId.isBlank()) {
+
+                        leaveId =
+                            "WKND_${System.currentTimeMillis()}_$i"
                     }
 
-                    // Fallback if Booking ID column was empty for some reason
-                    if (leaveId.isEmpty()) {
-                        val rowHtml = rows[i].outerHtml()
-                        val idMatch = Regex("[A-Z]\\d{8,15}").find(rowHtml)
-                        leaveId = idMatch?.value ?: "WKND_${System.currentTimeMillis()}_$i"
-                    }
+                    val fromTime =
+                        timeStr
+                            .substringBefore("-")
+                            .trim()
 
-                    val fromTime = timeStr.substringBefore("-").trim()
-                    val toTime = timeStr.substringAfter("-").trim()
+                    val toTime =
+                        timeStr
+                            .substringAfter("-")
+                            .trim()
 
                     records.add(
+
                         OutingModel(
                             id = leaveId,
                             type = "WEEKEND",
@@ -101,7 +140,7 @@ object OutingParser {
                             purpose = purpose,
                             fromDate = dateStr,
                             fromTime = fromTime,
-                            toDate = dateStr, // Weekend outings are single-day
+                            toDate = dateStr,
                             toTime = toTime,
                             status = status,
                             canDownload = canDownload
@@ -138,7 +177,6 @@ object OutingParser {
         if (html.isNullOrEmpty()) return null
         try {
             val doc = Jsoup.parse(html)
-
             // Trap VTOP's native error (e.g., trying to apply outside the Tue-Sat window)
             val jsonBom = doc.select("input#jsonBom").attr("value")
             if (jsonBom.isNotEmpty()) return mapOf("error" to jsonBom)

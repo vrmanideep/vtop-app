@@ -83,9 +83,6 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import com.vtop.utils.AnalyticsManager
 
-// --------------------------------------------------------
-// UNIVERSAL ACCENT COLORS (Preserved across themes)
-// --------------------------------------------------------
 private val OutingPrimaryAccent = Color(0xFF0090FF)
 private val OutingColorSuccess = Color(0xFF4ADE80)
 private val OutingColorWarning = Color(0xFFFBBF24)
@@ -247,16 +244,11 @@ private fun savePdfToDownloads(context: Context, sourceFile: File, fileName: Str
     }
 }
 
-// --------------------------------------------------------
-// MAIN UI COMPONENTS
-// --------------------------------------------------------
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("NewApi")
 @Composable
 fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler) {
-    LaunchedEffect(Unit) {
-        AnalyticsManager.logScreenView("Outings_Screen")
-    }
+    LaunchedEffect(Unit) { AnalyticsManager.logScreenView("Outings_Screen") }
     val context = LocalContext.current
     val pagerState = rememberPagerState(pageCount = { 2 })
     val coroutineScope = rememberCoroutineScope()
@@ -272,7 +264,6 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
         s.contains("PENDING") || s.contains("WAITING") || s.contains("FORWARD")
     }
 
-    // --- NEW QUEUE LOGIC: Track only Live Transitions ---
     val sharedPrefs = remember { context.getSharedPreferences("OutingQueuePrefs", Context.MODE_PRIVATE) }
 
     LaunchedEffect(outingsData) {
@@ -284,35 +275,21 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
             val isApproved = statusUpper.contains("APPROVE") || statusUpper.contains("ACCEPT") || statusUpper.contains("ISSUED") || statusUpper.contains("AVAILED")
             val isRejected = statusUpper.contains("REJECT") || statusUpper.contains("DECLINE") || statusUpper.contains("CANCEL")
 
-            // If it's a brand new pending pass, Push it to the Queue
             if (!isApproved && !isRejected) {
-                if (pendingQueue.add(outing.id)) {
-                    queueUpdated = true
-                }
-            }
-            // If it WAS in the queue and is now Approved, Download & Pop it!
-            else if (isApproved && pendingQueue.contains(outing.id)) {
+                if (pendingQueue.add(outing.id)) queueUpdated = true
+            } else if (isApproved && pendingQueue.contains(outing.id)) {
                 pendingQueue.remove(outing.id)
                 queueUpdated = true
-
                 handler.onViewPass(outing.id, outing.type.uppercase(Locale.getDefault()) == "WEEKEND") { file: File? ->
-                    if (file != null) {
-                        savePdfToDownloads(context, file, "${outing.id}.pdf")
-                    }
+                    if (file != null) savePdfToDownloads(context, file, "${outing.id}.pdf")
                 }
-            }
-            // If it was rejected, just Pop it from the queue without downloading
-            else if (isRejected && pendingQueue.contains(outing.id)) {
+            } else if (isRejected && pendingQueue.contains(outing.id)) {
                 pendingQueue.remove(outing.id)
                 queueUpdated = true
             }
         }
-
-        if (queueUpdated) {
-            sharedPrefs.edit().putStringSet("pending_queue", pendingQueue).apply()
-        }
+        if (queueUpdated) sharedPrefs.edit().putStringSet("pending_queue", pendingQueue).apply()
     }
-    // -----------------------------------------------------
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -329,27 +306,21 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
                     if (isGeneral) {
                         handler.onFetchGeneralFormData { data ->
                             isFetchingForm = false
-                            if (data != null && data["error"] == null) {
-                                showWizardType = "GENERAL"
-                            } else {
-                                Toast.makeText(context, data?.get("error") ?: "Failed to load form from VTOP.", Toast.LENGTH_LONG).show()
-                            }
+                            if (data != null && data["error"] == null) showWizardType = "GENERAL"
+                            else Toast.makeText(context, data?.get("error") ?: "Failed to load form from VTOP.", Toast.LENGTH_LONG).show()
                         }
                     } else {
                         handler.onFetchWeekendFormData { data ->
                             isFetchingForm = false
-                            if (data != null && data["error"] == null) {
-                                showWizardType = "WEEKEND"
-                            } else {
-                                Toast.makeText(context, data?.get("error") ?: "Weekend Outing portal is closed.", Toast.LENGTH_LONG).show()
-                            }
+                            if (data != null && data["error"] == null) showWizardType = "WEEKEND"
+                            else Toast.makeText(context, data?.get("error") ?: "Weekend Outing portal is closed.", Toast.LENGTH_LONG).show()
                         }
                     }
                 },
                 containerColor = if (hasPendingPass) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primary,
                 contentColor = if (hasPendingPass) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onPrimary,
                 shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.padding(bottom = 70.dp)
+                modifier = Modifier.padding(bottom = 70.dp) // Adjusted for floating dock
             ) {
                 if (isFetchingForm) {
                     CircularProgressIndicator(color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -359,20 +330,15 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
             }
         }
     ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(bottom = paddingValues.calculateBottomPadding())
-        ) {
+        Box(modifier = Modifier.fillMaxSize()) {
 
-            OutingsTabSelector(pagerState = pagerState, coroutineScope = coroutineScope)
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            HorizontalPager(state = pagerState, modifier = Modifier.weight(1f)) { page ->
+            // Pager runs underneath the Floating Tab Selector
+            HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
                 val currentType = if (page == 0) "GENERAL" else "WEEKEND"
 
-                val filteredOutings = outingsData.filter { it.type == currentType }.sortedByDescending { outing ->
+                val filteredOutings = outingsData.filter {
+                    it.type.trim().uppercase(Locale.getDefault()) == currentType
+                }.sortedByDescending { outing ->
                     try {
                         val dateStr = outing.fromDate
                         if (dateStr.contains("-") && dateStr.split("-")[0].length == 4) {
@@ -391,7 +357,7 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
 
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 120.dp),
+                    contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 160.dp, bottom = 120.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     if (activeOutings.isNotEmpty()) {
@@ -454,6 +420,11 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
                         }
                     }
                 }
+            }
+
+            // Floating Tab Selector pinned nicely under the GlobalTopBar
+            Box(modifier = Modifier.padding(top = 96.dp)) {
+                OutingsTabSelector(pagerState = pagerState, coroutineScope = coroutineScope)
             }
         }
     }
@@ -1135,7 +1106,7 @@ private fun OutingWizardDialog(
         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
     )
 
-    Column(modifier = Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
+    Column(modifier = Modifier.fillMaxSize().imePadding()) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurface) }
             Column(modifier = Modifier.padding(start = 8.dp)) {

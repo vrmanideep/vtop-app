@@ -27,6 +27,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -126,7 +127,7 @@ fun BunkSimulatorTab(
         return timetable.scheduleMap?.entries?.firstOrNull { it.key.equals(dayName, ignoreCase = true) }?.value?.size ?: 0
     }
 
-    Column(modifier = Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 20.dp)) {
+    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
 
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 16.dp, bottom = 12.dp)) {
             IconButton(
@@ -272,13 +273,11 @@ fun BunkSimulatorTab(
 
         Button(
             onClick = {
-                // FAILSAFE: Ensure the OTA JSON actually loaded the semester
                 if (calCtx.startDate == LocalDate.MIN) {
                     errorMessage = "Calendar dates for $selectedSemester are currently unavailable. Ensure your calendar data is synced via settings."
                     return@Button
                 }
 
-                // FAILSAFE: Block premature calculations
                 if (today.isBefore(calCtx.startDate)) {
                     errorMessage = "${calCtx.semesterName} has not commenced yet. You cannot simulate attendance until classes begin."
                     return@Button
@@ -472,6 +471,18 @@ fun BunkResultCard(res: BunkProjectorResult, lastUpdatedDate: String) {
                 val currentFraction = (res.currentPct / 100f).coerceIn(0f, 1f).toFloat()
                 val projectedFraction = (res.projectedPct / 100f).coerceIn(0f, 1f).toFloat()
 
+                val animatedCurrentWidth by animateFloatAsState(
+                    targetValue = currentFraction,
+                    animationSpec = tween(800, easing = FastOutSlowInEasing),
+                    label = "currentWidth"
+                )
+
+                val animatedProjectedWidth by animateFloatAsState(
+                    targetValue = projectedFraction,
+                    animationSpec = tween(800, easing = FastOutSlowInEasing),
+                    label = "projectedWidth"
+                )
+
                 val infiniteTransition = rememberInfiniteTransition(label = "pulse")
                 val pulseAlpha by infiniteTransition.animateFloat(
                     initialValue = 0.4f, targetValue = 1.0f,
@@ -479,24 +490,65 @@ fun BunkResultCard(res: BunkProjectorResult, lastUpdatedDate: String) {
                     label = "alpha"
                 )
 
-                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.TopStart) {
-                    Text("75% min", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f), modifier = Modifier.fillMaxWidth(0.75f).wrapContentWidth(Alignment.End))
-                }
-                Spacer(modifier = Modifier.height(4.dp))
+                Box(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
 
-                Box(
-                    modifier = Modifier.fillMaxWidth().height(12.dp).clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-                ) {
-                    if (currentFraction > projectedFraction) {
-                        Box(modifier = Modifier.fillMaxWidth(currentFraction).fillMaxHeight().clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.error.copy(alpha = pulseAlpha)))
+                    // Track & Fill Bar
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                    ) {
+                        if (currentFraction > projectedFraction) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(animatedCurrentWidth)
+                                    .fillMaxHeight()
+                                    .clip(RoundedCornerShape(50))
+                                    .background(MaterialTheme.colorScheme.error.copy(alpha = pulseAlpha))
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(animatedProjectedWidth)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(50))
+                                .background(statusColor)
+                        )
                     }
-                    Box(modifier = Modifier.fillMaxWidth(projectedFraction).fillMaxHeight().clip(RoundedCornerShape(50)).background(statusColor))
-                    Box(modifier = Modifier.fillMaxWidth(0.75f).fillMaxHeight(), contentAlignment = Alignment.CenterEnd) {
-                        Box(modifier = Modifier.width(2.dp).fillMaxHeight().background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)))
+
+                    // Premium Floating 75% Checkpoint Bubble
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.75f)
+                            .height(8.dp),
+                        contentAlignment = Alignment.CenterEnd
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.offset(y = (-18).dp, x = 5.dp)
+                        ) {
+                            Text(
+                                text = "75%",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .shadow(elevation = 6.dp, shape = CircleShape, ambientColor = MaterialTheme.colorScheme.primary)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surface)
+                                    .border(2.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f), CircleShape)
+                            )
+                        }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("${animatedProjected.roundToInt()}%", fontSize = 10.sp, color = statusColor, fontWeight = FontWeight.Bold)
                     Text("$currentInt%", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -626,11 +678,9 @@ fun getCalendarContext(context: Context, selectedSemester: String): CalendarCont
 
     if (allSems.isEmpty()) return CalendarContext(semesterName = selectedSemester)
 
-    // 1. EXACT MATCH
     val exactMatch = allSems.find { it.semesterName.equals(selectedSemester, ignoreCase = true) }
     if (exactMatch != null) return exactMatch
 
-    // 2. FUZZY MATCH (If VTOP calls it "Summer Semester" but JSON says "Short Summer")
     val cleanSelected = selectedSemester.lowercase(Locale.ENGLISH).replace(Regex("[^a-z0-9]"), "")
     val fuzzyMatch = allSems.find {
         val cleanKey = it.semesterName.lowercase(Locale.ENGLISH).replace(Regex("[^a-z0-9]"), "")
@@ -642,7 +692,6 @@ fun getCalendarContext(context: Context, selectedSemester: String): CalendarCont
         return fuzzyMatch.copy(semesterName = selectedSemester)
     }
 
-    // 3. DATE FALLBACK (If names are totally mismatched, trust the current date)
     val today = LocalDate.now()
     val inSession = allSems.filter { !today.isBefore(it.startDate) && !today.isAfter(it.trueEndDate) }
     if (inSession.isNotEmpty()) return inSession.first().copy(semesterName = selectedSemester)

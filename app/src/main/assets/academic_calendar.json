@@ -1,6 +1,6 @@
 {
     "Winter Semester 2025-26": {
-        "id": "WIN 2025-26",
+        "id": "AP2025264",
         "start_date": "2025- 12- 09",
         "week_off": [
             "Sunday",
@@ -43,14 +43,14 @@
         }
     },
     "Long Summer 2025-26": {
-        "id": "LSUM 2025-26",
+        "id": "AP2025268",
         "start_date": "2026-05-20",
         "week_off": [
             "Sunday"
         ],
         "last_instructional_day": "2026-07-10",
         "holidays": {
-            "2026-05-27": "Eid-ul-Adha / Bakrid",
+            "2026-05-28": "Eid-ul-Adha / Bakrid",
             "2026-06-26": "Muharram"
         },
         "exams": {
@@ -69,14 +69,14 @@
         }
     },
     "Short Summer-I 2025-26": {
-        "id": "SSUM1 2025-26",
+        "id": "AP2025266",
         "start_date": "2026-05-20",
         "week_off": [
             "Sunday"
         ],
         "last_instructional_day": "2026-06-12",
         "holidays": {
-            "2026-05-27": "Eid-ul-Adha / Bakrid"
+            "2026-05-28": "Eid-ul-Adha / Bakrid"
         },
         "exams": {
             "Lab FAT": [
@@ -93,7 +93,7 @@
         }
     },
     "Short Summer-II 2025-26": {
-        "id": "SSUM2 2025-26",
+        "id": "AP2025267",
         "start_date": "2026-06-22",
         "week_off": [
             "Sunday"
@@ -116,7 +116,7 @@
         }
     },
     "Fall Semester 2026-27": {
-        "id": "FALL 2026-27",
+        "id": "AP2026274",
         "start_date": "2026-07-14",
         "week_off": [
             "Sunday", "Monday"

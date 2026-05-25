@@ -182,29 +182,29 @@ fun Marks(
     val coroutineScope = rememberCoroutineScope()
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            Spacer(modifier = Modifier.height(16.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp)
-                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(50))
-                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(50))
-                    .padding(4.dp)
-            ) {
-                TabPill("Marks", pagerState.currentPage == 0, Modifier.weight(1f)) {
-                    coroutineScope.launch { pagerState.animateScrollToPage(0) }
-                }
-                TabPill("History", pagerState.currentPage == 1, Modifier.weight(1f)) {
-                    coroutineScope.launch { pagerState.animateScrollToPage(1) }
-                }
+
+        // HorizontalPager now fills the whole screen, allowing scrolling content to run underneath everything
+        HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+            when (page) {
+                0 -> CurrentSemesterMarksView(marksData, mergeMarks)
+                1 -> AcademicHistoryView(historySummary, historyData, onHistoryLoad)
             }
-            Spacer(modifier = Modifier.height(12.dp))
-            HorizontalPager(state = pagerState, modifier = Modifier.weight(1f)) { page ->
-                when (page) {
-                    0 -> CurrentSemesterMarksView(marksData, mergeMarks)
-                    1 -> AcademicHistoryView(historySummary, historyData, onHistoryLoad)
-                }
+        }
+
+        // Floating Tabs pinned below the GlobalTopBar
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 96.dp, start = 20.dp, end = 20.dp)
+                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(50))
+                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(50))
+                .padding(4.dp)
+        ) {
+            TabPill("Marks", pagerState.currentPage == 0, Modifier.weight(1f)) {
+                coroutineScope.launch { pagerState.animateScrollToPage(0) }
+            }
+            TabPill("History", pagerState.currentPage == 1, Modifier.weight(1f)) {
+                coroutineScope.launch { pagerState.animateScrollToPage(1) }
             }
         }
 
@@ -250,9 +250,8 @@ fun Marks(
 
                         val url = "https://cgpa-calculator-vitap.vercel.app/api/app?data=$encodedData"
 
-                        // NEW IN-APP BROWSER LOGIC (Chrome Custom Tabs)
                         val customTabsIntent = CustomTabsIntent.Builder()
-                            .setShowTitle(true) // Shows the website title in the top bar
+                            .setShowTitle(true)
                             .build()
 
                         customTabsIntent.launchUrl(context, Uri.parse(url))
@@ -390,7 +389,8 @@ fun CurrentSemesterMarksView(marksData: List<CourseMark>, mergeMarks: Boolean) {
         }
 
         LazyColumn(
-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 120.dp),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 160.dp, bottom = 120.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             items(uiMarks) { MarksExpandableCard(it) }
@@ -523,8 +523,6 @@ fun AcademicHistoryView(
 
     val groupedHistory = remember(historyData) { historyData.groupBy { it.examMonth ?: "Unknown Semester" } }
 
-    // STATE: Track expanded/collapsed status for each semester group.
-    // By default, we set them all to true (expanded).
     val expandedStates = remember(groupedHistory) {
         mutableStateMapOf<String, Boolean>().apply {
             groupedHistory.keys.forEach { this[it] = true }
@@ -532,8 +530,8 @@ fun AcademicHistoryView(
     }
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize(), // <-- THIS IS THE FIX
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 120.dp),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 160.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // 1. Top Summary Stats
@@ -559,7 +557,7 @@ fun AcademicHistoryView(
                         .fillMaxWidth()
                         .padding(top = 8.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .clickable { expandedStates[examMonth] = !isExpanded } // Toggle state on click
+                        .clickable { expandedStates[examMonth] = !isExpanded }
                         .padding(vertical = 8.dp, horizontal = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
@@ -577,7 +575,6 @@ fun AcademicHistoryView(
 
                         Spacer(Modifier.width(12.dp))
 
-                        // Animated drop-down arrow
                         Icon(
                             imageVector = Icons.Default.KeyboardArrowDown,
                             contentDescription = "Expand/Collapse",
@@ -588,7 +585,6 @@ fun AcademicHistoryView(
                 }
             }
 
-            // Only render the courses if the semester is expanded
             if (isExpanded) {
                 items(courses) { course ->
                     HistoryItemCard(course)

@@ -115,6 +115,7 @@ import java.util.Locale
 import java.util.TimeZone
 import com.composables.icons.lucide.Link2Off
 import com.composables.icons.lucide.Link
+
 private fun formatReminderDate(dateStr: String): String {
     return try {
         val inFormat = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
@@ -122,6 +123,39 @@ private fun formatReminderDate(dateStr: String): String {
         val d = inFormat.parse(dateStr)
         if (d != null) outFormat.format(d) else dateStr
     } catch (e: Exception) { dateStr }
+}
+private fun formatLastSync(timestamp: Long): String {
+
+    if (timestamp <= 0L) {
+        return "Never synced"
+    }
+
+    val diff =
+        System.currentTimeMillis() - timestamp
+
+    val minutes =
+        diff / (1000 * 60)
+
+    val hours =
+        minutes / 60
+
+    val days =
+        hours / 24
+
+    return when {
+
+        minutes < 1 ->
+            "Synced just now"
+
+        minutes < 60 ->
+            "Synced $minutes mins ago"
+
+        hours < 24 ->
+            "Synced $hours hrs ago"
+
+        else ->
+            "Synced $days days ago"
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -149,7 +183,7 @@ fun Profile(
     profileData: Map<String, Map<String, String>>,
     selectedSemester: String,
     availableSemesters: List<SemesterOption>,
-    onSemesterChange: (String) -> Unit,
+    onSemesterChange: (SemesterOption) -> Unit,
     currentRegNo: String,
     currentPass: String,
     onCredentialsSave: (String, String) -> Unit,
@@ -246,13 +280,16 @@ fun Profile(
     var syncDropdownExpanded by remember { mutableStateOf(false) }
     val syncOptions = mapOf(0 to "None", 1 to "1 hr", 2 to "2 hrs", 4 to "4 hrs", 8 to "8 hrs")
 
-    val bottomPadding = if (currentNavStyle == "STATIC") 110.dp else 16.dp
-
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 0.dp),
+            .padding(
+                start = 20.dp,
+                end = 20.dp,
+                top = 96.dp, // Under-scroll for TopBar
+                bottom = 40.dp // Reduced because Profile hides the bottom nav bar
+            ),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // --- TOP BAR ---
@@ -369,9 +406,20 @@ fun Profile(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Last Synced", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Last Synced",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                     Spacer(Modifier.height(2.dp))
-                    Text(lastSyncTime, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        text = formatLastSync(lastSyncTime.toLongOrNull() ?: 0L),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
                 Box(
                     modifier = Modifier
@@ -772,7 +820,7 @@ fun Profile(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { showAboutSheet = true } // Now opens the About sheet
+                    .clickable { showAboutSheet = true }
                     .padding(16.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -812,11 +860,9 @@ fun Profile(
                 fontSize = 14.sp
             )
         }
-
-        Spacer(Modifier.height(bottomPadding))
     }
+
     // --- DIALOGS & BOTTOM SHEETS ---
-        // --- ABOUT APP SHEET ---
     if (showAboutSheet) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -1044,7 +1090,6 @@ fun Profile(
                             letterSpacing = 0.5.sp
                         )
                         Markdown(
-                            // FIX: Translates literal '\n' string to an actual newline break
                             content = updateInfo!!.releaseNotes.replace("\\n", "\n"),
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -1118,7 +1163,7 @@ fun Profile(
                             colors = CardDefaults.cardColors(containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.fillMaxWidth().clickable {
-                                onSemesterChange(sem.name)
+                                onSemesterChange(sem)
                                 showSemesterDialog = false
                             }
                         ) {

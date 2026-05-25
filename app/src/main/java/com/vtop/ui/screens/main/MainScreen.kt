@@ -12,15 +12,14 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -34,8 +33,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.ExperimentalMaterialApi
@@ -48,10 +45,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalConfiguration
@@ -59,16 +56,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
-import com.vtop.ui.pages.*
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
-import androidx.core.content.edit
 import androidx.glance.appwidget.updateAll
 import com.composables.icons.lucide.*
 import com.vtop.models.*
-import com.vtop.ui.VtopAnalyticsTab
 import com.vtop.ui.core.*
 import com.vtop.ui.screens.portal.VtopPortalScreen
 import com.vtop.ui.screens.sub.BunkSimulatorTab
@@ -93,17 +87,15 @@ fun MainScreen(
     timetable: TimetableModel,
     attendanceData: List<AttendanceModel>,
     examsData: List<ExamScheduleModel>,
-    onSyncClick: (String, Boolean) -> Unit, // Just defines the type
+    onSyncClick: (String, Boolean) -> Unit,
     onLogoutClick: Runnable,
     outingHandler: OutingActionHandler
 ) {
-    // 1. Fire the Sequential Permission Handler instantly
     HomepagePermissionHandler()
 
     val context = LocalContext.current
     val sharedPrefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
 
-    // INSTANT EVALUATION: Check if the semester is over the second the app opens
     LaunchedEffect(examsData) {
         if (examsData.isNotEmpty()) {
             AppBridge.isSemesterCompleted.value = com.vtop.utils.SemesterTransitionEngine.checkIfLastFatIsOver(examsData)
@@ -124,12 +116,9 @@ fun MainScreen(
     }
 
     var navStyle by remember {
-        mutableStateOf(
-            Vault.getNavStyle(context).let {
-                if (it.isBlank() || !sharedPrefs.contains("NAV_STYLE_SET")) "STATIC" else it
-            }
-        )
+        mutableStateOf(Vault.getNavStyle(context).let { if (it.isBlank() || !sharedPrefs.contains("NAV_STYLE_SET")) "STATIC" else it })
     }
+    val reminders by remember { mutableStateOf(ReminderManager.loadReminders(context)) }
 
     var showOutings by remember { mutableStateOf(sharedPrefs.getBoolean("SHOW_OUTINGS", true)) }
     var mergeLabs by remember { mutableStateOf(sharedPrefs.getBoolean("MERGE_LABS", true)) }
@@ -146,17 +135,10 @@ fun MainScreen(
         navItems.indexOf("OUTINGS")
     } else 0
 
-    var currentTab by remember {
-
-        mutableStateOf(
-            navItems[initialPage]
-        )
-    }
+    var currentTab by remember { mutableStateOf(navItems[initialPage]) }
     val coroutineScope = rememberCoroutineScope()
 
-    var activeOverlay by remember {
-        mutableStateOf<String?>(if (initialShortcutAction == "com.vtop.SHORTCUT_SIMULATOR") "SIMULATOR" else null)
-    }
+    var activeOverlay by remember { mutableStateOf<String?>(if (initialShortcutAction == "com.vtop.SHORTCUT_SIMULATOR") "SIMULATOR" else null) }
 
     val handleSyncAndUpdateWidget = { screen: String, forceNewSession: Boolean ->
         onSyncClick(screen, forceNewSession)
@@ -166,18 +148,10 @@ fun MainScreen(
         Unit
     }
 
-    BackHandler(
-        enabled =
-            activeOverlay != null ||
-                    currentTab != "HOME"
-    ) {
-
+    BackHandler(enabled = activeOverlay != null || currentTab != "HOME") {
         if (activeOverlay != null) {
-
             activeOverlay = null
-
         } else {
-
             currentTab = "HOME"
         }
     }
@@ -188,21 +162,11 @@ fun MainScreen(
     val screenHeightPx = with(density) { config.screenHeightDp.dp.toPx() }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
-    val isRefreshing by remember {
-
-        derivedStateOf {
-
-            AppBridge.syncStatus.value != "IDLE"
-        }
-    }
+    val isRefreshing by remember { derivedStateOf { AppBridge.syncStatus.value != "IDLE" } }
 
     val pullRefreshState = rememberPullRefreshState(
         refreshing = isRefreshing,
-        onRefresh = {
-            handleSyncAndUpdateWidget(currentTab, false)
-            coroutineScope.launch {
-            }
-        }
+        onRefresh = { handleSyncAndUpdateWidget(currentTab, false) }
     )
 
     val errorMsg = AppBridge.appError.value
@@ -214,305 +178,117 @@ fun MainScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Box(
-            modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).pullRefresh(pullRefreshState)
-        ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                GlobalTopBar(
+    Box(modifier = Modifier.fillMaxSize().systemBarsPadding().background(MaterialTheme.colorScheme.background)) {
+        Box(modifier = Modifier.fillMaxSize().pullRefresh(pullRefreshState)) {
+            val tabPadding = when (currentTab) {
+                "HOME", "EXAMS", "MARKS", "OUTINGS", "PROFILE", "ATTENDANCE"-> PaddingValues(0.dp)
+                else -> PaddingValues(top = 80.dp, bottom = if (navStyle == "STATIC" && currentTab != "PROFILE") 96.dp else 20.dp)
+            }
 
-                    currentScreen = currentTab,
-
-                    onProfileClick = {
-
-                        coroutineScope.launch {
-
-                            currentTab = "PROFILE"
-
-                        }
-                    },
-
-                    onExportTimetable = {
-
-                        coroutineScope.launch {
-
+            Box(modifier = Modifier.fillMaxSize().padding(tabPadding)) {
+                when (currentTab) {
+                    "HOME" -> {
+                        val holidaysMap = remember {
                             try {
-
-                                android.util.Log.d(
-                                    "TT_EXPORT",
-                                    "Download button clicked"
-                                )
-
-                                Toast.makeText(
-                                    context,
-                                    "Starting export...",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-
-                                var client =
-                                    AppBridge.activeClient
-                                android.util.Log.d(
-                                    "TT_EXPORT",
-                                    "Retrieved global client: $client"
-                                )
-
-                                android.util.Log.d(
-                                    "TT_EXPORT",
-                                    "Existing client = $client"
-                                )
-
-                                if (client == null) {
-
-                                    val creds =
-                                        Vault.getCredentials(context)
-
-                                    android.util.Log.d(
-                                        "TT_EXPORT",
-                                        "Creating fallback client"
-                                    )
-
-                                    client =
-                                        com.vtop.network.VtopClient(
-                                            context,
-                                            creds[0] ?: "",
-                                            creds[1] ?: ""
-                                        )
-
-                                    AppBridge.activeClient = client
+                                val json = try {
+                                    com.vtop.utils.OtaManager.getCalendarJson(context)
+                                } catch (e: Exception) {
+                                    context.assets.open("academic_calendar.json").bufferedReader().use { it.readText() }
                                 }
 
-                                android.util.Log.d(
-                                    "TT_EXPORT",
-                                    "Starting export pipeline"
-                                )
+                                val root = org.json.JSONObject(json)
+                                val selectedSemInfo = Vault.getSelectedSemester(context)
+                                val selectedSemId = selectedSemInfo[0] ?: ""
+                                val selectedSemName = selectedSemInfo[1] ?: ""
+                                var matchedSemester: org.json.JSONObject? = null
 
-                                val result =
-                                    com.vtop.services.TTExport
-                                        .exportCurrentSemesterTimetable(
-                                            context,
-                                            client
-                                        )
-
-                                android.util.Log.d(
-                                    "TT_EXPORT",
-                                    "Export returned"
-                                )
-
-                                result.onSuccess {
-
-                                    android.util.Log.d(
-                                        "TT_EXPORT",
-                                        "Export success"
-                                    )
-
-                                    Toast.makeText(
-                                        context,
-                                        "Timetable exported successfully",
-                                        Toast.LENGTH_LONG
-                                    ).show()
+                                // THE FIX: Fuzzy matching. Checks ID, or exact Key, or selected Name.
+                                root.keys().forEach { key ->
+                                    if (key != "blocked_dates" && key != "semester") {
+                                        val obj = root.optJSONObject(key)
+                                        val id = obj?.optString("id", key) ?: key
+                                        if (id == selectedSemId || key == selectedSemId || key == selectedSemName) {
+                                            matchedSemester = obj
+                                        }
+                                    }
                                 }
 
-                                result.onFailure {
-
-                                    android.util.Log.e(
-                                        "TT_EXPORT",
-                                        "Export failure",
-                                        it
-                                    )
-
-                                    it.printStackTrace()
-
-                                    Toast.makeText(
-                                        context,
-                                        it.message ?: "Export failed",
-                                        Toast.LENGTH_LONG
-                                    ).show()
+                                val holidaysObj = matchedSemester?.optJSONObject("holidays")
+                                buildMap<String, String> {
+                                    holidaysObj?.keys()?.forEach { date ->
+                                        put(date, holidaysObj.optString(date))
+                                    }
                                 }
-
                             } catch (e: Exception) {
-
-                                android.util.Log.e(
-                                    "TT_EXPORT",
-                                    "Outer crash",
-                                    e
-                                )
-
-                                e.printStackTrace()
-
-                                Toast.makeText(
-                                    context,
-                                    e.message ?: "Export failed",
-                                    Toast.LENGTH_LONG
-                                ).show()
+                                Log.d("HOLIDAY_ERR", e.message ?: "unknown")
+                                emptyMap()
                             }
                         }
+
+                        Timetable(
+                            timetable = timetable,
+                            attendanceData = attendanceData,
+                            examsData = examsData,
+                            holidays = holidaysMap
+                        )
                     }
-                )
-
-                Box(
-                    modifier =
-                        Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                ) {
-
-                    when (currentTab) {
-
-                        "HOME" -> {
-
-                            Timetable(
-                                timetable = timetable,
-                                attendanceData = attendanceData,
-                                examsData = examsData
-                            )
-                        }
-
-                        "ATTENDANCE" -> {
-
-                            Attendance(attendanceData)
-                        }
-
-                        "EXAMS" -> {
-
-                            Exams(examsData)
-                        }
-
-                        "MARKS" -> {
-
-                            Marks(
-                                marksData =
-                                    AppBridge.marksState.value,
-
-                                historySummary =
-                                    AppBridge.historySummaryState.value,
-
-                                historyData =
-                                    AppBridge.historyItemsState.value,
-
-                                onHistoryLoad = {}
-                            )
-                        }
-
-                        "OUTINGS" -> {
-
-                            VtopOutingsTab(
-                                outingsData =
-                                    AppBridge.outingsState.value,
-
-                                handler =
-                                    outingHandler
-                            )
-                        }
-
-                        "PROFILE" -> {
-
-                            Profile(
-                                onBack = {
-                                    currentTab = "HOME"
-                                },
-
-                                timetable = timetable,
-
-                                examsData = examsData,
-
-                                onOpenPortal = {
-                                    activeOverlay = "PORTAL"
-                                },
-
-                                currentTheme =
-                                    ThemeManager.themeMode.value,
-
-                                onThemeChange = {
-                                    ThemeManager.themeMode.value = it
-                                },
-
-                                useDynamicColor =
-                                    ThemeManager.useDynamicColor.value,
-
-                                onDynamicColorChange = {
-                                    ThemeManager.useDynamicColor.value = it
-                                },
-
-                                customAccent =
-                                    ThemeManager.customAccent.value,
-
-                                onAccentChange = {
-                                    ThemeManager.customAccent.value = it
-                                },
-
-                                currentNavStyle = navStyle,
-
-                                onNavStyleChange = {
-                                    navStyle = it
-                                },
-
-                                mergeLabs = mergeLabs,
-
-                                onMergeLabsChange = {
-                                    mergeLabs = it
-                                },
-
-                                mergeMarks = mergeMarks,
-
-                                onMergeMarksChange = {
-                                    mergeMarks = it
-                                },
-
-                                showOutings = showOutings,
-
-                                onShowOutingsChange = {
-                                    showOutings = it
-                                },
-
-                                onLogout = {
-                                    onLogoutClick.run()
-                                },
-                                profileData = emptyMap(),
-
-                                selectedSemester =
-                                    Vault.getSelectedSemester(context)[0]
-                                        ?: "",
-
-                                availableSemesters = emptyList<SemesterOption>(),
-
-                                onSemesterChange = {},
-
-                                currentRegNo =
-                                    Vault.getCredentials(context)[0]
-                                        ?: "",
-
-                                currentPass =
-                                    Vault.getCredentials(context)[1]
-                                        ?: "",
-
-                                onCredentialsSave = { _, _ -> },
-
-                                reminders =
-                                    ReminderManager.loadReminders(context),
-
-                                onDeleteReminder = {},
-
-                                onNavigateToAnalytics = {
-                                    activeOverlay = "ANALYTICS"
-                                },
-
-                                lastSyncTime =
-                                    Vault.getLastSyncTimestamp(context)
-                                        .toString(),
-
-                                onSyncClick = {
-
-                                    handleSyncAndUpdateWidget(
-                                        currentTab,
-                                        it
-                                    )
-                                },
-
-                                onNavigateToFaculty = {
-                                    activeOverlay = "FACULTY"
-                                }
-                            )
-                        }
+                    "ATTENDANCE" -> {
+                        Attendance(attendanceData = attendanceData, onLaunchSimulator = { activeOverlay = "SIMULATOR" })
+                    }
+                    "EXAMS" -> {
+                        Exams(examsData)
+                    }
+                    "MARKS" -> {
+                        Marks(
+                            marksData = AppBridge.marksState.value,
+                            historySummary = AppBridge.historySummaryState.value,
+                            historyData = AppBridge.historyItemsState.value,
+                            onHistoryLoad = {}
+                        )
+                    }
+                    "OUTINGS" -> {
+                        VtopOutingsTab(outingsData = AppBridge.outingsState.value, handler = outingHandler)
+                    }
+                    "PROFILE" -> {
+                        val profileStateValue = AppBridge.profileState.value
+                        val profileMap = remember(profileStateValue) { profileStateValue?.takeIf { it.isNotEmpty() } ?: Vault.getProfile(context) }
+                        Profile(
+                            onBack = { currentTab = "HOME" },
+                            timetable = timetable,
+                            examsData = examsData,
+                            onOpenPortal = { activeOverlay = "PORTAL" },
+                            currentTheme = ThemeManager.themeMode.value,
+                            onThemeChange = { ThemeManager.themeMode.value = it },
+                            useDynamicColor = ThemeManager.useDynamicColor.value,
+                            onDynamicColorChange = { ThemeManager.useDynamicColor.value = it },
+                            customAccent = ThemeManager.customAccent.value,
+                            onAccentChange = { ThemeManager.customAccent.value = it },
+                            currentNavStyle = navStyle,
+                            onNavStyleChange = { navStyle = it },
+                            mergeLabs = mergeLabs,
+                            onMergeLabsChange = { mergeLabs = it },
+                            mergeMarks = mergeMarks,
+                            onMergeMarksChange = { mergeMarks = it },
+                            showOutings = showOutings,
+                            onShowOutingsChange = { showOutings = it },
+                            onLogout = { onLogoutClick.run() },
+                            profileData = profileMap,
+                            selectedSemester = Vault.getSelectedSemester(context)[1] ?: "",
+                            availableSemesters = Vault.getSemesterOptions(context),
+                            onSemesterChange = { sem ->
+                                Vault.saveSelectedSemester(context, sem.id, sem.name)
+                                handleSyncAndUpdateWidget(currentTab, true)
+                            },
+                            currentRegNo = Vault.getCredentials(context)[0] ?: "",
+                            currentPass = Vault.getCredentials(context)[1] ?: "",
+                            onCredentialsSave = { _, _ -> },
+                            reminders = reminders,
+                            onDeleteReminder = {},
+                            onNavigateToAnalytics = { activeOverlay = "ANALYTICS" },
+                            lastSyncTime = Vault.getLastSyncTimestamp(context).toString(),
+                            onSyncClick = { handleSyncAndUpdateWidget(currentTab, it) },
+                            onNavigateToFaculty = { activeOverlay = "FACULTY" }
+                        )
                     }
                 }
             }
@@ -520,51 +296,61 @@ fun MainScreen(
             PullRefreshIndicator(
                 refreshing = isRefreshing,
                 state = pullRefreshState,
-                modifier = Modifier.align(Alignment.TopCenter),
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 80.dp),
                 backgroundColor = MaterialTheme.colorScheme.surface,
                 contentColor = MaterialTheme.colorScheme.primary
             )
+        }
 
-            if (navStyle == "STATIC" && currentTab != "PROFILE") {
-                Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding()) {
-                    BottomNavigation(
-                        currentTab,
-                        navItems
-                    ) { tabName ->
-
-                        currentTab = tabName
+        Box(modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().zIndex(10f)) {
+            GlobalTopBar(
+                currentScreen = currentTab,
+                onProfileClick = { coroutineScope.launch { currentTab = "PROFILE" } },
+                onExportTimetable = {
+                    coroutineScope.launch {
+                        try {
+                            Toast.makeText(context, "Starting export...", Toast.LENGTH_SHORT).show()
+                            var client = AppBridge.activeClient
+                            if (client == null) {
+                                val creds = Vault.getCredentials(context)
+                                client = com.vtop.network.VtopClient(context, creds[0] ?: "", creds[1] ?: "")
+                                AppBridge.activeClient = client
+                            }
+                            val result = com.vtop.services.TTExport.exportCurrentSemesterTimetable(context, client)
+                            result.onSuccess { Toast.makeText(context, "Timetable exported successfully", Toast.LENGTH_LONG).show() }
+                            result.onFailure { Toast.makeText(context, it.message ?: "Export failed", Toast.LENGTH_LONG).show() }
+                        } catch (e: Exception) {
+                            Toast.makeText(context, e.message ?: "Export failed", Toast.LENGTH_LONG).show()
+                        }
                     }
                 }
+            )
+        }
+
+        if (navStyle == "STATIC" && currentTab != "PROFILE") {
+            Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().zIndex(10f)) {
+                BottomNavigation(currentTab, navItems) { tabName -> currentTab = tabName }
             }
+        }
 
-            if (navStyle != "STATIC" && currentTab != "PROFILE") {
-                Box(
-                    modifier = Modifier.offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }.align(Alignment.BottomCenter).padding(bottom = 60.dp)
-                        .pointerInput(Unit) {
-                            detectDragGestures { change, dragAmount ->
-                                change.consume()
-                                offsetX += dragAmount.x
-                                offsetY += dragAmount.y
-                                val hLimit = (screenWidthPx / 2f) - with(density) { 30.dp.toPx() }
-                                val vTopLimit = -(screenHeightPx - with(density) { 140.dp.toPx() })
-                                val vBottomLimit = with(density) { 20.dp.toPx() }
-                                offsetX = offsetX.coerceIn(-hLimit, hLimit)
-                                offsetY = offsetY.coerceIn(vTopLimit, vBottomLimit)
-                            }
+        if (navStyle != "STATIC" && currentTab != "PROFILE") {
+            Box(
+                modifier = Modifier.offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }.align(Alignment.BottomCenter).padding(bottom = 24.dp).zIndex(10f)
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            offsetX += dragAmount.x
+                            offsetY += dragAmount.y
+                            val hLimit = (screenWidthPx / 2f) - with(density) { 30.dp.toPx() }
+                            val vTopLimit = -(screenHeightPx * 0.72f)
+                            val vBottomLimit = with(density) { 20.dp.toPx() }
+                            offsetX = offsetX.coerceIn(-hLimit, hLimit)
+                            offsetY = offsetY.coerceIn(vTopLimit, vBottomLimit)
                         }
-                ) {
-                    FloatingDockContainer(
-                        currentTab,
-                        navItems,
-                        offsetX,
-                        offsetY,
-                        screenWidthPx,
-                        screenHeightPx,
-                        handleSyncAndUpdateWidget
-                    ) { tabName ->
-
-                        currentTab = tabName
                     }
+            ) {
+                FloatingDockContainer(currentTab, navItems, offsetX, offsetY, screenWidthPx, screenHeightPx, handleSyncAndUpdateWidget) { tabName ->
+                    currentTab = tabName
                 }
             }
         }
@@ -580,15 +366,8 @@ fun MainScreen(
                     "SIMULATOR" -> {
                         val semInfo = Vault.getSelectedSemester(context)
                         val currentSemName = semInfo[1] ?: semInfo[0] ?: "Unknown Semester"
-
-                        BunkSimulatorTab(
-                            timetable = timetable,
-                            attendanceData = attendanceData,
-                            selectedSemester = currentSemName,
-                            onBack = { activeOverlay = null }
-                        )
+                        BunkSimulatorTab(timetable = timetable, attendanceData = attendanceData, selectedSemester = currentSemName, onBack = { activeOverlay = null })
                     }
-                    "ANALYTICS" -> VtopAnalyticsTab(attendanceData = attendanceData, historySummary = AppBridge.historySummaryState.value, historyData = AppBridge.historyItemsState.value)
                     "PORTAL" -> {
                         val creds = Vault.getCredentials(context)
                         val client = remember { com.vtop.network.VtopClient(context, creds[0] ?: "", creds[1] ?: "") }
@@ -596,127 +375,47 @@ fun MainScreen(
                         VtopPortalScreen(vtopClient = client, onClose = { activeOverlay = null })
                     }
                     "FACULTY" -> {
-                        // Loads the JSON and displays the global directory!
                         FacultyScreen(facultyList = loadFaculty(LocalContext.current))
                     }
                 }
             }
         }
 
-        // Replace the bottom block in MainScreen.kt with this:
-
-        val otpResolver =
-            AppBridge.currentOtpResolver.value
-
+        val otpResolver = AppBridge.currentOtpResolver.value
         if (otpResolver != null) {
-
-            var showCancelConfirm by remember {
-                mutableStateOf(false)
-            }
+            var showCancelConfirm by remember { mutableStateOf(false) }
 
             if (showCancelConfirm) {
-
                 AlertDialog(
-
-                    onDismissRequest = {
-                        showCancelConfirm = false
-                    },
-
-                    title = {
-                        Text(
-                            "Cancel Sync?",
-                            fontWeight = FontWeight.Bold
-                        )
-                    },
-
-                    text = {
-                        Text(
-                            "Do you want to cancel the synchronization process?"
-                        )
-                    },
-
+                    onDismissRequest = { showCancelConfirm = false },
+                    title = { Text("Cancel Sync?", fontWeight = FontWeight.Bold) },
+                    text = { Text("Do you want to cancel the synchronization process?") },
                     confirmButton = {
-
                         TextButton(
-
                             onClick = {
-
                                 showCancelConfirm = false
-
                                 otpResolver.cancel()
-
-                                AppBridge.currentOtpResolver.value =
-                                    null
-
+                                AppBridge.currentOtpResolver.value = null
                                 GlobalSyncer.cancelActiveSync()
-
-                                if (activeOverlay == "PORTAL") {
-
-                                    activeOverlay = null
-                                }
-
+                                if (activeOverlay == "PORTAL") { activeOverlay = null }
                                 coroutineScope.launch {
-
-                                    val profileIndex =
-                                        navItems.indexOf("PROFILE")
-
-                                    if (profileIndex != -1) {
-
-                                        currentTab = "PROFILE"
-                                    }
+                                    val profileIndex = navItems.indexOf("PROFILE")
+                                    if (profileIndex != -1) currentTab = "PROFILE"
                                 }
                             }
-                        ) {
-
-                            Text("Yes")
-                        }
+                        ) { Text("Yes") }
                     },
-
-                    dismissButton = {
-
-                        TextButton(
-
-                            onClick = {
-                                showCancelConfirm = false
-                            }
-                        ) {
-
-                            Text("No")
-                        }
-                    },
-
-                    containerColor =
-                        MaterialTheme.colorScheme.surface,
-
-                    titleContentColor =
-                        MaterialTheme.colorScheme.onSurface,
-
-                    textContentColor =
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                    dismissButton = { TextButton(onClick = { showCancelConfirm = false }) { Text("No") } },
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    textContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
-            Box(
-                modifier =
-                    Modifier
-                        .fillMaxSize()
-                        .zIndex(100f)
-            ) {
-
+            Box(modifier = Modifier.fillMaxSize().zIndex(100f)) {
                 OtpForm(
-
-                    onVerify = { otp ->
-
-                        otpResolver.submit(otp)
-
-                        AppBridge.currentOtpResolver.value =
-                            null
-                    },
-
-                    onCancel = {
-
-                        showCancelConfirm = true
-                    }
+                    onVerify = { otp -> otpResolver.submit(otp); AppBridge.currentOtpResolver.value = null },
+                    onCancel = { showCancelConfirm = true }
                 )
             }
         }
@@ -737,232 +436,72 @@ fun SemesterCompletedView() {
 }
 
 @Composable
-fun GlobalTopBar(
-    currentScreen: String,
-    onProfileClick: () -> Unit,
-    onExportTimetable: () -> Unit
-) {
-
+fun GlobalTopBar(currentScreen: String, onProfileClick: () -> Unit, onExportTimetable: () -> Unit) {
     val context = LocalContext.current
-
     val syncStatus by AppBridge.syncStatus
-
-    var subtitleText by remember {
-        mutableStateOf("Loading...")
-    }
+    var subtitleText by remember { mutableStateOf("Loading...") }
 
     LaunchedEffect(syncStatus) {
-
-        while (true) {
-
-            val text =
-                if (syncStatus != "IDLE") {
-
-                    syncStatus
-
-                } else {
-
-                    val lastSyncMillis =
-                        Vault.getLastSyncTimestamp(context)
-
-                    if (lastSyncMillis == 0L) {
-
-                        "Never synced"
-
-                    } else {
-
-                        val diffMinutes =
-                            (
-                                    System.currentTimeMillis() -
-                                            lastSyncMillis
-                                    ) / 60000
-
-                        when {
-
-                            diffMinutes <= 1L ->
-                                "Synced just now"
-
-                            diffMinutes < 60L ->
-                                "Synced $diffMinutes mins ago"
-
-                            diffMinutes < 1440L ->
-                                "Synced ${diffMinutes / 60L} hrs ago"
-
-                            else ->
-                                "Synced ${diffMinutes / 1440L} days ago"
-                        }
-                    }
+        if (syncStatus != "IDLE") {
+            subtitleText = syncStatus
+        } else {
+            val lastSyncMillis = Vault.getLastSyncTimestamp(context)
+            subtitleText = if (lastSyncMillis == 0L) {
+                "Never synced"
+            } else {
+                val diffMinutes = (System.currentTimeMillis() - lastSyncMillis) / 60000
+                when {
+                    diffMinutes <= 1L -> "Synced just now"
+                    diffMinutes < 60L -> "Synced $diffMinutes mins ago"
+                    diffMinutes < 1440L -> "Synced ${diffMinutes / 60L} hrs ago"
+                    else -> "Synced ${diffMinutes / 1440L} days ago"
                 }
-
-            subtitleText = text
-
-            delay(60000)
+            }
         }
     }
 
     val displayTitle = remember(currentScreen) {
-
-        when (
-            currentScreen.uppercase(Locale.ROOT)
-        ) {
-
-            "HOME" ->
-                "Timetable"
-
-            "ATTENDANCE" ->
-                "Attendance"
-
-            "EXAMS" ->
-                "Exam Schedule"
-
-            "MARKS" ->
-                "Marks & Grades"
-
-            "OUTINGS" ->
-                "Outings"
-
-            "PROFILE" ->
-                "Settings"
-
-            else ->
-                currentScreen
+        when (currentScreen.uppercase(Locale.ROOT)) {
+            "HOME" -> "Timetable"
+            "ATTENDANCE" -> "Attendance"
+            "EXAMS" -> "Exam Schedule"
+            "MARKS" -> "Marks & Grades"
+            "OUTINGS" -> "Outings"
+            "PROFILE" -> "Settings"
+            else -> currentScreen
         }
     }
 
-    val pulseAlpha by animateFloatAsState(
-
-        targetValue =
-            if (syncStatus != "IDLE") {
-                0.55f
-            } else {
-                1f
-            },
-
-        animationSpec = tween(700),
-
-        label = "syncPulse"
-    )
+    val pulseAlpha by animateFloatAsState(targetValue = if (syncStatus != "IDLE") 0.55f else 1f, animationSpec = tween(700), label = "syncPulse")
 
     Surface(
-
-        modifier =
-            Modifier.fillMaxWidth(),
-
-        color =
-            MaterialTheme.colorScheme.background
-                .copy(alpha = 0.72f)
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
     ) {
-
         Row(
-
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(
-                    horizontal = 20.dp,
-                    vertical = 14.dp
-                ),
-
-            horizontalArrangement =
-                Arrangement.SpaceBetween,
-
-            verticalAlignment =
-                Alignment.CenterVertically
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-
             Column {
-
-                Text(
-                    text = displayTitle,
-
-                    color =
-                        MaterialTheme.colorScheme
-                            .onBackground,
-
-                    fontSize = 28.sp,
-
-                    fontWeight = FontWeight.Black
-                )
-
-                Text(
-
-                    text = subtitleText,
-
-                    color =
-                        MaterialTheme.colorScheme
-                            .onSurfaceVariant
-                            .copy(alpha = pulseAlpha),
-
-                    fontSize = 12.sp,
-
-                    fontWeight = FontWeight.Medium
-                )
+                Text(text = displayTitle, color = MaterialTheme.colorScheme.onBackground, fontSize = 28.sp, fontWeight = FontWeight.Black)
+                Text(text = subtitleText, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = pulseAlpha), fontSize = 12.sp, fontWeight = FontWeight.Medium)
             }
-
             if (currentScreen != "PROFILE") {
-
-                Row(
-                    verticalAlignment =
-                        Alignment.CenterVertically
-                ) {
-
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     if (currentScreen == "HOME") {
-
                         IconButton(
-
-                            onClick =
-                                onExportTimetable,
-
-                            modifier =
-                                Modifier
-                                    .padding(end = 8.dp)
-                                    .background(
-                                        MaterialTheme.colorScheme.surfaceVariant
-                                            .copy(alpha = 0.7f),
-
-                                        CircleShape
-                                    )
+                            onClick = onExportTimetable,
+                            modifier = Modifier.padding(end = 8.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f), CircleShape)
                         ) {
-
-                            Icon(
-
-                                Icons.Default.Download,
-
-                                contentDescription =
-                                    "Export Timetable",
-
-                                tint =
-                                    MaterialTheme.colorScheme
-                                        .onSurfaceVariant
-                            )
+                            Icon(imageVector = Lucide.ArrowDownToLine, contentDescription = "Export Timetable", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
-
                     IconButton(
-
-                        onClick =
-                            onProfileClick,
-
-                        modifier =
-                            Modifier.background(
-                                MaterialTheme.colorScheme.surfaceVariant
-                                    .copy(alpha = 0.7f),
-
-                                CircleShape
-                            )
+                        onClick = onProfileClick,
+                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f), CircleShape)
                     ) {
-
-                        Icon(
-
-                            Lucide.User,
-
-                            contentDescription =
-                                "Profile",
-
-                            tint =
-                                MaterialTheme.colorScheme
-                                    .onSurfaceVariant
-                        )
+                        Icon(Lucide.User, contentDescription = "Profile", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -983,7 +522,7 @@ fun BottomNavigation(currentTab: String, availableTabs: List<String>, onSelect: 
     val visibleTabs = allTabs.filter { availableTabs.contains(it.first) }
 
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp).clip(RoundedCornerShape(24.dp)),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
         shape = RoundedCornerShape(24.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
@@ -992,7 +531,7 @@ fun BottomNavigation(currentTab: String, availableTabs: List<String>, onSelect: 
             visibleTabs.forEach { item ->
                 val (screenId, label, icon) = item
                 val isSelected = currentTab.equals(screenId, true)
-                val tint by animateColorAsState(targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), label = "navTint")
+                val tint by animateColorAsState(targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f), label = "navTint")
                 val scale by animateFloatAsState(targetValue = if (isSelected) 1.15f else 1f, label = "navScale")
 
                 Column(
@@ -1011,38 +550,12 @@ fun BottomNavigation(currentTab: String, availableTabs: List<String>, onSelect: 
 @Composable
 fun FloatingDockContainer(currentScreen: String, items: List<String>, offsetX: Float, offsetY: Float, screenWidthPx: Float, screenHeightPx: Float, onSyncClick: (String, Boolean) -> Unit, onSelect: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    val position by remember(
-        offsetX,
-        offsetY
-    ) {
-
-        derivedStateOf {
-
-            when {
-
-                offsetX <
-                        -(screenWidthPx * 0.35f) -> {
-
-                    DockPosition.LEFT
-                }
-
-                offsetX >
-                        (screenWidthPx * 0.35f) -> {
-
-                    DockPosition.RIGHT
-                }
-
-                offsetY <
-                        -(screenHeightPx * 0.7f) -> {
-
-                    DockPosition.TOP
-                }
-
-                else -> {
-
-                    DockPosition.BOTTOM
-                }
-            }
+    val position = remember(offsetX, offsetY) {
+        when {
+            offsetX < -(screenWidthPx * 0.35f) -> DockPosition.LEFT
+            offsetX > (screenWidthPx * 0.35f) -> DockPosition.RIGHT
+            offsetY < -(screenHeightPx * 0.7f) -> DockPosition.TOP
+            else -> DockPosition.BOTTOM
         }
     }
     val transformOrigin = when (position) {
@@ -1118,48 +631,34 @@ fun HomepagePermissionHandler() {
     val context = LocalContext.current
     var currentStep by remember { mutableIntStateOf(0) }
 
-    // 1. Launcher for Android 13+ Notifications
-    val notificationLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) {
-        currentStep = 1 // Move to Exact Alarms
-    }
+    val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { currentStep = 1 }
+    val alarmLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { currentStep = 2 }
 
-    // 2. Launcher for Exact Alarms
-    val alarmLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        currentStep = 2 // Done
-    }
-
-    // Sequentially evaluate and trigger permissions
     LaunchedEffect(currentStep) {
         when (currentStep) {
-            0 -> { // Step 0: Notifications (Android 13+)
+            0 -> {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     val status = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
                     if (status != PackageManager.PERMISSION_GRANTED) {
                         notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     } else {
-                        currentStep = 1 // Already granted, skip to Exact Alarms
+                        currentStep = 1
                     }
                 } else {
-                    currentStep = 1 // Not required, skip to Exact Alarms
+                    currentStep = 1
                 }
             }
-            1 -> { // Step 1: Exact Alarms (Android 12+)
+            1 -> {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
                     if (!alarmManager.canScheduleExactAlarms()) {
-                        val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
-                            data = Uri.parse("package:${context.packageName}")
-                        }
+                        val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply { data = Uri.parse("package:${context.packageName}") }
                         alarmLauncher.launch(intent)
                     } else {
-                        currentStep = 2 // Done
+                        currentStep = 2
                     }
                 } else {
-                    currentStep = 2 // Done
+                    currentStep = 2
                 }
             }
         }
