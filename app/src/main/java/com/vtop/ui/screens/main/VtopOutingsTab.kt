@@ -107,6 +107,11 @@ private fun formatDate(dateStr: String?, yearFormat: Boolean = false): String {
     }
 }
 
+private fun isStrictlyApproved(statusUpper: String): Boolean {
+    return (statusUpper.contains("ISSUED") || statusUpper.contains("AVAILED") || statusUpper.contains("APPROVE") || statusUpper.contains("ACCEPT")) &&
+            !statusUpper.contains("WAITING") && !statusUpper.contains("PENDING") && !statusUpper.contains("FORWARD")
+}
+
 private fun calculateLiveProgress(outD: String, outT: String, inD: String, inT: String, currentMillis: Long, isWeekend: Boolean): Triple<String, Float, Boolean> {
     try {
         val dateFmtIn = if (outD.contains("-") && outD.split("-")[0].length == 4) "yyyy-MM-dd" else "dd-MMM-yyyy"
@@ -264,33 +269,6 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
         s.contains("PENDING") || s.contains("WAITING") || s.contains("FORWARD")
     }
 
-    val sharedPrefs = remember { context.getSharedPreferences("OutingQueuePrefs", Context.MODE_PRIVATE) }
-
-    LaunchedEffect(outingsData) {
-        val pendingQueue = sharedPrefs.getStringSet("pending_queue", setOf())?.toMutableSet() ?: mutableSetOf()
-        var queueUpdated = false
-
-        outingsData.forEach { outing ->
-            val statusUpper = outing.status.uppercase(Locale.getDefault())
-            val isApproved = statusUpper.contains("APPROVE") || statusUpper.contains("ACCEPT") || statusUpper.contains("ISSUED") || statusUpper.contains("AVAILED")
-            val isRejected = statusUpper.contains("REJECT") || statusUpper.contains("DECLINE") || statusUpper.contains("CANCEL")
-
-            if (!isApproved && !isRejected) {
-                if (pendingQueue.add(outing.id)) queueUpdated = true
-            } else if (isApproved && pendingQueue.contains(outing.id)) {
-                pendingQueue.remove(outing.id)
-                queueUpdated = true
-                handler.onViewPass(outing.id, outing.type.uppercase(Locale.getDefault()) == "WEEKEND") { file: File? ->
-                    if (file != null) savePdfToDownloads(context, file, "${outing.id}.pdf")
-                }
-            } else if (isRejected && pendingQueue.contains(outing.id)) {
-                pendingQueue.remove(outing.id)
-                queueUpdated = true
-            }
-        }
-        if (queueUpdated) sharedPrefs.edit().putStringSet("pending_queue", pendingQueue).apply()
-    }
-
     Scaffold(
         containerColor = Color.Transparent,
         floatingActionButton = {
@@ -320,7 +298,7 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
                 containerColor = if (hasPendingPass) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primary,
                 contentColor = if (hasPendingPass) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onPrimary,
                 shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.padding(bottom = 70.dp) // Adjusted for floating dock
+                modifier = Modifier.padding(bottom = 70.dp)
             ) {
                 if (isFetchingForm) {
                     CircularProgressIndicator(color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -332,7 +310,6 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
     ) { paddingValues ->
         Box(modifier = Modifier.fillMaxSize()) {
 
-            // Pager runs underneath the Floating Tab Selector
             HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
                 val currentType = if (page == 0) "GENERAL" else "WEEKEND"
 
@@ -422,7 +399,6 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
                 }
             }
 
-            // Floating Tab Selector pinned nicely under the GlobalTopBar
             Box(modifier = Modifier.padding(top = 96.dp)) {
                 OutingsTabSelector(pagerState = pagerState, coroutineScope = coroutineScope)
             }
@@ -512,47 +488,21 @@ private fun OutingsTabSelector(
 @Composable
 private fun ApprovalJourney(statusStr: String, type: String) {
     val s = statusStr.uppercase(Locale.getDefault())
-    val isForwarded = s.contains("FORWARD")
-    val isApproved = s.contains("APPROVE") || s.contains("ACCEPT") || s.contains("ISSUED") || s.contains("AVAIL")
-    val isRejected = s.contains("REJECT") || s.contains("DECLINE") || s.contains("CANCEL")
 
-    val isMentorApproved = isForwarded || isApproved
-    val isMentorRejected = isRejected && s.contains("MENTOR")
-    val isWardenApproved = isApproved
-    val isWardenRejected = isRejected && s.contains("WARDEN")
+    // Exact mapping to your requested flow
+    val isSubmitted = true // Always true if the card exists
+    val isMentorApproved = !s.contains("MENTOR") && (s.contains("WARDEN") || s.contains("ACCEPT") || s.contains("APPROVE"))
+    val isWardenApproved = s.contains("ACCEPT") || s.contains("APPROVE") || s.contains("ISSUED")
+    val isRejected = s.contains("REJECT") || s.contains("CANCEL") || s.contains("DECLINE")
 
-    val mentorText = when {
-        isMentorApproved -> "Mentor Approved"
-        isMentorRejected -> "Mentor Rejected"
-        else -> "Mentor Approval"
-    }
+    val steps = listOf("Submitted", "Mentor Approval", "Warden Approval", "Pass Available")
 
-    val wardenText = when {
-        isWardenApproved -> "Warden Approved"
-        isWardenRejected -> "Warden Rejected"
-        else -> "Warden Approval"
-    }
-
-    val steps = if (type.equals("WEEKEND", ignoreCase = true)) {
-        listOf("Submitted", wardenText, "Outpass Available")
-    } else {
-        listOf("Submitted", mentorText, wardenText, "Pass Available")
-    }
-
-    val currentStep = if (type.equals("WEEKEND", ignoreCase = true)) {
-        when {
-            isWardenApproved -> 2
-            isRejected -> 1 // Halts at Warden
-            else -> 1
-        }
-    } else {
-        when {
-            isWardenApproved -> 3
-            isWardenRejected -> 2 // Halts at Warden
-            isMentorApproved -> 2
-            isMentorRejected -> 1 // Halts at Mentor
-            else -> 1
-        }
+    // Determine which step is currently active
+    val currentStep = when {
+        isRejected -> -1 // Journey stopped
+        isWardenApproved -> 3
+        isMentorApproved -> 2
+        else -> 1 // Still at step 1 (Waiting for Mentor)
     }
 
     Column(modifier = Modifier.padding(vertical = 4.dp)) {
@@ -563,12 +513,11 @@ private fun ApprovalJourney(statusStr: String, type: String) {
             val isCurrent = index == currentStep
 
             val dotColor = when {
-                isCurrent && isRejected -> OutingColorDanger
+                currentStep == -1 && index <= 1 -> OutingColorDanger // Show path to rejection
                 isCompleted -> OutingColorSuccess
                 isCurrent -> OutingPrimaryAccent
                 else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
             }
-            val textColor = if (isCompleted || isCurrent) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
 
             Row(modifier = Modifier.height(IntrinsicSize.Min)) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(20.dp)) {
@@ -578,13 +527,15 @@ private fun ApprovalJourney(statusStr: String, type: String) {
                             .width(2.dp)
                             .fillMaxHeight()
                             .weight(1f)
-                            .background(if (isCompleted) OutingColorSuccess else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                            .background(if (index < currentStep && currentStep != -1) OutingColorSuccess else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
                         )
                     }
                 }
 
                 Column(modifier = Modifier.padding(start = 12.dp, bottom = if (index == steps.lastIndex) 0.dp else 24.dp).offset(y = (-2).dp)) {
-                    Text(title, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text(title, color = if (index <= currentStep || currentStep == -1) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+
+                    // Show specific status subtitle only for the active step
                     if (isCurrent) {
                         Text(statusStr.toTitleCase(), color = dotColor, fontSize = 11.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 2.dp))
                     }
@@ -606,7 +557,7 @@ private fun ActiveOutingCard(
     onDelete: () -> Unit
 ) {
     val statusUpper = outing.status.uppercase(Locale.getDefault())
-    val isApproved = statusUpper.contains("APPROVE") || statusUpper.contains("ACCEPT") || statusUpper.contains("ISSUED") || statusUpper.contains("AVAILED")
+    val isApproved = isStrictlyApproved(statusUpper)
     val isPending = !isApproved
 
     if (isPending) {
@@ -712,7 +663,7 @@ private fun ActiveCardContent(
     onDownloadPass: () -> Unit
 ) {
     val statusUpper = outing.status.uppercase(Locale.getDefault())
-    val isApproved = statusUpper.contains("APPROVE") || statusUpper.contains("ACCEPT") || statusUpper.contains("ISSUED") || statusUpper.contains("AVAILED")
+    val isApproved = isStrictlyApproved(statusUpper)
 
     val shortStatus = when {
         isApproved -> "Approved"
@@ -893,7 +844,7 @@ private fun ActiveCardContent(
 @Composable
 private fun HistoryOutingCard(outing: OutingModel) {
     val statusUpper = outing.status.uppercase(Locale.getDefault())
-    val isApproved = statusUpper.contains("APPROVE") || statusUpper.contains("ACCEPT") || statusUpper.contains("ISSUED") || statusUpper.contains("AVAILED")
+    val isApproved = isStrictlyApproved(statusUpper)
     val isRejected = statusUpper.contains("REJECT") || statusUpper.contains("CANCEL") || statusUpper.contains("DECLINE")
 
     val statusColor = when {

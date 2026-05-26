@@ -34,6 +34,13 @@ class VtopSyncWorker(
     private val maxRetry = 3
     private val tag = "VTOP_WORKER"
 
+    private fun String?.clean(): String {
+        if (this.isNullOrBlank() || this.trim() == "-" || this.trim().equals("TBD", ignoreCase = true) || this.trim().equals("N/A", ignoreCase = true) || this.trim().equals("null", ignoreCase = true)) {
+            return " "
+        }
+        return this.trim()
+    }
+
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         Log.d(tag, "Background sync started.")
 
@@ -134,6 +141,7 @@ class VtopSyncWorker(
 
             // --- 2. CHECK EXAM SEATS ---
             val isExamSync = inputData.getBoolean("IS_EXAM_SYNC", false)
+            // Note: If you want it to check for exams on EVERY background sync, remove the 'if (isExamSync)' block
             if (isExamSync) {
                 val oldExams = Vault.getExamSchedule(context) ?: emptyList()
                 val examHtml = client.fetchExamScheduleRawHtml(semId, null) ?: ""
@@ -151,7 +159,21 @@ class VtopSyncWorker(
                     }
 
                     newlySeatedExams.forEachIndexed { index, exam ->
-                        NotificationHelper.showNotification(context, "Exam Seating Allotment", "${exam.venue} | Seat ${exam.seatLocation} (${exam.seatNumber}) | ${exam.courseCode} ${exam.examType}", 401 + index)
+                        // Calculate exact start time for the sticky notification
+                        val dateTimeString = "${exam.examDate} ${exam.reportingTime.clean().ifBlank { "09:00 AM" }}"
+                        val examStartTimeMillis = try {
+                            SimpleDateFormat("dd-MMM-yyyy hh:mm a", Locale.ENGLISH).parse(dateTimeString)?.time ?: System.currentTimeMillis()
+                        } catch (e: Exception) {
+                            System.currentTimeMillis()
+                        }
+
+                        // Use your new custom sticky notification
+                        NotificationHelper.showExamSeatNotification(
+                            context = context,
+                            title = "Exam Seating Allotment",
+                            message = "${exam.venue} | Seat ${exam.seatLocation} (${exam.seatNumber}) | ${exam.courseCode} ${exam.examType}",
+                            examStartTimeMillis = examStartTimeMillis
+                        )
                         delay(1000)
                     }
                     Vault.saveExamSchedule(context, newExams)

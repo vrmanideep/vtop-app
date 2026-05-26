@@ -436,7 +436,11 @@ fun SemesterCompletedView() {
 }
 
 @Composable
-fun GlobalTopBar(currentScreen: String, onProfileClick: () -> Unit, onExportTimetable: () -> Unit) {
+fun GlobalTopBar(
+    currentScreen: String,
+    onProfileClick: () -> Unit,
+    onExportTimetable: () -> Unit = {}
+) {
     val context = LocalContext.current
     val syncStatus by AppBridge.syncStatus
     var subtitleText by remember { mutableStateOf("Loading...") }
@@ -472,36 +476,62 @@ fun GlobalTopBar(currentScreen: String, onProfileClick: () -> Unit, onExportTime
         }
     }
 
-    val pulseAlpha by animateFloatAsState(targetValue = if (syncStatus != "IDLE") 0.55f else 1f, animationSpec = tween(700), label = "syncPulse")
+    val pulseAlpha by animateFloatAsState(
+        targetValue = if (syncStatus != "IDLE") 0.55f else 1f,
+        animationSpec = tween(700),
+        label = "syncPulse"
+    )
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text(text = displayTitle, color = MaterialTheme.colorScheme.onBackground, fontSize = 28.sp, fontWeight = FontWeight.Black)
-                Text(text = subtitleText, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = pulseAlpha), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    text = displayTitle,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Black
+                )
+                Text(
+                    text = subtitleText,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = pulseAlpha),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                )
             }
             if (currentScreen != "PROFILE") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (currentScreen == "HOME") {
+                    if (currentScreen.uppercase(Locale.ROOT) == "HOME") {
                         IconButton(
                             onClick = onExportTimetable,
-                            modifier = Modifier.padding(end = 8.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f), CircleShape)
+                            modifier = Modifier
+                                .padding(end = 8.dp)
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f), CircleShape)
                         ) {
-                            Icon(imageVector = Lucide.ArrowDownToLine, contentDescription = "Export Timetable", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Icon(
+                                imageVector = Lucide.ArrowDownToLine,
+                                contentDescription = "Export Timetable",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                     IconButton(
                         onClick = onProfileClick,
                         modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f), CircleShape)
                     ) {
-                        Icon(Lucide.User, contentDescription = "Profile", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(
+                            imageVector = Lucide.User,
+                            contentDescription = "Profile",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
