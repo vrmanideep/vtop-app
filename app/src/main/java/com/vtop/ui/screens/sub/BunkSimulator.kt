@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
@@ -39,10 +40,12 @@ import com.vtop.models.AttendanceModel
 import com.vtop.models.TimetableModel
 import com.vtop.utils.AnalyticsManager
 import org.json.JSONObject
+import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Date
 import java.util.Locale
 import kotlin.math.floor
 import kotlin.math.roundToInt
@@ -63,6 +66,127 @@ fun isInstructionalDay(date: LocalDate, ctx: CalendarContext): Boolean {
     return true
 }
 
+private fun isSameTypeGroup(a: String?, b: String?): Boolean {
+    if (a == b) return true
+    val aLab = a?.contains("L") == true || a?.contains("P") == true
+    val bLab = b?.contains("L") == true || b?.contains("P") == true
+    return aLab == bLab
+}
+
+// =====================================================================
+// HYBRID PREDICTIVE ENGINE (Time-Series Velocity + Slot Weight Math)
+// =====================================================================
+@SuppressLint("SimpleDateFormat")
+private fun analyzeAttendanceTrend(
+    attendance: AttendanceModel?,
+    timetable: TimetableModel,
+    calCtx: CalendarContext
+): String? {
+    if (attendance == null || calCtx.trueEndDate == LocalDate.MAX) return null
+
+    val historyList = try { attendance.history } catch (e: Exception) { null }
+    if (historyList.isNullOrEmpty()) return null
+
+    // 1. Convert History to Timestamps
+    val sortedHistory = historyList.mapNotNull { item ->
+        try {
+            val dateStr = item.date?.trim() ?: return@mapNotNull null
+            val statusStr = item.status?.trim() ?: ""
+            val sdf = if (dateStr.contains(Regex("[a-zA-Z]"))) {
+                SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH)
+            } else {
+                SimpleDateFormat("dd-MM-yyyy", Locale.ENGLISH)
+            }
+            val d = sdf.parse(dateStr)
+            if (d != null) Pair(d.time, statusStr) else null
+        } catch (e: Exception) { null }
+    }.sortedBy { it.first }
+
+    if (sortedHistory.isEmpty()) return null
+
+    // 2. Define the "Momentum Window" (Last 28 Days)
+    val currentMillis = System.currentTimeMillis()
+    val windowStartMillis = currentMillis - (28L * 24 * 60 * 60 * 1000)
+
+    var recentTotal = 0
+    var recentAttended = 0
+
+    sortedHistory.forEach { (time, status) ->
+        if (time >= windowStartMillis) {
+            recentTotal++
+            if (status.equals("Present", ignoreCase = true) ||
+                status.equals("On Duty", ignoreCase = true) ||
+                status.equals("Attended", ignoreCase = true)) {
+                recentAttended++
+            }
+        }
+    }
+
+    // Need a minimum of 4 classes in the last month to gauge a reliable velocity
+    if (recentTotal < 4) return "AI Need Data: Attend a few more classes to establish a reliable bunking trend."
+
+    // 3. Calculate Absence Velocity (V_abs)
+    val vAbs = 1.0 - (recentAttended.toDouble() / recentTotal)
+    val currentPct = attendance.attendancePercentage?.replace("%", "")?.toDoubleOrNull() ?: 100.0
+
+    if (vAbs <= 0.05) {
+        return if (currentPct >= 75.0) "AI Insight: Safe. Your recent attendance is flawless."
+        else "AI Insight: You are below 75%, but your flawless recent attendance will pull you up."
+    }
+
+    // 4. The Deterministic Projection Loop
+    var projectedAttended = attendance.attendedClasses?.toDoubleOrNull() ?: 0.0
+    var projectedTotal = attendance.totalClasses?.toDoubleOrNull() ?: 0.0
+
+    var simDate = LocalDate.now().plusDays(1)
+    var crashDate: LocalDate? = null
+
+    // Helper: Calculate slot weight (e.g., L55+L56 = 2)
+    fun getSlotWeight(slotStr: String?): Int {
+        if (slotStr.isNullOrBlank() || slotStr == "-" || slotStr.equals("N/A", ignoreCase = true)) return 0
+        return slotStr.split("+").size
+    }
+
+    while (!simDate.isAfter(calCtx.trueEndDate)) {
+        if (isInstructionalDay(simDate, calCtx)) {
+            val dayName = simDate.dayOfWeek.name
+
+            // Find all classes for this subject on this specific day
+            val dayCourses = timetable.scheduleMap[dayName]?.filter {
+                it.courseCode == attendance.courseCode && isSameTypeGroup(it.courseType, attendance.courseType)
+            } ?: emptyList()
+
+            var dailyWeight = 0
+            dayCourses.forEach { dailyWeight += getSlotWeight(it.slot) }
+
+            if (dailyWeight > 0) {
+                projectedTotal += dailyWeight
+                // Apply the absence velocity to predict attendance
+                val expectedAttendance = dailyWeight * (1.0 - vAbs)
+                projectedAttended += expectedAttendance
+
+                val simulatedPct = (projectedAttended / projectedTotal) * 100.0
+                if (simulatedPct < 75.0) {
+                    crashDate = simDate
+                    break
+                }
+            }
+        }
+        simDate = simDate.plusDays(1)
+    }
+
+    if (currentPct < 75.0) {
+        return "AI Warning: You are currently in the danger zone."
+    }
+
+    if (crashDate != null) {
+        val formatter = DateTimeFormatter.ofPattern("MMM dd")
+        return "AI Warning: At your current rate (missing ${(vAbs * 100).toInt()}% of classes), you will drop below 75% on ${crashDate.format(formatter)}."
+    }
+
+    return "AI Insight: You are bunking occasionally, but mathematics project you will safely finish above 75%."
+}
+
 @SuppressLint("NewApi")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,7 +199,6 @@ fun BunkSimulatorTab(
     LaunchedEffect(Unit) { AnalyticsManager.logScreenView("Bunk_Simulator_Screen") }
 
     val context = LocalContext.current
-
     val calCtx = remember(selectedSemester) { getCalendarContext(context, selectedSemester) }
 
     val legacyHolidayMap = remember(calCtx) {
@@ -124,7 +247,15 @@ fun BunkSimulatorTab(
 
     fun getClassesForDate(date: LocalDate): Int {
         val dayName = date.dayOfWeek.name
-        return timetable.scheduleMap?.entries?.firstOrNull { it.key.equals(dayName, ignoreCase = true) }?.value?.size ?: 0
+        val courses = timetable.scheduleMap?.entries?.firstOrNull { it.key.equals(dayName, ignoreCase = true) }?.value ?: emptyList()
+        var dailyWeight = 0
+        courses.forEach {
+            val slotStr = it.slot
+            if (!slotStr.isNullOrBlank() && slotStr != "-" && !slotStr.equals("N/A", ignoreCase = true)) {
+                dailyWeight += slotStr.split("+").size
+            }
+        }
+        return dailyWeight
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
@@ -353,7 +484,7 @@ fun BunkSimulatorTab(
                 items(simulationResults) { result ->
                     val relatedAttendance = attendanceData.find { it.courseCode == result.courseCode && it.courseType == result.courseType }
                     val lastUpdatedDate = relatedAttendance?.history?.firstOrNull()?.date ?: "Unknown Date"
-                    BunkResultCard(result, lastUpdatedDate)
+                    BunkResultCard(result, lastUpdatedDate, relatedAttendance, timetable, calCtx)
                 }
             }
         }
@@ -400,8 +531,19 @@ fun BunkSimulatorTab(
 }
 
 @Composable
-fun BunkResultCard(res: BunkProjectorResult, lastUpdatedDate: String) {
+fun BunkResultCard(
+    res: BunkProjectorResult,
+    lastUpdatedDate: String,
+    relatedAttendance: AttendanceModel?,
+    timetable: TimetableModel,
+    calCtx: CalendarContext
+) {
     var expanded by remember { mutableStateOf(false) }
+
+    // Run the Hybrid AI analysis prediction
+    val aiInsight = remember(relatedAttendance, timetable, calCtx) {
+        analyzeAttendanceTrend(relatedAttendance, timetable, calCtx)
+    }
 
     val statusColor = when {
         res.noData -> Color(0xFFF59E0B)
@@ -491,7 +633,6 @@ fun BunkResultCard(res: BunkProjectorResult, lastUpdatedDate: String) {
                 )
 
                 Box(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
-
                     // Track & Fill Bar
                     Box(
                         modifier = Modifier
@@ -552,6 +693,28 @@ fun BunkResultCard(res: BunkProjectorResult, lastUpdatedDate: String) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("${animatedProjected.roundToInt()}%", fontSize = 10.sp, color = statusColor, fontWeight = FontWeight.Bold)
                     Text("$currentInt%", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+
+                // AI PREDICTION BLOCK
+                if (aiInsight != null) {
+                    val isWarning = aiInsight.contains("Warning") || aiInsight.contains("danger")
+                    val iconTint = if (isWarning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                    val bgTint = if (isWarning) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                    val bBorderTint = if (isWarning) MaterialTheme.colorScheme.error.copy(alpha = 0.2f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(bgTint, RoundedCornerShape(8.dp))
+                            .border(1.dp, bBorderTint, RoundedCornerShape(8.dp))
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = "AI", tint = iconTint, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(aiInsight, color = iconTint, fontSize = 11.sp, fontWeight = FontWeight.Bold, lineHeight = 14.sp)
+                    }
                 }
 
                 AnimatedVisibility(visible = expanded) {
@@ -678,9 +841,11 @@ fun getCalendarContext(context: Context, selectedSemester: String): CalendarCont
 
     if (allSems.isEmpty()) return CalendarContext(semesterName = selectedSemester)
 
+    // 1. EXACT MATCH
     val exactMatch = allSems.find { it.semesterName.equals(selectedSemester, ignoreCase = true) }
     if (exactMatch != null) return exactMatch
 
+    // 2. FUZZY MATCH
     val cleanSelected = selectedSemester.lowercase(Locale.ENGLISH).replace(Regex("[^a-z0-9]"), "")
     val fuzzyMatch = allSems.find {
         val cleanKey = it.semesterName.lowercase(Locale.ENGLISH).replace(Regex("[^a-z0-9]"), "")
@@ -692,6 +857,7 @@ fun getCalendarContext(context: Context, selectedSemester: String): CalendarCont
         return fuzzyMatch.copy(semesterName = selectedSemester)
     }
 
+    // 3. DATE FALLBACK
     val today = LocalDate.now()
     val inSession = allSems.filter { !today.isBefore(it.startDate) && !today.isAfter(it.trueEndDate) }
     if (inSession.isNotEmpty()) return inSession.first().copy(semesterName = selectedSemester)

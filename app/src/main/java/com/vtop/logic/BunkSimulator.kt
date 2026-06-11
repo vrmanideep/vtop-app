@@ -23,7 +23,7 @@ data class BunkProjectorResult(
     val projectedTotal: Int,
     val projectedPct: Float,
     val isDanger: Boolean,
-    val noData: Boolean = false // NEW: Flag to tell the UI there was no base data
+    val noData: Boolean = false
 )
 
 object BunkSimulator {
@@ -67,7 +67,6 @@ object BunkSimulator {
             val cType = att.courseType ?: ""
 
             val cleanAttCode = cCode.replace(Regex("[^A-Z0-9]"), "").uppercase(Locale.ENGLISH)
-
             val attIsLab = cType.contains("LAB", true) || cType.contains("LO", true) || cType.contains("ELA", true) || cType.contains("PRACTICAL", true)
 
             val currentAttended = att.attendedClasses?.filter { it.isDigit() }?.toIntOrNull() ?: 0
@@ -77,7 +76,6 @@ object BunkSimulator {
             var lastUpdDt = LocalDate.now()
             var lastUpdatedStr = "Today (Assumed)"
 
-            // THE FIX: Do not throw an exception. Flag it as No Data and skip calculation.
             if (att.history.isNullOrEmpty()) {
                 results.add(
                     BunkProjectorResult(
@@ -95,10 +93,10 @@ object BunkSimulator {
                         projectedTotal = currentTotal,
                         projectedPct = currentPct,
                         isDanger = false,
-                        noData = true // Flags the UI
+                        noData = true
                     )
                 )
-                continue // Move to the next subject immediately
+                continue
             } else {
                 val lastEntryDateStr = att.history.firstOrNull()?.date
                 if (lastEntryDateStr != null) {
@@ -107,7 +105,8 @@ object BunkSimulator {
                     try {
                         val parts = cleanDate.split("-")
                         if (parts.size >= 3) {
-                            lastUpdDt = LocalDate.of(parts[2].toInt(), parts[1].toInt(), parts[0].toInt())
+                            val yr = if (parts[2].length == 4) parts[2].toInt() else currentYear
+                            lastUpdDt = LocalDate.of(yr, parts[1].toInt(), parts[0].toInt())
                         } else if (parts.size == 2) {
                             lastUpdDt = LocalDate.of(currentYear, parts[1].toInt(), parts[0].toInt())
                         }
@@ -126,6 +125,12 @@ object BunkSimulator {
             val gapBreakdown = mutableListOf<String>()
             val missedBreakdown = mutableListOf<String>()
 
+            // Helper to get Master Weight from Timetable
+            fun getSlotWeight(slotStr: String?): Int {
+                if (slotStr.isNullOrBlank() || slotStr == "-" || slotStr.equals("N/A", ignoreCase = true)) return 1
+                return slotStr.split("+").size
+            }
+
             // PHASE A: RETROACTIVE BUNKING
             for (date in validDates) {
                 if (!date.isAfter(lastUpdDt)) {
@@ -138,7 +143,7 @@ object BunkSimulator {
                     }?.value ?: emptyList()
 
                     var targetFound = false
-                    var penalty = 1
+                    var dailyPenalty = 0
 
                     for (cls in dayClasses) {
                         val cleanTtCode = cls.courseCode.replace(Regex("[^A-Z0-9]"), "").uppercase(Locale.ENGLISH)
@@ -146,19 +151,18 @@ object BunkSimulator {
 
                         if ((cleanTtCode.contains(cleanAttCode) || cleanAttCode.contains(cleanTtCode)) && (attIsLab == ttIsLab)) {
                             targetFound = true
-                            penalty = if (ttIsLab) 2 else 1
-                            break
+                            dailyPenalty += getSlotWeight(cls.slot)
                         }
                     }
 
-                    if (targetFound) {
+                    if (targetFound && dailyPenalty > 0) {
                         val historyMatch = att.history.firstOrNull { it.date?.contains(dateStrFull) == true }
-                        val wasPresent = historyMatch != null && (historyMatch.status?.contains("Present", true) == true || historyMatch.status?.contains("Attended", true) == true)
+                        val wasPresent = historyMatch != null && (historyMatch.status?.contains("Present", true) == true || historyMatch.status?.contains("Attended", true) == true || historyMatch.status?.contains("On Duty", true) == true)
 
                         if (wasPresent) {
-                            simAttended -= penalty
-                            missedClasses += penalty
-                            missedBreakdown.add("$dateStrFull ($dayNameShort) [PAST] : -$penalty attended")
+                            simAttended -= dailyPenalty
+                            missedClasses += dailyPenalty
+                            missedBreakdown.add("$dateStrFull ($dayNameShort) [PAST] : -$dailyPenalty attended")
                         }
                     }
                 }
@@ -183,7 +187,7 @@ object BunkSimulator {
                 }?.value ?: emptyList()
 
                 var courseHappensToday = false
-                var penalty = 1
+                var dailyPenalty = 0
 
                 for (cls in dayClasses) {
                     val cleanTtCode = cls.courseCode.replace(Regex("[^A-Z0-9]"), "").uppercase(Locale.ENGLISH)
@@ -191,21 +195,20 @@ object BunkSimulator {
 
                     if ((cleanTtCode.contains(cleanAttCode) || cleanAttCode.contains(cleanTtCode)) && (attIsLab == ttIsLab)) {
                         courseHappensToday = true
-                        penalty = if (ttIsLab) 2 else 1
-                        break
+                        dailyPenalty += getSlotWeight(cls.slot)
                     }
                 }
 
-                if (courseHappensToday) {
+                if (courseHappensToday && dailyPenalty > 0) {
                     if (bunkSet.contains(dateStrFull)) {
-                        simTotal += penalty
-                        missedClasses += penalty
-                        missedBreakdown.add("$dateStrFull ($dayNameShort) : +$penalty missed")
+                        simTotal += dailyPenalty
+                        missedClasses += dailyPenalty
+                        missedBreakdown.add("$dateStrFull ($dayNameShort) : +$dailyPenalty missed")
                     } else {
-                        simTotal += penalty
-                        simAttended += penalty
-                        gapClasses += penalty
-                        gapBreakdown.add("$dateStrFull ($dayNameShort) : +$penalty")
+                        simTotal += dailyPenalty
+                        simAttended += dailyPenalty
+                        gapClasses += dailyPenalty
+                        gapBreakdown.add("$dateStrFull ($dayNameShort) : +$dailyPenalty")
                     }
                 }
                 currDt = currDt.plusDays(1)
@@ -228,7 +231,8 @@ object BunkSimulator {
                         projectedAttended = simAttended,
                         projectedTotal = simTotal,
                         projectedPct = projectedPct,
-                        isDanger = projectedPct < 75f
+                        isDanger = projectedPct < 75f,
+                        noData = false
                     )
                 )
             }

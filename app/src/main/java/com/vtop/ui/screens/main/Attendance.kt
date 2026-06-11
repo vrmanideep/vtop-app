@@ -313,9 +313,9 @@ fun AttendanceBottomSheetContent(course: AttendanceModel, onSimulateClick: () ->
 // --- SHARED CORE EXPORTED FOR TIMETABLE ---
 @Composable
 fun AttendanceDetailCore(course: AttendanceModel, onSimulateClick: (() -> Unit)? = null) {
-    // Override raw API percentages with our True Count engine
-    val (attended, total) = getRealAttendanceCounts(course)
-    val percentage = if (total > 0) ((attended.toFloat() / total) * 100).toInt() else 0
+    val attended = course.attendedClasses?.toIntOrNull() ?: 0
+    val total = course.totalClasses?.toIntOrNull() ?: 0
+    val percentage = course.attendancePercentage?.toFloatOrNull()?.toInt() ?: 0
     val isSafe = percentage >= 75
 
     val statusColor = if (isSafe) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
