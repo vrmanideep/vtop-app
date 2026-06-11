@@ -100,7 +100,8 @@ fun ProfilePageContent(
     onNavigateToAnalytics: () -> Unit,
     lastSyncTime: String,
     onSyncClick: (Boolean) -> Unit,
-    onNavigateToFaculty: () -> Unit
+    onNavigateToFaculty: () -> Unit,
+    onNavigateToAbout: () -> Unit
 ) {
 
     Profile(
@@ -135,6 +136,7 @@ fun ProfilePageContent(
         onNavigateToAnalytics = onNavigateToAnalytics,
         lastSyncTime = lastSyncTime,
         onSyncClick = onSyncClick,
-        onNavigateToFaculty = onNavigateToFaculty
+        onNavigateToFaculty = onNavigateToFaculty,
+        onNavigateToAbout = onNavigateToAbout,
     )
 }

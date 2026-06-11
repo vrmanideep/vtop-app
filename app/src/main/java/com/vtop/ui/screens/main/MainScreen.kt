@@ -78,6 +78,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.roundToInt
+import com.vtop.ui.screens.sub.AboutScreen
 
 @OptIn(ExperimentalMaterialApi::class)
 @SuppressLint("NewApi")
@@ -116,7 +117,11 @@ fun MainScreen(
     }
 
     var navStyle by remember {
-        mutableStateOf(Vault.getNavStyle(context).let { if (it.isBlank() || !sharedPrefs.contains("NAV_STYLE_SET")) "STATIC" else it })
+        mutableStateOf(
+            Vault.getNavStyle(context)
+                .takeIf { it.isNotBlank() }
+                ?: "STATIC"
+        )
     }
     val reminders by remember { mutableStateOf(ReminderManager.loadReminders(context)) }
 
@@ -287,7 +292,8 @@ fun MainScreen(
                             onNavigateToAnalytics = { activeOverlay = "ANALYTICS" },
                             lastSyncTime = Vault.getLastSyncTimestamp(context).toString(),
                             onSyncClick = { handleSyncAndUpdateWidget(currentTab, it) },
-                            onNavigateToFaculty = { activeOverlay = "FACULTY" }
+                            onNavigateToFaculty = { activeOverlay = "FACULTY" },
+                            onNavigateToAbout = {activeOverlay = "ABOUT"}
                         )
                     }
                 }
@@ -376,6 +382,13 @@ fun MainScreen(
                     }
                     "FACULTY" -> {
                         FacultyScreen(facultyList = loadFaculty(LocalContext.current))
+                    }
+                    "ABOUT" -> {
+                        AboutScreen(
+                            onBack = {
+                                activeOverlay = null
+                            }
+                        )
                     }
                 }
             }

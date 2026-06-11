@@ -78,6 +78,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
@@ -125,36 +126,16 @@ private fun formatReminderDate(dateStr: String): String {
     } catch (e: Exception) { dateStr }
 }
 private fun formatLastSync(timestamp: Long): String {
-
-    if (timestamp <= 0L) {
-        return "Never synced"
-    }
-
-    val diff =
-        System.currentTimeMillis() - timestamp
-
-    val minutes =
-        diff / (1000 * 60)
-
-    val hours =
-        minutes / 60
-
-    val days =
-        hours / 24
-
+    if (timestamp <= 0L) return "Never synced"
+    val diff = System.currentTimeMillis() - timestamp
+    val minutes = diff / (1000 * 60)
+    val hours = minutes / 60
+    val days = hours / 24
     return when {
-
-        minutes < 1 ->
-            "Synced just now"
-
-        minutes < 60 ->
-            "Synced $minutes mins ago"
-
-        hours < 24 ->
-            "Synced $hours hrs ago"
-
-        else ->
-            "Synced $days days ago"
+        minutes < 1 -> "Synced just now"
+        minutes < 60 -> "Synced $minutes mins ago"
+        hours < 24 -> "Synced $hours hrs ago"
+        else -> "Synced $days days ago"
     }
 }
 
@@ -190,6 +171,7 @@ fun Profile(
     reminders: List<CourseReminder>,
     onDeleteReminder: (String) -> Unit,
     onNavigateToAnalytics: () -> Unit,
+    onNavigateToAbout: () -> Unit,
     lastSyncTime: String,
     onSyncClick: (Boolean) -> Unit,
     onNavigateToFaculty: () -> Unit
@@ -284,12 +266,7 @@ fun Profile(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(
-                start = 20.dp,
-                end = 20.dp,
-                top = 96.dp, // Under-scroll for TopBar
-                bottom = 40.dp // Reduced because Profile hides the bottom nav bar
-            ),
+            .padding(start = 20.dp, end = 20.dp, top = 96.dp, bottom = 40.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // --- TOP BAR ---
@@ -337,15 +314,14 @@ fun Profile(
                     heroTapCount++
                     if (heroTapCount >= 5) {
                         val newStyle = if (currentNavStyle == "DOCK") "STATIC" else "DOCK"
+                        sharedPrefs.edit().putString("NAV_STYLE", newStyle).apply()
                         onNavStyleChange(newStyle)
                         Toast.makeText(context, "Nav style set to $newStyle", Toast.LENGTH_SHORT).show()
                         heroTapCount = 0
                     }
                 }
         ) {
-            Column(
-                modifier = Modifier.padding(16.dp)
-            ) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(16.dp)
@@ -406,12 +382,7 @@ fun Profile(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "Last Synced",
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text("Last Synced", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(2.dp))
                     Text(
                         text = formatLastSync(lastSyncTime.toLongOrNull() ?: 0L),
@@ -421,11 +392,7 @@ fun Profile(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                Box(
-                    modifier = Modifier
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), CircleShape)
-                        .padding(8.dp)
-                ) {
+                Box(modifier = Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), CircleShape).padding(8.dp)) {
                     Icon(Icons.Default.Refresh, contentDescription = "Sync", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                 }
             }
@@ -465,23 +432,15 @@ fun Profile(
                             Toast.makeText(context, "Google Account Unlinked", Toast.LENGTH_SHORT).show()
                         }
                     }) {
-                        Icon(
-                            imageVector = Lucide.Link2Off,
-                            contentDescription = "Unlink Google",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(20.dp)
-                        )
+                        Icon(imageVector = Lucide.Link2Off, contentDescription = "Unlink Google", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
                     }
                 }
             } else {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            val client = com.vtop.utils.AuthHelper.getGoogleSignInClient(context, context.getString(context.resources.getIdentifier("default_web_client_id", "string", context.packageName)))
-                            googleSignInLauncher.launch(client.signInIntent)
-                        }
-                        .padding(16.dp),
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        val client = com.vtop.utils.AuthHelper.getGoogleSignInClient(context, context.getString(context.resources.getIdentifier("default_web_client_id", "string", context.packageName)))
+                        googleSignInLauncher.launch(client.signInIntent)
+                    }.padding(16.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -492,18 +451,11 @@ fun Profile(
                     }
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                        modifier = Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 6.dp)
                     ) {
                         Text("Link", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.width(6.dp))
-                        Icon(
-                            imageVector = Lucide.Link,
-                            contentDescription = "Link Google",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(14.dp)
-                        )
+                        Icon(imageVector = Lucide.Link, contentDescription = "Link Google", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
                     }
                 }
             }
@@ -518,10 +470,7 @@ fun Profile(
         ) {
             Column {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { isMoreExpanded = !isMoreExpanded }
-                        .padding(16.dp),
+                    modifier = Modifier.fillMaxWidth().clickable { isMoreExpanded = !isMoreExpanded }.padding(16.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -530,11 +479,7 @@ fun Profile(
                         Spacer(Modifier.height(2.dp))
                         Text("Calendar export, Auto Sync, Faculty", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Icon(
-                        imageVector = if (isMoreExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Expand/Collapse",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Icon(imageVector = if (isMoreExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = "Expand/Collapse", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
 
                 if (isMoreExpanded) {
@@ -544,20 +489,14 @@ fun Profile(
                         value = "Add classes & exams to your calendar",
                         actionText = "Sync",
                         onClick = {
-                            calendarPermissionLauncher.launch(
-                                arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
-                            )
+                            calendarPermissionLauncher.launch(arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR))
                         }
                     )
 
-                    // --- AUTO SYNC ROW ---
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
                     Box {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { syncDropdownExpanded = true }
-                                .padding(16.dp),
+                            modifier = Modifier.fillMaxWidth().clickable { syncDropdownExpanded = true }.padding(16.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -567,66 +506,37 @@ fun Profile(
                                 Text("Frequency of background updates", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                             }
 
-                            // The beautiful pill dropdown button
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
-                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                                modifier = Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 6.dp)
                             ) {
-                                Text(
-                                    text = syncOptions[autoSyncInterval] ?: "8 hrs",
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.KeyboardArrowDown,
-                                    contentDescription = "Select",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(16.dp).padding(start = 4.dp)
-                                )
+                                Text(text = syncOptions[autoSyncInterval] ?: "8 hrs", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Icon(imageVector = Icons.Default.KeyboardArrowDown, contentDescription = "Select", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp).padding(start = 4.dp))
                             }
                         }
 
-                        // The styled, pop-out Dropdown Menu
                         DropdownMenu(
                             expanded = syncDropdownExpanded,
                             onDismissRequest = { syncDropdownExpanded = false },
-                            modifier = Modifier
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
                         ) {
                             syncOptions.forEach { (hours, label) ->
                                 DropdownMenuItem(
                                     text = {
-                                        Text(
-                                            text = label,
-                                            color = if (autoSyncInterval == hours) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontWeight = if (autoSyncInterval == hours) FontWeight.Bold else FontWeight.Normal
-                                        )
+                                        Text(text = label, color = if (autoSyncInterval == hours) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = if (autoSyncInterval == hours) FontWeight.Bold else FontWeight.Normal)
                                     },
                                     onClick = {
                                         autoSyncInterval = hours
                                         sharedPrefs.edit().putInt("AUTO_SYNC_INTERVAL", hours).apply()
                                         syncDropdownExpanded = false
 
-                                        // Update the actual WorkManager scheduling immediately
                                         val workManager = androidx.work.WorkManager.getInstance(context)
                                         if (hours == 0) {
                                             workManager.cancelUniqueWork("VTOP_BACKGROUND_SYNC")
                                             Toast.makeText(context, "Auto sync disabled", Toast.LENGTH_SHORT).show()
                                         } else {
-                                            val syncRequest = androidx.work.PeriodicWorkRequestBuilder<com.vtop.ui.core.VtopSyncWorker>(
-                                                hours.toLong(),
-                                                java.util.concurrent.TimeUnit.HOURS
-                                            ).build()
-
-                                            workManager.enqueueUniquePeriodicWork(
-                                                "VTOP_BACKGROUND_SYNC",
-                                                androidx.work.ExistingPeriodicWorkPolicy.REPLACE,
-                                                syncRequest
-                                            )
+                                            val syncRequest = androidx.work.PeriodicWorkRequestBuilder<com.vtop.ui.core.VtopSyncWorker>(hours.toLong(), java.util.concurrent.TimeUnit.HOURS).build()
+                                            workManager.enqueueUniquePeriodicWork("VTOP_BACKGROUND_SYNC", androidx.work.ExistingPeriodicWorkPolicy.REPLACE, syncRequest)
                                             Toast.makeText(context, "Auto sync set to $label", Toast.LENGTH_SHORT).show()
                                         }
                                     }
@@ -655,10 +565,7 @@ fun Profile(
         ) {
             Column {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { isPreferencesExpanded = !isPreferencesExpanded }
-                        .padding(16.dp),
+                    modifier = Modifier.fillMaxWidth().clickable { isPreferencesExpanded = !isPreferencesExpanded }.padding(16.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -667,11 +574,7 @@ fun Profile(
                         Spacer(Modifier.height(2.dp))
                         Text("Theme, Accent, Outings, Timetable", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Icon(
-                        imageVector = if (isPreferencesExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Expand/Collapse",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Icon(imageVector = if (isPreferencesExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = "Expand/Collapse", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
 
                 if (isPreferencesExpanded) {
@@ -687,7 +590,13 @@ fun Profile(
                             Spacer(Modifier.height(2.dp))
                             Text("Display hostel outings in navigation", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Switch(checked = showOutings, onCheckedChange = onShowOutingsChange)
+                        Switch(
+                            checked = showOutings,
+                            onCheckedChange = { newValue ->
+                                sharedPrefs.edit().putBoolean("SHOW_OUTINGS", newValue).apply()
+                                onShowOutingsChange(newValue)
+                            }
+                        )
                     }
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
@@ -702,7 +611,13 @@ fun Profile(
                             Spacer(Modifier.height(2.dp))
                             Text("Combine Lab slots in Timetable", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Switch(checked = mergeLabs, onCheckedChange = onMergeLabsChange)
+                        Switch(
+                            checked = mergeLabs,
+                            onCheckedChange = { newValue ->
+                                sharedPrefs.edit().putBoolean("MERGE_LABS", newValue).apply()
+                                onMergeLabsChange(newValue)
+                            }
+                        )
                     }
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
@@ -717,7 +632,13 @@ fun Profile(
                             Spacer(Modifier.height(2.dp))
                             Text("Group Theory & Lab/Project marks together", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Switch(checked = mergeMarks, onCheckedChange = onMergeMarksChange)
+                        Switch(
+                            checked = mergeMarks,
+                            onCheckedChange = { newValue ->
+                                sharedPrefs.edit().putBoolean("MERGE_MARKS", newValue).apply()
+                                onMergeMarksChange(newValue)
+                            }
+                        )
                     }
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
@@ -745,7 +666,10 @@ fun Profile(
                                         color = if (useDynamicColor) MaterialTheme.colorScheme.onSurface else Color.Transparent,
                                         shape = CircleShape
                                     )
-                                    .clickable { onDynamicColorChange(true) },
+                                    .clickable {
+                                        sharedPrefs.edit().putBoolean("USE_DYNAMIC_COLOR", true).apply()
+                                        onDynamicColorChange(true)
+                                    },
                                 contentAlignment = Alignment.Center
                             ) {
                                 Box(modifier = Modifier.size(28.dp).background(MaterialTheme.colorScheme.surface, CircleShape), contentAlignment = Alignment.Center) {
@@ -764,6 +688,9 @@ fun Profile(
                                             shape = CircleShape
                                         )
                                         .clickable {
+                                            sharedPrefs.edit().putBoolean("USE_DYNAMIC_COLOR", false).apply()
+                                            sharedPrefs.edit().putInt("CUSTOM_ACCENT", color.toArgb()).apply()
+
                                             onDynamicColorChange(false)
                                             onAccentChange(color)
                                         }
@@ -814,21 +741,28 @@ fun Profile(
                 }
             }
         }
+
         // --- SYSTEM (ABOUT & UPDATES) ---
         SectionHeader("SYSTEM")
         CardGroup {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { showAboutSheet = true }
+                    .clickable {
+                        onNavigateToAbout()
+                    }
                     .padding(16.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    Text("About & Updates", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text("About the app", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(2.dp))
-                    Text("v${BuildConfig.VERSION_NAME} · View Source", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                    Text(
+                        "Version ${BuildConfig.VERSION_NAME}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp
+                    )
                 }
                 Icon(Icons.AutoMirrored.Filled.ArrowForwardIos, contentDescription = "Open", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(12.dp))
             }
@@ -846,55 +780,24 @@ fun Profile(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.ExitToApp,
-                contentDescription = "Logout",
-                tint = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(20.dp)
-            )
+            Icon(imageVector = Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Logout", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = "Log Out",
-                color = MaterialTheme.colorScheme.error,
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp
-            )
+            Text(text = "Log Out", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, fontSize = 14.sp)
         }
     }
 
     // --- DIALOGS & BOTTOM SHEETS ---
     if (showAboutSheet) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-
-        ModalBottomSheet(
-            onDismissRequest = { showAboutSheet = false },
-            sheetState = sheetState,
-            containerColor = MaterialTheme.colorScheme.surface
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
-                    .padding(bottom = 32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                // App Logo Placeholder
-                Box(
-                    modifier = Modifier
-                        .size(64.dp)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("⚡", fontSize = 32.sp) // You can replace this with your actual app logo/icon later
+        ModalBottomSheet(onDismissRequest = { showAboutSheet = false }, sheetState = sheetState, containerColor = MaterialTheme.colorScheme.surface) {
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(modifier = Modifier.size(64.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), CircleShape), contentAlignment = Alignment.Center) {
+                    Text("⚡", fontSize = 32.sp)
                 }
-
                 Spacer(Modifier.height(16.dp))
                 Text("VTOP App", fontSize = 22.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
                 Text("Version ${BuildConfig.VERSION_NAME}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-
                 Spacer(Modifier.height(32.dp))
-
-                // Update Button
                 Button(
                     onClick = {
                         AnalyticsManager.logEvent("Checked_For_Updates")
@@ -924,57 +827,40 @@ fun Profile(
                     }
                     Text(actionText, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 }
-
                 Spacer(Modifier.height(12.dp))
-
-                // GitHub Button
                 Button(
                     onClick = { uriHandler.openUri("https://github.com/vrmanideep/vtop-app") },
                     modifier = Modifier.fillMaxWidth().height(54.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor = MaterialTheme.colorScheme.onSurface
-                    ),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurface),
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Icon(Lucide.Github, contentDescription = "GitHub", modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("View on GitHub", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 }
-
                 Spacer(Modifier.height(32.dp))
                 Text("Developed with ❤️ by Mani", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Medium)
             }
         }
     }
+
     if (showCalendarSheet) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         var selectedCalendarId by remember { mutableLongStateOf(availableCalendars.firstOrNull()?.id ?: -1L) }
         var calendarDropdownExpanded by remember { mutableStateOf(false) }
-
         var reminderMins by remember { mutableIntStateOf(10) }
         var reminderDropdownExpanded by remember { mutableStateOf(false) }
         val reminderOptions = mapOf(0 to "No Reminder", 10 to "10 mins before", 30 to "30 mins before", 60 to "1 hour before")
-
         var titleTemplate by remember { mutableStateOf("{courseCode} ({slot})") }
         var descTemplate by remember { mutableStateOf("{courseTitle}\nFaculty: {faculty}\nType: {courseType}\nClass ID: {classId}") }
         var locTemplate by remember { mutableStateOf("{venue}") }
-
         val sdf = remember { SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH) }
         var endDate by remember { mutableStateOf(CalendarSync.getDefaultEndDate(context)) }
         var showDatePicker by remember { mutableStateOf(false) }
 
-        ModalBottomSheet(
-            onDismissRequest = { showCalendarSheet = false },
-            sheetState = sheetState,
-            containerColor = MaterialTheme.colorScheme.surface
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
+        ModalBottomSheet(onDismissRequest = { showCalendarSheet = false }, sheetState = sheetState, containerColor = MaterialTheme.colorScheme.surface) {
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text("Export to Google Calendar", fontSize = 20.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
-
                 Text("SELECT CALENDAR", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                 Box(modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.2f), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { calendarDropdownExpanded = true }.padding(16.dp)) {
                     val selectedName = availableCalendars.find { it.id == selectedCalendarId }?.name ?: "None"
@@ -985,7 +871,6 @@ fun Profile(
                         }
                     }
                 }
-
                 Text("REMINDER", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                 Box(modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.2f), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { reminderDropdownExpanded = true }.padding(16.dp)) {
                     Text(reminderOptions[reminderMins] ?: "None", color = MaterialTheme.colorScheme.onSurface)
@@ -995,50 +880,26 @@ fun Profile(
                         }
                     }
                 }
-
                 Text("END SYNC ON (LAST INSTRUCTIONAL DAY)", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                 Row(modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.2f), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { showDatePicker = true }.padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text(endDate, color = MaterialTheme.colorScheme.onSurface)
                     Icon(Icons.Outlined.Edit, "Edit", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                 }
-
-                Text("EVENT TEMPLATES (Available: {courseCode}, {courseTitle}, {slot}, {faculty}, {courseType}, {venue}, {classId})", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, lineHeight = 14.sp)
+                Text("EVENT TEMPLATES", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                 OutlinedTextField(value = titleTemplate, onValueChange = { titleTemplate = it }, label = { Text("Event Title") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(value = descTemplate, onValueChange = { descTemplate = it }, label = { Text("Event Description") }, modifier = Modifier.fillMaxWidth().height(100.dp))
                 OutlinedTextField(value = locTemplate, onValueChange = { locTemplate = it }, label = { Text("Location") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-
                 Spacer(Modifier.height(8.dp))
-
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(
-                        onClick = {
-                            CalendarSync.clearSyncedEvents(context, selectedCalendarId)
-                            showCalendarSheet = false
-                        },
-                        modifier = Modifier.weight(1f).height(50.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.15f)),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
+                    Button(onClick = { CalendarSync.clearSyncedEvents(context, selectedCalendarId); showCalendarSheet = false }, modifier = Modifier.weight(1f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.15f)), shape = RoundedCornerShape(12.dp)) {
                         Text("Clear Old", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Black)
                     }
-
-                    Button(
-                        onClick = {
-                            if (selectedCalendarId != -1L) {
-                                CalendarSync.syncToCalendar(context, timetable, examsData, mergeLabs, selectedCalendarId, reminderMins, endDate, titleTemplate, descTemplate, locTemplate)
-                            }
-                            showCalendarSheet = false
-                        },
-                        modifier = Modifier.weight(1f).height(50.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
+                    Button(onClick = { if (selectedCalendarId != -1L) { CalendarSync.syncToCalendar(context, timetable, examsData, mergeLabs, selectedCalendarId, reminderMins, endDate, titleTemplate, descTemplate, locTemplate) }; showCalendarSheet = false }, modifier = Modifier.weight(1f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary), shape = RoundedCornerShape(12.dp)) {
                         Text("Sync Now", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Black)
                     }
                 }
             }
         }
-
         if (showDatePicker) {
             val datePickerState = rememberDatePickerState(initialSelectedDateMillis = sdf.parse(endDate)?.time?.plus(TimeZone.getDefault().rawOffset))
             DatePickerDialog(
@@ -1057,66 +918,26 @@ fun Profile(
                     Text("Update Available", fontWeight = FontWeight.Black, fontSize = 20.sp)
                     if (!updateInfo?.releaseTitle.isNullOrBlank()) {
                         Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = updateInfo!!.releaseTitle,
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Text(text = updateInfo!!.releaseTitle, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                     }
                 }
             },
             text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 350.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(
-                        text = "Version ${updateInfo?.latestVersion} is ready to download. Do you want to install it now?",
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 14.sp
-                    )
-
+                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 350.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(text = "Version ${updateInfo?.latestVersion} is ready to download.", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
                     if (!updateInfo?.releaseNotes.isNullOrBlank()) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                        Text(
-                            text = "Release Notes:",
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.5.sp
-                        )
-                        Markdown(
-                            content = updateInfo!!.releaseNotes.replace("\\n", "\n"),
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        Text(text = "Release Notes:", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Markdown(content = updateInfo!!.releaseNotes.replace("\\n", "\n"), modifier = Modifier.fillMaxWidth())
                     }
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        isDownloadingUpdate = true
-                        UpdateManager.downloadAndInstallUpdate(
-                            context = context,
-                            downloadUrl = updateInfo!!.downloadUrl,
-                            version = updateInfo!!.latestVersion
-                        )
-                        updateInfo = null
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                ) {
+                Button(onClick = { isDownloadingUpdate = true; UpdateManager.downloadAndInstallUpdate(context, updateInfo!!.downloadUrl, updateInfo!!.latestVersion); updateInfo = null }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
                     Text("Update Now", fontWeight = FontWeight.Bold)
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { updateInfo = null }) {
-                    Text("Later", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            },
+            dismissButton = { TextButton(onClick = { updateInfo = null }) { Text("Later", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
             containerColor = MaterialTheme.colorScheme.surface
         )
     }
@@ -1128,25 +949,24 @@ fun Profile(
             text = {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ThemeChip("🌑", "Dark", currentTheme == AppThemeMode.DARK, Modifier.weight(1f)) {
+                        sharedPrefs.edit().putString("APP_THEME", AppThemeMode.DARK.name).apply()
                         onThemeChange(AppThemeMode.DARK)
                         showThemeDialog = false
                     }
                     ThemeChip("☀️", "Light", currentTheme == AppThemeMode.LIGHT, Modifier.weight(1f)) {
+                        sharedPrefs.edit().putString("APP_THEME", AppThemeMode.LIGHT.name).apply()
                         onThemeChange(AppThemeMode.LIGHT)
                         showThemeDialog = false
                     }
                     ThemeChip("⚙️", "System", currentTheme == AppThemeMode.SYSTEM, Modifier.weight(1f)) {
+                        sharedPrefs.edit().putString("APP_THEME", AppThemeMode.SYSTEM.name).apply()
                         onThemeChange(AppThemeMode.SYSTEM)
                         showThemeDialog = false
                     }
                 }
             },
             confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { showThemeDialog = false }) {
-                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            },
+            dismissButton = { TextButton(onClick = { showThemeDialog = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
             containerColor = MaterialTheme.colorScheme.surface
         )
     }
@@ -1162,10 +982,7 @@ fun Profile(
                         Card(
                             colors = CardDefaults.cardColors(containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant),
                             shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth().clickable {
-                                onSemesterChange(sem)
-                                showSemesterDialog = false
-                            }
+                            modifier = Modifier.fillMaxWidth().clickable { onSemesterChange(sem); showSemesterDialog = false }
                         ) {
                             Text(sem.name, color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.padding(16.dp))
                         }
@@ -1189,54 +1006,26 @@ fun Profile(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedTextField(
-                        value = tempReg,
-                        onValueChange = { tempReg = it },
-                        label = { Text("Username") },
-                        leadingIcon = { Icon(Lucide.UserRound, null) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
-                        )
+                        value = tempReg, onValueChange = { tempReg = it }, label = { Text("Username") },
+                        leadingIcon = { Icon(Lucide.UserRound, null) }, singleLine = true, modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
-                        value = tempPass,
-                        onValueChange = { tempPass = it },
-                        label = { Text("VTOP Password") },
-                        leadingIcon = { Icon(Icons.Outlined.Lock, null) },
-                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        value = tempPass, onValueChange = { tempPass = it }, label = { Text("VTOP Password") },
+                        leadingIcon = { Icon(Icons.Outlined.Lock, null) }, visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                         trailingIcon = {
                             val image = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff
-                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                                Icon(imageVector = image, contentDescription = "Toggle Password", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+                            IconButton(onClick = { passwordVisible = !passwordVisible }) { Icon(imageVector = image, contentDescription = "Toggle Password", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
                         },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
-                        )
+                        singleLine = true, modifier = Modifier.fillMaxWidth()
                     )
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        onCredentialsSave(tempReg, tempPass)
-                        showCredDialog = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                ) {
+                Button(onClick = { onCredentialsSave(tempReg, tempPass); showCredDialog = false }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
                     Text("Save & Sync", fontWeight = FontWeight.Bold)
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { showCredDialog = false }) {
-                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            },
+            dismissButton = { TextButton(onClick = { showCredDialog = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
             containerColor = MaterialTheme.colorScheme.surface
         )
     }
@@ -1245,20 +1034,12 @@ fun Profile(
         AlertDialog(
             onDismissRequest = { showLogoutDialog = false },
             title = { Text("Confirm Logout", fontWeight = FontWeight.Bold) },
-            text = { Text("Are you sure you want to log out? All of your offline data and saved credentials will be cleared from this device.") },
+            text = { Text("Are you sure you want to log out? All data will be cleared.") },
             confirmButton = {
-                TextButton(onClick = { showLogoutDialog = false; onLogout() }) {
-                    Text("Log Out", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
-                }
+                TextButton(onClick = { showLogoutDialog = false; onLogout() }) { Text("Log Out", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
             },
-            dismissButton = {
-                TextButton(onClick = { showLogoutDialog = false }) {
-                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            },
-            containerColor = MaterialTheme.colorScheme.surface,
-            titleContentColor = MaterialTheme.colorScheme.onSurface,
-            textContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+            dismissButton = { TextButton(onClick = { showLogoutDialog = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+            containerColor = MaterialTheme.colorScheme.surface
         )
     }
 }
@@ -1266,11 +1047,8 @@ fun Profile(
 @Composable
 private fun SectionHeader(title: String) {
     Text(
-        text = title,
-        fontSize = 10.sp,
-        fontWeight = FontWeight.Black,
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-        letterSpacing = 1.5.sp,
+        text = title, fontSize = 10.sp, fontWeight = FontWeight.Black,
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f), letterSpacing = 1.5.sp,
         modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 4.dp)
     )
 }
@@ -1279,23 +1057,16 @@ private fun SectionHeader(title: String) {
 private fun CardGroup(content: @Composable ColumnScope.() -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(content = content)
-    }
+        shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
+        modifier = Modifier.fillMaxWidth(), content = content
+    )
 }
 
 @Composable
 private fun SettingRow(label: String, value: String, actionText: String? = null, onClick: (() -> Unit)? = null) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
-            .padding(16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        modifier = Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable { onClick() } else Modifier).padding(16.dp),
+        horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
@@ -1318,10 +1089,8 @@ private fun ThemeChip(icon: String, label: String, isSelected: Boolean, modifier
     val textColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
 
     Card(
-        modifier = modifier.clickable { onClick() },
-        colors = CardDefaults.cardColors(containerColor = bgColor),
-        border = BorderStroke(1.dp, borderColor),
-        shape = RoundedCornerShape(12.dp)
+        modifier = modifier.clickable { onClick() }, colors = CardDefaults.cardColors(containerColor = bgColor),
+        border = BorderStroke(1.dp, borderColor), shape = RoundedCornerShape(12.dp)
     ) {
         Column(
             modifier = Modifier.padding(vertical = 16.dp).fillMaxWidth(),
