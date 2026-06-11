@@ -458,21 +458,25 @@ fun GlobalTopBar(
     val syncStatus by AppBridge.syncStatus
     var subtitleText by remember { mutableStateOf("Loading...") }
 
+    // THE FIX: Added a ticking loop when the app is IDLE
     LaunchedEffect(syncStatus) {
         if (syncStatus != "IDLE") {
             subtitleText = syncStatus
         } else {
-            val lastSyncMillis = Vault.getLastSyncTimestamp(context)
-            subtitleText = if (lastSyncMillis == 0L) {
-                "Never synced"
-            } else {
-                val diffMinutes = (System.currentTimeMillis() - lastSyncMillis) / 60000
-                when {
-                    diffMinutes <= 1L -> "Synced just now"
-                    diffMinutes < 60L -> "Synced $diffMinutes mins ago"
-                    diffMinutes < 1440L -> "Synced ${diffMinutes / 60L} hrs ago"
-                    else -> "Synced ${diffMinutes / 1440L} days ago"
+            while (true) {
+                val lastSyncMillis = Vault.getLastSyncTimestamp(context)
+                subtitleText = if (lastSyncMillis == 0L) {
+                    "Never synced"
+                } else {
+                    val diffMinutes = (System.currentTimeMillis() - lastSyncMillis) / 60000
+                    when {
+                        diffMinutes <= 1L -> "Synced just now"
+                        diffMinutes < 60L -> "Synced $diffMinutes mins ago"
+                        diffMinutes < 1440L -> "Synced ${diffMinutes / 60L} hrs ago"
+                        else -> "Synced ${diffMinutes / 1440L} days ago"
+                    }
                 }
+                delay(60_000L) // Wait exactly 1 minute, then recalculate the text
             }
         }
     }
