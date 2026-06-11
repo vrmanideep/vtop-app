@@ -107,7 +107,7 @@
         "department": "School of Electronics Engineering (SENSE)",
         "sub_department": null,
         "research": null,
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Kranthi_Kumar_Reddy_Missal_SENSE_c940768792.avif"
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_KRANTHI_KUMAR_REDDY_MISSAL_SENSE_95efc88519.avif"
     },
     {
         "id": 1678,
@@ -119,17 +119,6 @@
         "sub_department": null,
         "research": "Medical Image Processing, Deep Learning, Cyber Security",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Venkata_Sivanarayana_Gayyi_SCOPE_8032011354.avif"
-    },
-    {
-        "id": 1692,
-        "name": "Dr. Tarun Narayan Shankar",
-        "designation": "Professor Grade 1",
-        "email": "tarun.shankar@vitap.ac.in",
-        "office": "CB, 432-F",
-        "department": "School of Computer Science and Engineering (SCOPE)",
-        "sub_department": null,
-        "research": "Information Security",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Tarun_Narayan_Shankar_SCOPE_dff8244c0d.avif"
     },
     {
         "id": 1567,
@@ -231,17 +220,6 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Rajeev_Sharma_70179_IMG_4915_SENSE_55132c6c58.avif"
     },
     {
-        "id": 1691,
-        "name": "Dr. N Md Jubair Basha",
-        "designation": "Assistant Professor Senior Grade 1",
-        "email": "jubairbasha.md@vitap.ac.in",
-        "office": "CB, 431-F",
-        "department": "School of Computer Science and Engineering (SCOPE)",
-        "sub_department": null,
-        "research": "Software Engineering, Machine Learning, Artificial Intelligence, Emerging Technologies",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_N_Md_Jubair_Basha_SCOPE_e1e0891458.avif"
-    },
-    {
         "id": 1506,
         "name": "Dr. Sunkara Kalyani",
         "designation": "Assistant Professor Senior Grade 1",
@@ -284,17 +262,6 @@
         "sub_department": "DSSE",
         "research": "DEEP LEARNING and IMAGE PROCESSING",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/70585_Dr_B_V_Gokulnath_1049_617b3c1d37.avif"
-    },
-    {
-        "id": 1200,
-        "name": "Dr. Reeja S R",
-        "designation": "Head, Dept. of Artificial Intelligence and Machine Learning. Professor Grade 2",
-        "email": "reeja.sr@vitap.ac.in",
-        "office": "CB; G04-D",
-        "department": "School of Computer Science and Engineering (SCOPE)",
-        "sub_department": "DAIML",
-        "research": "High Performance Computing, Machine Learning, Artificial Intelligence, Computer Vision, Data Analytics",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Reeja_S_R_70306_0211_c3768ccf86.avif"
     },
     {
         "id": 1324,
@@ -407,15 +374,15 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Rafael_Gonzalez_Macho_1517_60d08f784a.avif"
     },
     {
-        "id": 1694,
-        "name": "Ms. Angel Shaji",
-        "designation": "Assistant Professor Grade 1",
-        "email": "angel.shaji@vitap.ac.in",
-        "office": "415-A, AB-2",
-        "department": "School of Law (VSL)",
-        "sub_department": null,
-        "research": "Insolvency and Bankruptcy Law, Corporate and Commercial Law",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Ms_Angel_Shaji_VSL_d3efd30bb7.avif"
+        "id": 1200,
+        "name": "Dr. Reeja S R",
+        "designation": "Head, Dept. of Artificial Intelligence and Machine Learning. Professor Grade 2",
+        "email": "reeja.sr@vitap.ac.in",
+        "office": "CB, G04-D",
+        "department": "School of Computer Science and Engineering (SCOPE)",
+        "sub_department": "DAIML",
+        "research": "High Performance Computing, Machine Learning, Artificial Intelligence, Computer Vision, Data Analytics",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Reeja_S_R_70306_0211_c3768ccf86.avif"
     },
     {
         "id": 1173,
@@ -525,7 +492,7 @@
         "department": "School of Electronics Engineering (SENSE)",
         "sub_department": null,
         "research": "Signal processing,  Speech Processing, Statistical Modelling,  and  Statistical machine Learning.",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Mr_K_Durgesh_SENSE_9d8ddf6973.avif"
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Mr_K_DURGESH_SENSE_69e47b2c07.avif"
     },
     {
         "id": 1171,
@@ -594,15 +561,15 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Manoj_Kumar_Gupta_SMEC_1476_2a327f8859.avif"
     },
     {
-        "id": 1696,
-        "name": "Dr. Gosala Bethany",
-        "designation": "Assistant Professor Senior Grade 1",
-        "email": "bethany.gosala@vitap.ac.in",
-        "office": "204-B, CB",
-        "department": "School of Computer Science and Engineering (SCOPE)",
+        "id": 1195,
+        "name": "Dr. Manikanta Ravindra Kumar Vakkalagadda",
+        "designation": "Professor Grade 1",
+        "email": "ravindra.v@vitap.ac.in",
+        "office": "401, CB",
+        "department": "School of Mechanical Engineering (SMEC)",
         "sub_department": null,
-        "research": "Artificial Intelligence, Artificial Neural Network, Neuroimaging, EEG, BCI, Eye tracking, \nSocial Robots ",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Gosala_Bethany_SCOPE_4e764b31f9.avif"
+        "research": "(i) Manufacturing Science, (ii) Metal forming, (iii) Numerical modelling of Manufacturing Processes, (iv) Railway Engineering, (v) 4D printing",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Manikanta_Ravindra_Kumar_Vakkalagadda_70092_IMG_4889_SMEC_279f4bf081.avif"
     },
     {
         "id": 1563,
@@ -658,17 +625,6 @@
         "sub_department": "Maths",
         "research": "Mathematical Biology, Dynamical Systems, Partial Differential Equations",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Sowndarrajan_P_T_SASMAT_7ab86b3763.avif"
-    },
-    {
-        "id": 1195,
-        "name": "Dr. Manikanta Ravindra Kumar Vakkalagadda",
-        "designation": "Professor Grade 1",
-        "email": "ravindra.v@vitap.ac.in",
-        "office": "144, Faculty Area - 140 AB1",
-        "department": "School of Mechanical Engineering (SMEC)",
-        "sub_department": null,
-        "research": "(i) Manufacturing Science, (ii) Metal forming, (iii) Numerical modelling of Manufacturing Processes, (iv) Railway Engineering, (v) 4D printing",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Manikanta_Ravindra_Kumar_Vakkalagadda_70092_IMG_4889_SMEC_279f4bf081.avif"
     },
     {
         "id": 1535,
@@ -935,17 +891,6 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Neelima_Adapa_IMG_9411_VISH_5341f03d0b.avif"
     },
     {
-        "id": 1697,
-        "name": "Dr. Amit Bhaskar",
-        "designation": "Associate Professor Grade 1",
-        "email": "amit.bhaskar@vitap.ac.in",
-        "office": null,
-        "department": "School of Law (VSL)",
-        "sub_department": null,
-        "research": null,
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Amit_Bhaskar_VSL_90d9654a8b.avif"
-    },
-    {
         "id": 1238,
         "name": "Dr. Selva Kumar S",
         "designation": "Assistant Professor Senior Grade 2",
@@ -955,6 +900,17 @@
         "sub_department": "DSSE",
         "research": "Elastic Optical Network (EON), Computer Vision and Image Processing, Optimization Techniques, Data Science and Operating Systems",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Selva_Kumar_S_70401_0216_4a8cc4488b.avif"
+    },
+    {
+        "id": 1697,
+        "name": "Dr. Amit Bhaskar",
+        "designation": "Associate Professor Grade 1",
+        "email": "amit.bhaskar@vitap.ac.in",
+        "office": null,
+        "department": "School of Law (VSL)",
+        "sub_department": null,
+        "research": null,
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_AMIT_BHASKAR_VSL_60d05bb7b0.avif"
     },
     {
         "id": 1550,
@@ -980,8 +936,8 @@
     },
     {
         "id": 1551,
-        "name": "Mr. Sanal Kumar T S",
-        "designation": "Assistant Professor",
+        "name": "Dr. Sanal Kumar T S",
+        "designation": "Assistant Professor Senior Grade 1",
         "email": null,
         "office": "CB; 415-G",
         "department": "School of Computer Science and Engineering (SCOPE)",
@@ -1012,17 +968,6 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/70541_Dr_Ananthu_S_Hari_VSL_1109_ac7d036a78.avif"
     },
     {
-        "id": 1671,
-        "name": "Mr. Ritesh Ranjan",
-        "designation": "Assistant Professor",
-        "email": "ritesh.ranjan@vitap.ac.in",
-        "office": "433-E, CB",
-        "department": "School of Social Science and Humanities (VISH)",
-        "sub_department": null,
-        "research": "French and Francophone literature, French literature & Culture, Franco Moroccan literature ,Maghreb literature, French Translation & Interpretation",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Mr_Ritesh_Ranjan_VISH_105db8a25c.avif"
-    },
-    {
         "id": 1187,
         "name": "Dr. Chandan Kumar Pandey",
         "designation": "Associate Professor Grade 1",
@@ -1032,6 +977,17 @@
         "sub_department": null,
         "research": "Microelectronics and VLSI Design, Modeling and Simulation of advanced MOS devices,  Materials characterization for Semiconductor Devices, Application of devices as Biosensors and Photosensors",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Chandan_Kumar_Pandey_70155_IMG_2662_SENSE_f594ac68df.avif"
+    },
+    {
+        "id": 1671,
+        "name": "Dr. Ritesh Ranjan",
+        "designation": "Assistant Professor Grade 1",
+        "email": "ritesh.ranjan@vitap.ac.in",
+        "office": "433-E, CB",
+        "department": "School of Social Science and Humanities (VISH)",
+        "sub_department": null,
+        "research": "French and Francophone literature, French literature & Culture, Franco Moroccan literature ,Maghreb literature, French Translation & Interpretation",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Mr_Ritesh_Ranjan_VISH_105db8a25c.avif"
     },
     {
         "id": 1698,
@@ -1386,15 +1342,15 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Deepjoy_Katuwal_VISH_1555_65f9d7216d.avif"
     },
     {
-        "id": 1503,
-        "name": "Dr. Umakanta Nanda",
-        "designation": "Professor Grade 1",
-        "email": "umakanta.n@vitap.ac.in",
-        "office": "326-E, AB-1",
-        "department": "School of Electronics Engineering (SENSE)",
+        "id": 1715,
+        "name": "Dr. Soumyadeep Chakraborty",
+        "designation": "Assistant Professor Grade 1",
+        "email": "soumyadeep.chakraborty@vitap.ac.in",
+        "office": "124-A1, AB-2 ",
+        "department": "School of Social Science and Humanities (VISH)",
         "sub_department": null,
-        "research": "Analog and Digital CMOS VLSI Design, Beyond CMOS Devices, Embedded Systems, IoT, Mixed Signal VLSI Design",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Umakanta_Nanda_SENSE_1828_1_804cdb609d.avif"
+        "research": "Children's Literature, Popular Literature and Culture & Environmental Humanities",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Soumyadeep_Chakraborty_VISH_216a6d2e6e.avif"
     },
     {
         "id": 1261,
@@ -1450,17 +1406,6 @@
         "sub_department": null,
         "research": "Image Processing, Multi-level Thresholding based Image Segmentation, Soft Computing, Swarm Intelligence, Particle Swarm Optimization",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/70447_Dr_Abdul_Kayom_Md_Khairuzzaman_SENSE_1089_ab93192103.avif"
-    },
-    {
-        "id": 1701,
-        "name": "Dr. Sivakavi Naga Venkata Bramareswara Rao",
-        "designation": "Assistant Professor Senior Grade 2",
-        "email": "bramareswararao.snv@vitap.ac.in",
-        "office": "110, AB-1",
-        "department": "School of Electronics Engineering (SENSE)",
-        "sub_department": null,
-        "research": "Microgrids, Power Quality, AI applications to Power Systems",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Sivakavi_Naga_Venkata_Bramareswara_Rao_SENSE_c7696a75d2.avif"
     },
     {
         "id": 1514,
@@ -1650,6 +1595,17 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Shubhra_Ghoshal_VISH_1543_cac9b5f421.avif"
     },
     {
+        "id": 1696,
+        "name": "Dr. Gosala Bethany",
+        "designation": "Assistant Professor Senior Grade 1",
+        "email": "bethany.gosala@vitap.ac.in",
+        "office": "204-B, CB",
+        "department": "School of Computer Science and Engineering (SCOPE)",
+        "sub_department": null,
+        "research": "Artificial Intelligence, Artificial Neural Network, Neuroimaging, EEG, BCI, Eye tracking, \nSocial Robots ",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_GOSALA_BETHANY_SCOPE_5b278af1a5.avif"
+    },
+    {
         "id": 1289,
         "name": "Dr. Srinivasa Reddy Konda",
         "designation": "Professor Grade 1",
@@ -1692,17 +1648,6 @@
         "sub_department": null,
         "research": "MEMS Device, Renewable Energy, Microelectronics,  Piezo-Magneto-Elastic Energy Harvester",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_M_Krishnasamy_70496_IMG_4962_SENSE_a10007053c.avif"
-    },
-    {
-        "id": 1702,
-        "name": "Dr. Sunkesula Moulana Abdul Kalam Azad",
-        "designation": "Associate Professor Grade 1",
-        "email": "abdulkalam.a@vitap.ac.in",
-        "office": "162, AB-1",
-        "department": "School of Electronics Engineering (SENSE)",
-        "sub_department": null,
-        "research": "Industrial Automation and Control Communication, Industry 4.0, Industrial IoT",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/18_Dr_S_Moulana_Abdul_Kalam_Azad_SENSE_70134_82c4817667.avif"
     },
     {
         "id": 1298,
@@ -1815,17 +1760,6 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Phani_Kumar_M_SAS_MAT_1933_df8cb65bb4.avif"
     },
     {
-        "id": 1703,
-        "name": "Venkatesh B",
-        "designation": "Associate Professor Grade 1",
-        "email": "venkatesh.b@vitap.ac.in",
-        "office": "415-J, CB",
-        "department": "School of Computer Science and Engineering (SCOPE)",
-        "sub_department": null,
-        "research": "Deep Learning, Computer Vision, Data Mining, Machine Learning",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Venkatesh_B_19c203db43.avif"
-    },
-    {
         "id": 1521,
         "name": "Dr. Riya",
         "designation": "Assistant Professor Grade 1",
@@ -1903,15 +1837,15 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Kritika_Bansal_70673_IMG_5132_SENSE_9723962091.avif"
     },
     {
-        "id": 1311,
-        "name": "Dr. Sanjit Chakraborty",
-        "designation": "Assistant Professor Senior Grade 1",
-        "email": "sanjit.chakraborty@vitap.ac.in",
-        "office": "326-L, CB",
+        "id": 1689,
+        "name": "Dr. Inzamul Sarkar",
+        "designation": "Assistant Professor Grade 1",
+        "email": "inzamul.sarkar@vitap.ac.in",
+        "office": "AB2, 225-I ",
         "department": "School of Social Science and Humanities (VISH)",
         "sub_department": null,
-        "research": "Philosophy of Science, Philosophy of Mathematics, AI and Ethics, Philosophy of Mind and Language",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Sanjit_Chakraborty_VISH_6ae5ad9113.avif"
+        "research": "Sociolinguistic Ethnography, Translanguaging, English Language Education and Humour Studies. ",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_INZAMUL_SARKAR_VISH_1b4e5f984f.avif"
     },
     {
         "id": 1438,
@@ -1944,7 +1878,7 @@
         "department": "School of Computer Science and Engineering (SCOPE)",
         "sub_department": null,
         "research": "Text mining , Data Analytics, NLP and Machine Learning ",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Syamala_Murali_Krishna_SCOPE_45ba034190.avif"
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_SYAMALA_MURALI_KRISHNA_SCOPE_4253667735.avif"
     },
     {
         "id": 1315,
@@ -2215,11 +2149,11 @@
         "name": "Mr. Mohd Irfan",
         "designation": "Assistant Professor",
         "email": "mohd.irfan@vitap.ac.in",
-        "office": null,
+        "office": "171, AB-1 ",
         "department": "School of Computer Science and Engineering (SCOPE)",
         "sub_department": null,
-        "research": null,
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Mr_Mohd_Irfan_SCOPE_cc06806f17.avif"
+        "research": "Applied Machine Learning, Computer Vision, Healthcare, Deep Learning, Image Enhancement",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Mr_MOHD_IRFAN_SCOPE_84ec81dd60.avif"
     },
     {
         "id": 1346,
@@ -2319,17 +2253,6 @@
         "sub_department": "Physics",
         "research": "Dielectric Materials - Ferroelectrics, Piezoelectrics, microwave dielectrics, Multiferroics, Structure-Property correlation, X-ray diffraction, Raman Spectroscopy",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/70031_Dr_Roopas_Kiran_Sirugudu_Physics_1101_51b282850f.avif"
-    },
-    {
-        "id": 1707,
-        "name": "Dr. Mohammad Amin Wani",
-        "designation": "Assistant Professor Senior Grade 2",
-        "email": "mohammadamin.wani@vitap.ac.in",
-        "office": null,
-        "department": "School of Social Science and Humanities (VISH)",
-        "sub_department": null,
-        "research": null,
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Mohammad_Amin_Wani_VISH_da2613d0f3.avif"
     },
     {
         "id": 1545,
@@ -2563,6 +2486,17 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Allapati_Rajya_Lakshmi_SCOPE_3e4c0957c3.avif"
     },
     {
+        "id": 1700,
+        "name": "Dr. Javvaji Venkata Kanaka Ratnam",
+        "designation": "Associate Professor Grade 1",
+        "email": "jvk.ratnam@vitap.ac.in",
+        "office": "326-G, Central Block",
+        "department": "School of Computer Science and Engineering (SCOPE)",
+        "sub_department": null,
+        "research": "Data Science, Data Analytics,  Cryptography, Computer Networks, Security, Machine Learning, Deep Learning ",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_JAVVAJI_VENKATA_KANAKA_RATNAM_SCOPE_107f635b55.avif"
+    },
+    {
         "id": 1400,
         "name": "Dr. Kotnana Ganesh",
         "designation": "Assistant Professor Grade 1",
@@ -2717,6 +2651,17 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Kailash_Chandra_Mishra_SCOPE_0733_15be5c1439.avif"
     },
     {
+        "id": 1716,
+        "name": "Dr. Karnam Balaji",
+        "designation": "Assistant Professor Senior Grade 2",
+        "email": "karnam.balaji@vitap.ac.in",
+        "office": "104-A, CB",
+        "department": "School of Computer Science and Engineering (SCOPE)",
+        "sub_department": null,
+        "research": "Cloud Computing, Information Security, Quantum Cryptography",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_KARNAM_BALAJI_SCOPE_790f2ab1f7.avif"
+    },
+    {
         "id": 1403,
         "name": "Dr. Soumyakanta Prusty",
         "designation": "Assistant Professor Senior Grade 2",
@@ -2770,6 +2715,17 @@
         "sub_department": null,
         "research": "State, Governance and Development; State and Civil Society; Everyday state and Development; Peace and Conflict Studies; Political Anthropology; Political Sociology",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/70600_Dr_Tanmoy_Das_VISH_1247_2637fd6dda.avif"
+    },
+    {
+        "id": 1691,
+        "name": "Dr. N Md Jubair Basha",
+        "designation": "Assistant Professor Senior Grade 1",
+        "email": "jubairbasha.md@vitap.ac.in",
+        "office": "CB, 431-F",
+        "department": "School of Computer Science and Engineering (SCOPE)",
+        "sub_department": null,
+        "research": "Software Engineering, Machine Learning, Artificial Intelligence, Emerging Technologies",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_N_MD_JUBAIR_BASHA_SCOPE_f0653e1099.avif"
     },
     {
         "id": 1634,
@@ -2880,17 +2836,6 @@
         "sub_department": null,
         "research": "VLSI Interconnects, TSVs, Carbon Nanotube based devices, Machine learning",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Girish_Kumar_Mekala_SENSE_1944_2fb7deaf1a.avif"
-    },
-    {
-        "id": 1700,
-        "name": "Dr. Javvaji Venkata Kanaka Ratnam",
-        "designation": "Associate Professor Grade 1",
-        "email": "jvk.ratnam@vitap.ac.in",
-        "office": "326-G, Central Block",
-        "department": "School of Computer Science and Engineering (SCOPE)",
-        "sub_department": null,
-        "research": "Data Science, Data Analytics,  Cryptography, Computer Networks, Security, Machine Learning, Deep Learning ",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Javvaji_Venkata_Kanaka_Ratnam_SCOPE_38fed787ac.avif"
     },
     {
         "id": 1589,
@@ -3146,15 +3091,15 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Zeba_Shamsi_SCOPE_a64723763d.avif"
     },
     {
-        "id": 1457,
-        "name": "Dr. Aastha Madonna Sathe",
-        "designation": "Assistant Professor Grade 1",
-        "email": "aastha.m@vitap.ac.in",
-        "office": "326-G, CB",
-        "department": "School of Advanced Science (SAS)",
-        "sub_department": "Maths",
-        "research": "Computational Statistics, Time Series, Data science",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Aastha_Madonna_Sathe_70531_0653_9c71e95638.avif"
+        "id": 1701,
+        "name": "Dr. Sivakavi Naga Venkata Bramareswara Rao",
+        "designation": "Assistant Professor Senior Grade 2",
+        "email": "bramareswararao.snv@vitap.ac.in",
+        "office": "110, AB-1",
+        "department": "School of Electronics Engineering (SENSE)",
+        "sub_department": null,
+        "research": "Microgrids, Power Quality, AI applications to Power Systems",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_SIVAKAVI_NAGA_VENKATA_BRAMARESWARA_RAO_SENSE_206fccb01d.avif"
     },
     {
         "id": 1528,
@@ -3245,15 +3190,15 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Kashif_Beg_VSB_0837_dc86ff501b.avif"
     },
     {
-        "id": 1710,
-        "name": "Dr. Popuri Srinivasa Rao",
-        "designation": "Assistant Professor Senior Grade 2",
-        "email": "srinivas.popuri@vitap.ac.in",
-        "office": null,
-        "department": "School of Computer Science and Engineering (SCOPE)",
+        "id": 1702,
+        "name": "Dr. Sunkesula Moulana Abdul Kalam Azad",
+        "designation": "Associate Professor Grade 1",
+        "email": "abdulkalam.a@vitap.ac.in",
+        "office": "162, AB-1",
+        "department": "School of Electronics Engineering (SENSE)",
         "sub_department": null,
-        "research": null,
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Popuri_Srinivasa_Rao_SCOPE_1c11e9e56a.avif"
+        "research": "Industrial Automation and Control Communication, Industry 4.0, Industrial IoT",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_SUNKESULA_MOULANA_ABDUL_KALAM_AZAD_SENSE_1f2b25e748.avif"
     },
     {
         "id": 1582,
@@ -3300,15 +3245,15 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Santanu_Dey_SASMAT_IMG_8169_f331374145.avif"
     },
     {
-        "id": 1473,
-        "name": "Dr. Madhusmita Mohanty",
+        "id": 1710,
+        "name": "Dr. Popuri Srinivasa Rao",
         "designation": "Assistant Professor Senior Grade 2",
-        "email": "madhusmita.m@vit.ac.in",
-        "office": "425 C, AB-1",
-        "department": "School of Business (VSB)",
+        "email": "srinivas.popuri@vitap.ac.in",
+        "office": "165, AB-1",
+        "department": "School of Computer Science and Engineering (SCOPE)",
         "sub_department": null,
-        "research": "Security Analysis, Portfolio Management, Project Analysis and Control Systems, Financial Analytics, and Financial Modelling",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/70507_Dr_Madhusmita_Mohanty_VSB_1173_5d22785407.avif"
+        "research": "Data warehousing with optimization techniques",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_POPURI_SRINIVASA_RAO_SCOPE_f3e8543e71.avif"
     },
     {
         "id": 1644,
@@ -3399,26 +3344,15 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Anoop_Kumar_Mishra_70060_IMG_2645_SENSE_75a3f451e8.avif"
     },
     {
-        "id": 1711,
-        "name": "Dr. Y. Raghuvamsi",
-        "designation": "Assistant Professor Senior Grade-1",
-        "email": "raghuvamsi.yarlagadda@vitap.ac.in",
-        "office": null,
-        "department": "School of Electronics Engineering (SENSE)",
+        "id": 1692,
+        "name": "Dr. Tarun Narayan Shankar",
+        "designation": "Professor Grade 1",
+        "email": "tarun.shankar@vitap.ac.in",
+        "office": "CB, 432-F",
+        "department": "School of Computer Science and Engineering (SCOPE)",
         "sub_department": null,
-        "research": null,
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Y_Raghuvamsi_SENSE_993a025f5c.avif"
-    },
-    {
-        "id": 1489,
-        "name": "Dr Navaneethakrishnan K",
-        "designation": "Assistant Professor Grade 2",
-        "email": "navaneethakrishnan.k@vitap.ac.in",
-        "office": "425-G, AB-1",
-        "department": "School of Business (VSB)",
-        "sub_department": null,
-        "research": "Consumer Behaviour, Brand Management, Marketing Management, Organizational Behavior and Communication",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/70603_Dr_NAVANEETHAKRISHNAN_1017_9ec1e75242.avif"
+        "research": "Information Security",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_TARUN_NARAYAN_SHANKAR_SCOPE_04d4a256db.avif"
     },
     {
         "id": 1492,
@@ -3539,7 +3473,7 @@
         "department": "School of Computer Science and Engineering (SCOPE)",
         "sub_department": null,
         "research": null,
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Manimuthu_A_SCOPE_25a5a0521a.avif"
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_MANIMUTHU_A_SCOPE_516ccef20c.avif"
     },
     {
         "id": 1639,
@@ -3595,6 +3529,17 @@
         "sub_department": "Physics",
         "research": "Quantum materials, Frustrated magnetism, Quantum Computing, Quantum Devices",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/70410_Dr_Nallamuthu_S_PHY_1380_7700a97403.avif"
+    },
+    {
+        "id": 1703,
+        "name": "Venkatesh B",
+        "designation": "Associate Professor Grade 1",
+        "email": "venkatesh.b@vitap.ac.in",
+        "office": "415-J, CB",
+        "department": "School of Computer Science and Engineering (SCOPE)",
+        "sub_department": null,
+        "research": "Deep Learning, Computer Vision, Data Mining, Machine Learning",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_VENKATESH_B_SCOPE_a5a98c614a.avif"
     },
     {
         "id": 1652,
@@ -3711,10 +3656,10 @@
         "name": "Dr. Aishwarya Dhawan",
         "designation": "Assistant Professor Grade 1",
         "email": "aishwarya.dhawan@vitap.ac.in",
-        "office": null,
+        "office": "225 H, AB-2",
         "department": "School of Social Science and Humanities (VISH)",
         "sub_department": null,
-        "research": null,
+        "research": "Environmental Economics, Water Resource Management, Applied Econometrics, Geospatial Analysis",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Aishwarya_Dhawan_VISH_7386fe1d93.avif"
     },
     {
@@ -3751,26 +3696,15 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Pragnya_Parimita_Chayani_70622_IMG_4705_vish_ce84c30258.avif"
     },
     {
-        "id": 1714,
-        "name": "Dr. Krishna Priya B",
-        "designation": "Assistant Professor Grade 1",
-        "email": "krishna.priya@vitap.ac.in",
-        "office": null,
-        "department": "School of Social Science and Humanities (VISH)",
+        "id": 1711,
+        "name": "Dr. Y. Raghuvamsi",
+        "designation": "Assistant Professor Senior Grade-1",
+        "email": "raghuvamsi.yarlagadda@vitap.ac.in",
+        "office": "329 H, AB 1",
+        "department": "School of Electronics Engineering (SENSE)",
         "sub_department": null,
-        "research": null,
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Krishna_Priya_B_VISH_8a853189ec.avif"
-    },
-    {
-        "id": 1552,
-        "name": "Ms. Srirupa Poddar",
-        "designation": "Assistant Professor",
-        "email": "srirupa.p@vitap.ac.in",
-        "office": "204-H, CB",
-        "department": "School of Social Science and Humanities (VISH)",
-        "sub_department": null,
-        "research": "English Language Teaching, Language Policy, Multilingualism, Business Communication & Soft Skills, and Documentation of Endangered Languages",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Ms_Srirupa_Poddar_43bdc9fa5b.avif"
+        "research": "Distribution System State Estimation, Deep learning, Optimization Techniques, IoT",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_YARLAGADDA_RAGHUVAMSI_SENSE_0c425e4e54.avif"
     },
     {
         "id": 1610,
@@ -3806,6 +3740,17 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Arun_Kumar_Sinha_SENSE_867c65c402.avif"
     },
     {
+        "id": 1552,
+        "name": "Dr. Srirupa Poddar",
+        "designation": "Assistant Professor Grade 1",
+        "email": "srirupa.p@vitap.ac.in",
+        "office": "204-H, CB",
+        "department": "School of Social Science and Humanities (VISH)",
+        "sub_department": null,
+        "research": "English Language Teaching, Language Policy, Multilingualism, Business Communication & Soft Skills, and Documentation of Endangered Languages",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Ms_Srirupa_Poddar_43bdc9fa5b.avif"
+    },
+    {
         "id": 1319,
         "name": "Dr. R Sinuvasan",
         "designation": "Assistant Professor Senior Grade 2",
@@ -3815,6 +3760,17 @@
         "sub_department": "Maths",
         "research": "Integrable Systems",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_R_Sinuvasan_SAS_MAT_1958_8d010dca24.avif"
+    },
+    {
+        "id": 1714,
+        "name": "Dr. Krishna Priya B",
+        "designation": "Assistant Professor Grade 1",
+        "email": "krishna.priya@vitap.ac.in",
+        "office": "125-A, AB-2",
+        "department": "School of Social Science and Humanities (VISH)",
+        "sub_department": null,
+        "research": "Counselling & Health Psychology, Psychoneuroimmunology, Social Psychology, Caregiving Research & Advocacy.",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Krishna_Priya_B_VISH_8a853189ec.avif"
     },
     {
         "id": 1647,
@@ -3848,17 +3804,6 @@
         "sub_department": "DNS",
         "research": "Blockchain, Network and Data Security, Data Science, Digital Image processing, Cloud and Virtualization, IOT",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Battula_Venkata_Satish_Babu_SCOPE_bffbe534a0.avif"
-    },
-    {
-        "id": 1715,
-        "name": "Dr. Soumyadeep Chakraborty",
-        "designation": "Assistant Professor Grade 1",
-        "email": "soumyadeep.chakraborty@vitap.ac.in",
-        "office": null,
-        "department": "School of Social Science and Humanities (VISH)",
-        "sub_department": null,
-        "research": null,
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Soumyadeep_Chakraborty_VISH_216a6d2e6e.avif"
     },
     {
         "id": 1440,
@@ -3916,6 +3861,17 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Vanacharla_Pujitha_70569_IMG_2588_SAS_MAT_768ceaef5c.avif"
     },
     {
+        "id": 1726,
+        "name": "Dr. Regonda Nagaraju",
+        "designation": "Associate Professor Grade 2",
+        "email": "nagaraju.regonda@vitap.ac.in",
+        "office": null,
+        "department": "School of Computer Science and Engineering (SCOPE)",
+        "sub_department": null,
+        "research": null,
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_NAGA_RAJU_SCOPE_fdaa40fd40.avif"
+    },
+    {
         "id": 1496,
         "name": "Dr. Nimai Sarkar",
         "designation": "Assistant Professor Grade 1",
@@ -3925,6 +3881,17 @@
         "sub_department": "Maths",
         "research": "Qualitative study on Integral and Integro differential Equations, FPT",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Nimai_Sarkar_SAS_1861_0af1224d5b.avif"
+    },
+    {
+        "id": 1727,
+        "name": "Dr. Arkdev",
+        "designation": "Associate Professor Grade 1",
+        "email": "ark.dev@vitap.ac.in",
+        "office": null,
+        "department": "School of Electronics Engineering (SENSE)",
+        "sub_department": null,
+        "research": null,
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Arkdev_SENSE_1cc02594c8.avif"
     },
     {
         "id": 1595,
@@ -4004,15 +3971,15 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Saronath_Halder_fa7dcb772f.avif"
     },
     {
-        "id": 1716,
-        "name": "Dr. Karnam Balaji",
-        "designation": "Assistant Professor Senior Grade 2",
-        "email": "karnam.balaji@vitap.ac.in",
+        "id": 1728,
+        "name": "Dr. Regonda Nagaraju",
+        "designation": "Associate Professor Grade 2",
+        "email": "nagaraju.regonda@vitap.ac.in",
         "office": null,
         "department": "School of Computer Science and Engineering (SCOPE)",
         "sub_department": null,
         "research": null,
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Karnam_Balaji_SCOPE_d6141baff6.avif"
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Regonda_Nagaraju_SCOPE_1cc6ba605a.avif"
     },
     {
         "id": 1646,
@@ -4169,6 +4136,17 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Lakshminarayana_Janjanam_SENSE_9dd14c8509.avif"
     },
     {
+        "id": 1152,
+        "name": "Dr. Y. V. Pavan Kumar",
+        "designation": "Dean SENSE, Professor Grade 1",
+        "email": "pavankumar.yv@vitap.ac.in",
+        "office": "422-G, AB-1",
+        "department": "School of Electronics Engineering (SENSE)",
+        "sub_department": null,
+        "research": "Microgrids, Smart Grids, Classical & Modern Control, Power Quality, Power Converters, Hybrid Electric Vehicles, Data Analytics, Artificial Intelligence",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Pavan_Kumar_Y_V_SENSE_70049_108b6122b4.avif"
+    },
+    {
         "id": 1274,
         "name": "Dr. Priyanka Ghosh",
         "designation": "Dean In-Charge, VISH, Associate Professor Grade 1",
@@ -4224,6 +4202,17 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Sandhya_Sadanandan_SAS_1494_82a7b52d29.avif"
     },
     {
+        "id": 1694,
+        "name": "Dr. Angel Shaji",
+        "designation": "Assistant Professor Senior Grade 1",
+        "email": "angel.shaji@vitap.ac.in",
+        "office": "415-A, AB-2",
+        "department": "School of Law (VSL)",
+        "sub_department": null,
+        "research": "Insolvency and Bankruptcy Law, Corporate and Commercial Law",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Ms_ANGEL_SHAJI_VSL_f89a2744a5.avif"
+    },
+    {
         "id": 1621,
         "name": "Dr. Parul Saini",
         "designation": "Assistant Professor Grade 1",
@@ -4233,6 +4222,17 @@
         "sub_department": "Maths",
         "research": "Numerical methods, Application of Spectral Methods in differential equations and noise corrupted signals",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Parul_Saini_SAS_IMG_8162_5456c37587.avif"
+    },
+    {
+        "id": 1729,
+        "name": "Dr. Kalyani Abhyankar",
+        "designation": "Assistant Professor Senior Grade 1",
+        "email": "kalyani.abhyankar@vitap.ac.in",
+        "office": null,
+        "department": "School of Law (VSL)",
+        "sub_department": null,
+        "research": null,
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Kalyani_Abhyankar_VSL_72765ae56c.avif"
     },
     {
         "id": 1453,
@@ -4345,6 +4345,17 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/70628_Dr_Suresh_Dara_SCOPE_1255_0087af24fc.avif"
     },
     {
+        "id": 1730,
+        "name": "Dr. Sourav Ghosh",
+        "designation": "Assistant Professor Senior Grade 2",
+        "email": "sourav.ghosh@vitap.ac.in",
+        "office": null,
+        "department": "School of Electronics Engineering (SENSE)",
+        "sub_department": null,
+        "research": null,
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Sourav_Ghosh_SENSE_d272abd176.avif"
+    },
+    {
         "id": 1603,
         "name": "Ms. Paidipogu Sowjanya",
         "designation": "Assistant Professor Junior",
@@ -4444,6 +4455,17 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_K_Panduranga_SAS_0892_378adffc47.avif"
     },
     {
+        "id": 1473,
+        "name": "Dr. Madhusmita Mohanty",
+        "designation": "Assistant Professor Senior Grade 2",
+        "email": "madhusmita.m@vitap.ac.in",
+        "office": "425 C, AB-1",
+        "department": "School of Business (VSB)",
+        "sub_department": null,
+        "research": "Security Analysis, Portfolio Management, Project Analysis and Control Systems, Financial Analytics, and Financial Modelling",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/70507_Dr_Madhusmita_Mohanty_VSB_1173_5d22785407.avif"
+    },
+    {
         "id": 1357,
         "name": "Dr. Illa Ramakanth",
         "designation": "Head, Dept. of Chemistry, Associate Professor Senior",
@@ -4486,6 +4508,17 @@
         "sub_department": "Maths",
         "research": "Functional Analysis and it's application to Function Spaces ",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Akshay_Kumar_SAS_IMG_8146_016fd7f28e.avif"
+    },
+    {
+        "id": 1731,
+        "name": "Dr. Uzma Azam",
+        "designation": "Assistant Professor Grade 1",
+        "email": "uzma.azam@vitap.ac.in",
+        "office": null,
+        "department": "School of Social Science and Humanities (VISH)",
+        "sub_department": null,
+        "research": null,
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Uzma_Azam_VISH_Psychology_47fe130290.avif"
     },
     {
         "id": 1520,
@@ -4587,6 +4620,28 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/70538_Dr_Ramesh_Prasad_Panda_MAT_1240_e9dfc9d42c.avif"
     },
     {
+        "id": 1717,
+        "name": "Dr. Aysha Thasleema K S",
+        "designation": "Assistant Professor Grade 1",
+        "email": "aysha.thasleema@vitap.ac.in",
+        "office": "225 A1, AB2",
+        "department": "School of Social Science and Humanities (VISH)",
+        "sub_department": null,
+        "research": "Child and adolescent health, Well-being research, Health risk behaviours",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Aysha_Thasleema_K_S_VISH_34d0de0bb4.avif"
+    },
+    {
+        "id": 1732,
+        "name": "Dr. Siba Prasad Mishra",
+        "designation": "Assistant Professor Senior Grade 1",
+        "email": "sibaprasad.mishra@vitap.ac.in",
+        "office": null,
+        "department": "School of Electronics Engineering (SENSE)",
+        "sub_department": null,
+        "research": null,
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Siba_Prasad_Mishra_SENSE_85f286fce0.avif"
+    },
+    {
         "id": 1676,
         "name": "Dr. Manisha Bhadran",
         "designation": "Assistant Professor Grade 1",
@@ -4664,6 +4719,17 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Ansumalini_Panda_VSB_IMG_7259_3852db1286.avif"
     },
     {
+        "id": 1718,
+        "name": "Dr. Balaraju Ramesh",
+        "designation": "Assistant Professor Senior Grade 1",
+        "email": "balaraju.ramesh@vitap.ac.in",
+        "office": null,
+        "department": "School of Computer Science and Engineering (SCOPE)",
+        "sub_department": null,
+        "research": null,
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_BALARAJU_RAMESH_SCOPE_1d7f65465b.avif"
+    },
+    {
         "id": 1618,
         "name": "Dr. Ishfaq Ahmad Thaku",
         "designation": "Associate Professor Grade 1",
@@ -4695,6 +4761,17 @@
         "sub_department": "Maths",
         "research": "Algebra-Lattice Theory, BCK-algebras and Other algebraic Structures",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Ravi_Kumar_Bandaru_70604_IMG_2623_SAS_MAT_112b3d5a7e.avif"
+    },
+    {
+        "id": 1733,
+        "name": "Dr. Dibyadrasta Sahoo",
+        "designation": "Assistant Professor Senior Grade 1",
+        "email": "dibyadrasta.sahoo@vitap.ac.in",
+        "office": null,
+        "department": "School of Electronics Engineering (SENSE)",
+        "sub_department": null,
+        "research": null,
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Dibyadrasta_Sahoo_SENSE_37bc73b925.avif"
     },
     {
         "id": 1612,
@@ -4763,15 +4840,15 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Jayashree_Pradhan_SENSE_IMG_7275_97a815a254.avif"
     },
     {
-        "id": 1685,
-        "name": "Dr. A V Narendra Kumar",
-        "designation": "Associate Professor Grade 1",
-        "email": "narendrakumar.av@vitap.ac.in",
-        "office": "165, AB1",
-        "department": "School of Advanced Science (SAS)",
-        "sub_department": "Chemistry",
-        "research": "Electrocatalysis, Nanomaterials, Water remediation through Advanced Oxidation Process. ",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_A_V_Narendra_Kumar_CHY_ea5fdc2483.avif"
+        "id": 1720,
+        "name": "Dr. Ayesha Khatun",
+        "designation": "Assistant Professor Senior Grade 1",
+        "email": "ayesha.khatun@vitap.ac.in",
+        "office": null,
+        "department": "School of Business (VSB)",
+        "sub_department": null,
+        "research": "Knowledge Management, CSR, AI in HRM, Neurodiversity, Leadership, Administration of Business Education/Management Education, Hybrid work arrangements, Algorithmic Decision Making and Employee Trust. \n",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_AYESHA_KHATUN_VSB_dcb739e884.avif"
     },
     {
         "id": 1611,
@@ -4783,6 +4860,39 @@
         "sub_department": null,
         "research": "Low Power VLSI Design",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Aruru_Sai_Kumar_SENSE_IMG_7279_6d0ef1b569.avif"
+    },
+    {
+        "id": 1685,
+        "name": "Dr. A V Narendra Kumar",
+        "designation": "Associate Professor Grade 1",
+        "email": "narendrakumar.av@vitap.ac.in",
+        "office": "165, AB1",
+        "department": "School of Advanced Science (SAS)",
+        "sub_department": "Chemistry",
+        "research": "Electrocatalysis, Nanomaterials, Water remediation through Advanced Oxidation Process. ",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_A_V_NARENDRA_KUMAR_SAS_4eb5545ed1.avif"
+    },
+    {
+        "id": 1719,
+        "name": "Dr. Tirumanadham N S Koti Manikumar",
+        "designation": "Assistant Professor Senior Grade 1",
+        "email": "tirumanadham.koti@vitap.ac.in",
+        "office": null,
+        "department": "School of Computer Science and Engineering (SCOPE)",
+        "sub_department": null,
+        "research": null,
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_TIRUMANADHAM_N_S_KOTI_MANIKUMAR_SCOPE_8901dad203.avif"
+    },
+    {
+        "id": 1734,
+        "name": "Dr. Pulluri Harish",
+        "designation": "Associate Professor Grade 2",
+        "email": "harish.pulluri@vitap.ac.in",
+        "office": null,
+        "department": "School of Electronics Engineering (SENSE)",
+        "sub_department": null,
+        "research": null,
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Pulluri_Harish_SENSE_1196ba9b19.avif"
     },
     {
         "id": 1660,
@@ -4807,17 +4917,6 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Arunkumar_Sivakumar_VSB_ca331d8994.avif"
     },
     {
-        "id": 1680,
-        "name": "Dr. Surjit Paul",
-        "designation": "Assistant Professor Senior Grade 1",
-        "email": "surjit.paul@vitap.ac.in",
-        "office": "408-D, Central Block",
-        "department": "School of Computer Science and Engineering (SCOPE)",
-        "sub_department": null,
-        "research": "Information Security, Cyber Security, Accessibility, Usability, Social Media Analytics",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Surjit_Paul_SCOPE_6bec28fc9e.avif"
-    },
-    {
         "id": 1135,
         "name": "Dr. Saroj Kumar Panigrahy",
         "designation": "Associate-Dean, SCOPE, Professor Grade 1",
@@ -4840,15 +4939,15 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Sunil_Khosla_70565_IMG_4686_VISH_8d9dd99682.avif"
     },
     {
-        "id": 1687,
-        "name": "Dr. Lanka Divya",
-        "designation": "Assistant Professor Senior Grade 1",
-        "email": "divya.lanka@vitap.ac.in",
-        "office": "CB, 408-E",
-        "department": "School of Computer Science and Engineering (SCOPE)",
+        "id": 1721,
+        "name": "Dr. Maneesh P",
+        "designation": null,
+        "email": "maneesh.p@vitap.ac.in",
+        "office": "Assistant Professor Grade 2",
+        "department": "School of Social Science and Humanities (VISH)",
         "sub_department": null,
         "research": null,
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Lanka_Divya_SCOPE_e88186d9f2.avif"
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_MANEESH_P_VISH_7169814ebf.avif"
     },
     {
         "id": 1684,
@@ -4882,6 +4981,28 @@
         "sub_department": null,
         "research": "Bio medical Image Processing , Bio medical Signal Processing , Artificial Intelligence , Machine Learning , Deep Learning ",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Yepuganti_Karuna_70657_IMG_4934_SENSE_31e41d83b9.avif"
+    },
+    {
+        "id": 1687,
+        "name": "Dr. Lanka Divya",
+        "designation": "Assistant Professor Senior Grade 1",
+        "email": "divya.lanka@vitap.ac.in",
+        "office": "CB, 408-E",
+        "department": "School of Computer Science and Engineering (SCOPE)",
+        "sub_department": null,
+        "research": null,
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_LANKA_DIVYA_SCOPE_8f441e798d.avif"
+    },
+    {
+        "id": 1735,
+        "name": "Mr. Mattakoyya Aharonu",
+        "designation": "Assistant Professor",
+        "email": "aharonu.mattakoyya@vitap.ac.in",
+        "office": null,
+        "department": "School of Computer Science and Engineering (SCOPE)",
+        "sub_department": null,
+        "research": null,
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Mr_Mattakoyya_Aharonu_SCOPE_bb8121c2d8.avif"
     },
     {
         "id": 1142,
@@ -4972,15 +5093,15 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_KOMAL_SAS_e9b32cf71f.avif"
     },
     {
-        "id": 1689,
-        "name": "Dr. Inzamul Sarkar",
-        "designation": "Assistant Professor Grade 1",
-        "email": "inzamul.sarkar@vitap.ac.in",
-        "office": "AB2, 225-I ",
-        "department": "School of Social Science and Humanities (VISH)",
+        "id": 1722,
+        "name": "Dr. Arun Kumar Marandi",
+        "designation": "Associate Professor Grade 2",
+        "email": "arunkumar.marandi@vitap.ac.in",
+        "office": null,
+        "department": "School of Computer Science and Engineering (SCOPE)",
         "sub_department": null,
-        "research": "Sociolinguistic Ethnography, Translanguaging, English Language Education and Humour Studies. ",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Inzamul_Sarkar_cdec0fd532.avif"
+        "research": null,
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_ARUN_KUMAR_MARANDI_SCOPE_9de9bc5cd0.avif"
     },
     {
         "id": 1382,
@@ -5003,17 +5124,6 @@
         "sub_department": "DDSE",
         "research": "Mechanism Design, Game Theory, Crowdsourcing, Internet of Things, Healthcare",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Vikash_Kumar_Singh_70202_IMG_4684_SCOPE_40d5949384.avif"
-    },
-    {
-        "id": 1688,
-        "name": "Dr. Nishi Gupta",
-        "designation": "Assistant Professor Grade 1",
-        "email": "nishi.g@vitap.ac.in",
-        "office": "430-F, CB",
-        "department": "School of Advanced Science (SAS)",
-        "sub_department": "Maths",
-        "research": "Partial Differential EquationPartial Differential Equation",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Nishi_Gupta_MAT_38c1feabca.avif"
     },
     {
         "id": 1194,
@@ -5080,6 +5190,28 @@
         "sub_department": "DDSE",
         "research": "Artificial Intelligence, Data Mining, Machine Learning, Neural Network, Deep Learning",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Manomita_Chakraborty_SCOPE_IMG_7273_d3f7e62879.avif"
+    },
+    {
+        "id": 1688,
+        "name": "Dr. Nishi Gupta",
+        "designation": "Assistant Professor Grade 1",
+        "email": "nishi.g@vitap.ac.in",
+        "office": "430-F, CB",
+        "department": "School of Advanced Science (SAS)",
+        "sub_department": "Maths",
+        "research": "Partial Differential EquationPartial Differential Equation",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_NISHI_GUPTA_SAS_aeb4b022c4.avif"
+    },
+    {
+        "id": 1723,
+        "name": "Dr. Midde Venkata Siva",
+        "designation": "Assistant Professor Senior Grade 1",
+        "email": "venkatasiva.midde@vitap.ac.in",
+        "office": null,
+        "department": "School of Electronics Engineering (SENSE)",
+        "sub_department": null,
+        "research": null,
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_MIDDE_VENKATA_SIVA_SENSE_043df843d6.avif"
     },
     {
         "id": 1234,
@@ -5168,6 +5300,17 @@
         "sub_department": "DAIML",
         "research": "Fuzzy Decision making, Emotion, Cognition, Machine learning in Health care, Social Network analysis, MCDM, Brain Computer Interface",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Sachi_Nandan_Mohanty_SCOPE_1551_ec578c759f.avif"
+    },
+    {
+        "id": 1724,
+        "name": "Sudhir Shenoy S",
+        "designation": "Adjunct Faculty",
+        "email": "secretary.vsb@vitap.ac.in",
+        "office": "Sudhir & Vikas Chartered Accountants , Mangalore",
+        "department": "School of Business (VSB)",
+        "sub_department": null,
+        "research": "Chattered Accountant ",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/CA_Sudhir_Shenoy_S_4c7fcb6ae9.avif"
     },
     {
         "id": 1297,
@@ -5302,15 +5445,15 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Rajkumar_Yesuraj_SCOPE_5486b2c869.avif"
     },
     {
-        "id": 1152,
-        "name": "Dr. Y. V. Pavan Kumar",
-        "designation": "Dean SENSE, Professor Grade 1",
-        "email": "pavankumar.yv@vitap.ac.in",
-        "office": "422-G, AB-1",
-        "department": "School of Electronics Engineering (SENSE)",
+        "id": 1725,
+        "name": "Dr Bhanu Prakash Reddy Varla",
+        "designation": "Adjunct Faculty",
+        "email": "secretary1.vsb@vitap.ac.in",
+        "office": "\u2013 Plural Technology Pvt Ltd, EdifyPath, Angel Investor -Graylogic-Urbankisaan- Beenfield, Startup Mentor, Post Doctorate \u2013 Birla Institute (BIMTECH), TedX Speaker",
+        "department": "School of Business (VSB)",
         "sub_department": null,
-        "research": "Microgrids, Smart Grids, Classical & Modern Control, Power Quality, Power Converters, Hybrid Electric Vehicles, Data Analytics, Artificial Intelligence",
-        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/70049_Dr_Y_V_Pavan_Kumar_SENSE_1184_2954015774.avif"
+        "research": "IITB | IIMB | Partner & Director ",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Bhanu_Prakash_Reddy_Varla_ca9d312585.avif"
     },
     {
         "id": 1488,
@@ -5379,6 +5522,17 @@
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/70373_Dr_Debakanta_Tripathy_1041_a42653a04d.avif"
     },
     {
+        "id": 1503,
+        "name": "Dr. Umakanta Nanda",
+        "designation": "Professor Grade 1",
+        "email": "umakanta.n@vitap.ac.in",
+        "office": "326-E, AB-1",
+        "department": "School of Electronics Engineering (SENSE)",
+        "sub_department": null,
+        "research": "Microelectronics, Semiconductor Devices and Circuits, Mixed Signal VLSI Design, Solar Cells",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_Umakanta_Nanda_SENSE_1828_1_804cdb609d.avif"
+    },
+    {
         "id": 1410,
         "name": "Dr .Prabhakaran Thandapani",
         "designation": "Associate Professor Grade 1",
@@ -5410,6 +5564,17 @@
         "sub_department": "Physics",
         "research": "Multiferroics, Ferroelectrics, Piezoelectrics, Magnetic Nanoparticles, and Energy storage applications",
         "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/70519_Dr_M_Muneeswaran_PHY_1374_b0f4db85ed.avif"
+    },
+    {
+        "id": 1707,
+        "name": "Dr. Mohammad Amin Wani",
+        "designation": "Assistant Professor Senior Grade 2",
+        "email": "mohammadamin.wani@vitap.ac.in",
+        "office": "G24-J, AB-2",
+        "department": "School of Social Science and Humanities (VISH)",
+        "sub_department": null,
+        "research": "HIV/AIDS, Midlife Crisis, Coping Strategies, Psychometrics, Scale Development, Health Psychology,  and Aging Psychology",
+        "image": "https://vitap-backend.s3.ap-south-1.amazonaws.com/Dr_MOHAMMAD_AMIN_WANI_VISH_f96a962159.avif"
     },
     {
         "id": 1690,
