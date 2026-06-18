@@ -1,16 +1,22 @@
 #### Version 1.1.8
 
 ##### Fixed
-
-- Fixed Shared Preferences errors.
-- Fixed Bunk Simulator calculation errors.
-
+- Fixed persistent Shared Preferences errors.
+- Fixed calculation logic errors in Bunk Simulator.
+- Resolved network timeout issues (`SocketTimeoutException`) during Timetable to PNG exports.
+- Fixed UI positioning for Dropdown menus in Profile settings.
 
 ##### Added
+- **VTOP Mate Rebranding**: Official app rebranding.
+- **Academic Calendar Overhaul**: Complete rewrite of the calendar system with native Modal Bottom Sheet UI for navigating historical data.
+- **Gmail OTP Auto-Resolve**: Automated OTP verification using linked student Gmail.
+- **Smart Session Recovery**: Added auto-healing logic; the app will now attempt to silently re-authenticate if a session expires during a sync.
+- **Pull-to-Refresh**: Added pull-to-refresh functionality and manual sync buttons for Calendar and Timetable modules.
+- **Progress Tracking**: Added visual progress bars for batch sync operations.
+- **Widget Optimizations**: Improved reliability for home screen widgets.
 
-- App officially rebranded to VTOP Mate.
-- Gmail OTP auto-resolve functionality.
-- Widget improvements and optimizations.
+##### Notes
+- If you experience any loading issues with the new Academic Calendar, please perform a manual sync using the refresh icon in the top right corner of the Calendar screen.
 
 
 
