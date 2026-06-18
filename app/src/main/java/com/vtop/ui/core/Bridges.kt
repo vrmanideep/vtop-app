@@ -15,8 +15,7 @@ import com.vtop.ui.theme.AuthState
 import kotlinx.coroutines.CompletableDeferred
 
 object AppBridge {
-    var activeClient:
-            com.vtop.network.VtopClient? = null
+    var activeClient: com.vtop.network.VtopClient? = null
     var isAppInForeground = false
     var pendingOtpDeferred: CompletableDeferred<String?>? = null
     val profileState = mutableStateOf<Map<String, Map<String, String>>?>(null)
@@ -29,6 +28,9 @@ object AppBridge {
     var gradesState = mutableStateOf<List<CourseGrade>>(emptyList())
     var historySummaryState = mutableStateOf<CGPASummary?>(null)
     var historyItemsState = mutableStateOf<List<GradeHistoryItem>>(emptyList())
+    var calendarState = mutableStateOf<List<com.vtop.models.AcademicCalendarEvent>>(emptyList())
+    var calendarSemesterId = mutableStateOf("")
+
 
     // --- NEW: Semester Transition State ---
     var isSemesterCompleted = mutableStateOf(false)

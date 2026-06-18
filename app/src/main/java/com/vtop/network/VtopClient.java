@@ -494,6 +494,222 @@ public class VtopClient {
             return res != null;
         } catch (Exception e) { return false; }
     }
+    public List<com.vtop.models.SemesterOption> fetchCalendarSemesters() {
+        List<com.vtop.models.SemesterOption> list = new ArrayList<>();
+        try {
+            Log.d(TAG, "[CALENDAR] Fetching dedicated semester list...");
+
+            // Fire Step 1 to prime the menu and get the HTML
+            RequestBody previewBody = new FormBody.Builder()
+                    .add("verifyMenu", "true")
+                    .add("authorizedID", authorizedId)
+                    .add("_csrf", csrfToken)
+                    .add("nocache", "@(new Date().getTime())")
+                    .build();
+
+            String html = executeWafFetch("/academics/common/CalendarPreview", previewBody, "/content?");
+
+            if (html != null) {
+                // Regex targeting the option tags directly
+                Matcher m = Pattern.compile("<option\\s+value=\"([^\"]+)\"[^>]*>([^<]+)</option>").matcher(html);
+                while (m.find()) {
+                    String id = m.group(1);
+                    String name = m.group(2);
+
+                    if (name != null && !name.toLowerCase().contains("choose") && !id.trim().isEmpty() && !id.trim().equals("COMB")) {
+
+                        // Clean the name and strip " - AMR" from the end if it exists
+                        String cleanName = name.trim().replaceAll("(?i)\\s*-\\s*AMR$", "");
+
+                        list.add(new com.vtop.models.SemesterOption(id.trim(), cleanName));
+                    }
+                }
+                Log.d(TAG, "[CALENDAR] Found " + list.size() + " dedicated calendar semesters.");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to fetch calendar semesters", e);
+        }
+        return list;
+    }
+    public List<String> fetchCalendarMonths(
+            String semId,
+            String classGroupId
+    ) {
+
+        List<String> months = new ArrayList<>();
+
+        try {
+
+            RequestBody body =
+                    new FormBody.Builder()
+                            .add("_csrf", csrfToken)
+                            .add("paramReturnId", "getListForSemester")
+                            .add("semSubId", semId)
+                            .add("classGroupId", classGroupId)
+                            .add("authorizedID", authorizedId)
+                            .add("x", getGmtTimestamp())
+                            .build();
+
+            String html =
+                    executeWafFetch(
+                            "/getListForSemester",
+                            body,
+                            "/content?"
+                    );
+
+            if (html == null) {
+                return months;
+            }
+
+            Matcher matcher =
+                    Pattern.compile(
+                            "processViewCalendar\\(&#39;([A-Z0-9\\-]+)&#39;\\)"
+                    ).matcher(html);
+
+            while (matcher.find()) {
+
+                String month = matcher.group(1);
+
+                Log.d(
+                        TAG,
+                        "CALENDAR MONTH: " + month
+                );
+
+                months.add(month);
+            }
+
+            Log.d(
+                    TAG,
+                    "Calendar Months Found: "
+                            + months.size()
+            );
+
+        } catch (Exception e) {
+
+            Log.e(
+                    TAG,
+                    "Month extraction failed",
+                    e
+            );
+        }
+
+        return months;
+    }
+    public String fetchCalendarRawHtml(
+            String semId,
+            String calDate,
+            String classGroupId
+    ) {
+
+        try {
+
+            Log.d(TAG, "================================================");
+            Log.d(TAG, "[CAL STEP 3] POST /academics/common/CalendarPreview");
+
+            RequestBody previewBody = new FormBody.Builder()
+                    .add("verifyMenu", "true")
+                    .add("authorizedID", authorizedId)
+                    .add("_csrf", csrfToken)
+                    .add("nocache", "@(new Date().getTime())")
+                    .build();
+
+            String previewHtml = executeWafFetch(
+                    "/academics/common/CalendarPreview",
+                    previewBody,
+                    "/content?"
+            );
+
+            Log.d(
+                    TAG,
+                    "[CAL STEP 3] Result: "
+                            + (previewHtml != null ? "SUCCESS" : "FAILED")
+            );
+
+            Log.d(TAG, "[CAL STEP 4] POST /processViewCalendar");
+            Log.d(TAG, "[CAL STEP 4] semId       = " + semId);
+            Log.d(TAG, "[CAL STEP 4] calDate     = " + calDate);
+            Log.d(TAG, "[CAL STEP 4] classGroup  = " + classGroupId);
+            Log.d(TAG, "[CAL STEP 4] authId      = " + authorizedId);
+
+            RequestBody calendarBody =
+                    new FormBody.Builder()
+                            .add("_csrf", csrfToken)
+                            .add("calDate", calDate)
+                            .add("semSubId", semId)
+                            .add("classGroupId", classGroupId)
+                            .add("authorizedID", authorizedId)
+                            .add("x", getGmtTimestamp())
+                            .build();
+
+            String html = executeWafFetch(
+                    "/processViewCalendar",
+                    calendarBody,
+                    "/content?"
+            );
+
+            if (html == null) {
+
+                Log.e(
+                        TAG,
+                        "[CAL STEP 4] NULL RESPONSE"
+                );
+
+                Log.d(TAG, "================================================");
+
+                return null;
+            }
+
+            Log.d(
+                    TAG,
+                    "[CAL STEP 4] Response Length: "
+                            + html.length()
+            );
+
+            if (html.contains("calendar-table")) {
+
+                Log.d(
+                        TAG,
+                        "[CAL STEP 5] SUCCESS: calendar-table detected"
+                );
+
+                Log.d(TAG, "================================================");
+
+                return html;
+            }
+
+            Log.e(
+                    TAG,
+                    "[CAL STEP 5] INVALID HTML"
+            );
+
+            Log.e(
+                    TAG,
+                    "[CAL STEP 5] First 1000 chars:"
+            );
+
+            Log.e(
+                    TAG,
+                    html.substring(
+                            0,
+                            Math.min(1000, html.length())
+                    )
+            );
+
+            Log.d(TAG, "================================================");
+
+            return null;
+
+        } catch (Exception e) {
+
+            Log.e(
+                    TAG,
+                    "[CALENDAR FETCH FAILED]",
+                    e
+            );
+
+            return null;
+        }
+    }
 
     private String extractToken(String html) {
         if (html == null) return "";

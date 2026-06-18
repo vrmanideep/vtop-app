@@ -1,90 +1,210 @@
 package com.vtop.ui.screens.sub
 
 import android.annotation.SuppressLint
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Event
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vtop.ui.core.AppBridge
+import com.vtop.ui.core.GlobalSyncer
+import com.vtop.utils.AnalyticsManager
 import com.vtop.utils.Vault
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import org.json.JSONArray
-import org.json.JSONObject
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
-import androidx.compose.ui.text.style.TextAlign
-import com.vtop.utils.AnalyticsManager
-import kotlin.math.abs
 
-data class AcademicEvent(
+// Internal UI Model
+data class TimelineEvent(
     val startDate: Date,
     val endDate: Date,
     val displayStartDate: String,
     val displayEndDate: String,
     val title: String,
-    val category: String,
-    val sortIndex: Long
+    val category: String
 )
 
-data class SemesterCalendar(
-    val semesterName: String,
-    val startDateFormatted: String,
-    val lastInstructionalDayFormatted: String,
-    val weekOffs: String,
-    val events: List<AcademicEvent>,
-    val isCurrent: Boolean
-)
-
-// Internal data class used solely for the timeline engine calculations
-private data class SemTemp(
-    val key: String,
-    val id: String,
-    val startMs: Long,
-    val trueEndMs: Long,
-    val events: List<AcademicEvent>,
-    val startDateFmt: String,
-    val lastDayFmt: String,
-    val weekOffs: String
-)
+// Helper function to extract "2025-26" from "AP2025267" or "AMR2017182"
+fun extractYearFromSemId(semId: String): String {
+    val regex = Regex("(\\d{4})(\\d{2})")
+    val match = regex.find(semId)
+    return if (match != null) {
+        "${match.groupValues[1]}-${match.groupValues[2]}"
+    } else {
+        "Legacy"
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SimpleDateFormat")
 @Composable
 fun AcademicCalendarScreen(onBack: () -> Unit) {
-    LaunchedEffect(Unit) {
-        AnalyticsManager.logScreenView("Academic_Calendar_Screen")
-    }
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) { AnalyticsManager.logScreenView("Academic_Calendar_Screen") }
+
+    // -- SEPARATED SEMESTER SELECTION STATE --
+    var availableSemesters by remember { mutableStateOf(Vault.getCalendarSemesterOptions(context).toList()) }
+    var isFetchingSemesters by remember { mutableStateOf(false) }
+
+    // Default to the App's Active Profile Semester
+    var selectedSemId by remember { mutableStateOf(Vault.getSelectedSemester(context)[0]) }
+    var selectedSemName by remember { mutableStateOf(Vault.getSelectedSemester(context)[1]) }
+
+    // Bottom Sheet State
+    var showSemesterSheet by remember { mutableStateOf(false) }
+
+    // Fetch the dedicated calendar semesters in the background if missing
+    LaunchedEffect(Unit) {
+        if (availableSemesters.isEmpty()) {
+            isFetchingSemesters = true
+            withContext(Dispatchers.IO) {
+                try {
+                    val client = AppBridge.activeClient
+                    if (client != null) {
+                        val fetched = client.fetchCalendarSemesters().toList()
+                        if (fetched.isNotEmpty()) {
+                            Vault.saveCalendarSemesterOptions(context, fetched)
+                            withContext(Dispatchers.Main) { availableSemesters = fetched }
+                        }
+                    }
+                } catch (ignored: Exception) {
+                } finally {
+                    isFetchingSemesters = false
+                }
+            }
+        }
+    }
+
+    // -- CALENDAR DATA STATE --
+    var rawEvents by remember { mutableStateOf(emptyList<com.vtop.models.AcademicCalendarEvent>()) }
+
+    // Progress UI State
+    var isSyncing by remember { mutableStateOf(false) }
+    var syncTotalSteps by remember { mutableIntStateOf(0) }
+    var syncCompletedSteps by remember { mutableIntStateOf(0) }
+    var syncError by remember { mutableStateOf<String?>(null) }
+
+    // Live Sync Status from GlobalSyncer for UI feedback
+    val globalSyncStatus = AppBridge.syncStatus.value
+
+    // Reusable sync function
+    val fetchCalendar = { semIdToFetch: String ->
+        coroutineScope.launch(Dispatchers.IO) {
+            isSyncing = true
+            syncError = null
+            syncTotalSteps = 0
+            syncCompletedSteps = 0
+
+            try {
+                // 1. AUTO-HEAL DEAD SESSIONS (FAST-TRACK)
+                if (AppBridge.activeClient == null) {
+                    withContext(Dispatchers.Main) { syncError = "RECONNECTING" }
+
+                    // Trigger GlobalSyncer silently in the background
+                    if (!GlobalSyncer.isSyncing.value) {
+                        GlobalSyncer.performSync(context, forceNewSession = true)
+                    }
+
+                    // Suspend execution ONLY until the login phase is complete
+                    while (GlobalSyncer.isSyncing.value) {
+                        val status = AppBridge.syncStatus.value
+                        // As soon as it starts fetching actual modules, authentication is done
+                        if (status.startsWith("Syncing") || status == "Finishing up...") {
+                            break
+                        }
+                        delay(300L) // Fast polling
+                    }
+
+                    // Check if resurrection was successful
+                    if (AppBridge.activeClient == null) {
+                        throw Exception("Failed to re-establish VTOP session. Please check credentials.")
+                    }
+                }
+
+                withContext(Dispatchers.Main) { syncError = null }
+                val client = AppBridge.activeClient!!
+
+                // 2. FETCH CALENDAR DATA
+                val availableDates = client.fetchCalendarMonths(semIdToFetch, "ALL")
+
+                if (availableDates.isNotEmpty()) {
+                    withContext(Dispatchers.Main) { syncTotalSteps = availableDates.size }
+
+                    val allEvents = mutableListOf<com.vtop.models.AcademicCalendarEvent>()
+                    for (dateStr in availableDates) {
+                        val html = client.fetchCalendarRawHtml(semIdToFetch, dateStr, "ALL")
+
+                        if (!html.isNullOrBlank()) {
+                            val monthlyEvents = com.vtop.logic.CalendarParser.parseCalendarHtml(html)
+                            allEvents.addAll(monthlyEvents)
+                        }
+                        delay(250L) // Small breather for WAF
+                        withContext(Dispatchers.Main) { syncCompletedSteps++ }
+                    }
+
+                    if (allEvents.isNotEmpty()) {
+                        Vault.saveAcademicCalendar(context, semIdToFetch, allEvents)
+                        withContext(Dispatchers.Main) {
+                            // Ensure the user hasn't switched tabs while this was loading
+                            if (selectedSemId == semIdToFetch) {
+                                rawEvents = allEvents.toList()
+                            }
+                        }
+                    } else {
+                        throw Exception("Failed to extract calendar data.")
+                    }
+                } else {
+                    throw Exception("No valid calendar dates found for this semester.")
+                }
+            } catch (ignored: Exception) {
+                withContext(Dispatchers.Main) { syncError = ignored.message ?: "Sync Failed" }
+            } finally {
+                withContext(Dispatchers.Main) { isSyncing = false }
+            }
+        }
+    }
+
+    // Auto-load or Auto-sync when the selected semester changes
+    LaunchedEffect(selectedSemId) {
+        val cachedEvents = Vault.getAcademicCalendar(context, selectedSemId).toList()
+        rawEvents = cachedEvents
+
+        // If the vault is empty, trigger the sync automatically
+        if (cachedEvents.isEmpty()) {
+            fetchCalendar(selectedSemId)
+        }
+    }
 
     val todayDate = remember {
         Calendar.getInstance().apply {
@@ -95,429 +215,384 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
         }.time
     }
 
-    val semesters = remember {
-        val list = mutableListOf<SemesterCalendar>()
-        try {
-            val jsonString = try {
-                com.vtop.utils.OtaManager.getCalendarJson(context)
-            } catch (e: Exception) {
-                context.assets.open("academic_calendar.json").bufferedReader().use { it.readText() }
+    // Convert raw data into clean Timeline Events
+    val parsedTimeline = remember(rawEvents) {
+        if (rawEvents.isEmpty()) return@remember emptyList()
+
+        val sdfParse = SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH)
+        val sdfDisplay = SimpleDateFormat("dd-MMM-yy", Locale.ENGLISH)
+
+        val validDays = rawEvents.mapNotNull { event ->
+            val dateObj = try { sdfParse.parse(event.date) } catch (ignored: Exception) { null } ?: return@mapNotNull null
+            val title = event.particulars.replace(" - General (Semester)", "").replace(" - Combined", "").trim()
+            val isGenericSunday = title.contains("Sunday", ignoreCase = true) && !title.contains("Working", ignoreCase = true)
+            val isWorkingDay = title.contains("Working Day", ignoreCase = true)
+            if (isGenericSunday || isWorkingDay) return@mapNotNull null
+
+            val category = when {
+                title.contains("Exam", true) || title.contains("CAT", true) || title.contains("FAT", true) -> "Exam"
+                title.contains("Holiday", true) -> "Holiday"
+                else -> "Event"
             }
+            Triple(dateObj, title, category)
+        }.sortedBy { it.first.time }
 
-            val root = JSONObject(jsonString)
+        val groupedEvents = mutableListOf<TimelineEvent>()
+        var currentStart: Date? = null
+        var currentEnd: Date? = null
+        var currentTitle = ""
+        var currentCategory = ""
 
-            val registeredSemesters = Vault.getSemesterOptions(context)
-            val registeredIds = registeredSemesters.map { it.id }
-            val now = System.currentTimeMillis()
-
-            val formats = listOf("yyyy-MM-dd", "dd-MM-yyyy", "dd-MM", "dd/MM/yyyy")
-            fun parseDateSafely(dateStr: String): Date? {
-                for (f in formats) {
-                    try {
-                        val parsed = SimpleDateFormat(f, Locale.ENGLISH).parse(dateStr)
-                        if (parsed != null) {
-                            val cal = Calendar.getInstance().apply { time = parsed }
-                            if (cal.get(Calendar.YEAR) == 1970) cal.set(Calendar.YEAR, 2026)
-                            return cal.time
-                        }
-                    } catch (_: Exception) {
-                    }
-                }
-                return null
-            }
-
-            fun parseCategory(categoryObj: JSONObject, categoryName: String): List<AcademicEvent> {
-                val rawList = mutableListOf<Pair<Date, String>>()
-                val keys = categoryObj.keys()
-
-                while (keys.hasNext()) {
-                    val key = keys.next()
-                    val value = categoryObj.get(key)
-
-                    if (value is JSONArray) {
-                        val title = key
-                        for (i in 0 until value.length()) {
-                            val dateStr = value.getString(i)
-                            val date = parseDateSafely(dateStr)
-                            if (date != null) rawList.add(Pair(date, title))
-                        }
-                    } else if (value is String) {
-                        val title = value
-                        val isGenericWeekend = title.equals("Sunday", true) || title.equals(
-                            "Monday",
-                            true
-                        ) || title.startsWith("Sunday (", true)
-
-                        if (!isGenericWeekend) {
-                            val date = parseDateSafely(key)
-                            if (date != null) rawList.add(Pair(date, title))
-                        }
-                    }
-                }
-
-                rawList.sortBy { it.first.time }
-
-                val groupedEvents = mutableListOf<AcademicEvent>()
-                val sdfDisplay = SimpleDateFormat("dd-MMM-yy", Locale.ENGLISH)
-
-                var currentStart: Date? = null
-                var currentEnd: Date? = null
-                var currentTitle = ""
-
-                for ((date, title) in rawList) {
-                    if (currentTitle == title) {
-                        currentEnd = date
-                    } else {
-                        if (currentStart != null) {
-                            val finalEnd = currentEnd ?: currentStart
-                            groupedEvents.add(
-                                AcademicEvent(
-                                    startDate = currentStart,
-                                    endDate = finalEnd,
-                                    displayStartDate = sdfDisplay.format(currentStart),
-                                    displayEndDate = sdfDisplay.format(finalEnd),
-                                    title = currentTitle,
-                                    category = categoryName,
-                                    sortIndex = currentStart.time
-                                )
-                            )
-                        }
-                        currentStart = date
-                        currentEnd = date
-                        currentTitle = title
-                    }
-                }
-
+        for ((date, title, category) in validDays) {
+            if (currentTitle == title) {
+                currentEnd = date
+            } else {
                 if (currentStart != null) {
                     val finalEnd = currentEnd ?: currentStart
                     groupedEvents.add(
-                        AcademicEvent(
-                            startDate = currentStart,
-                            endDate = finalEnd,
-                            displayStartDate = sdfDisplay.format(currentStart),
-                            displayEndDate = sdfDisplay.format(finalEnd),
-                            title = currentTitle,
-                            category = categoryName,
-                            sortIndex = currentStart.time
+                        TimelineEvent(
+                            startDate = currentStart, endDate = finalEnd,
+                            displayStartDate = sdfDisplay.format(currentStart), displayEndDate = sdfDisplay.format(finalEnd),
+                            title = currentTitle, category = currentCategory
                         )
                     )
                 }
-                return groupedEvents
+                currentStart = date
+                currentEnd = date
+                currentTitle = title
+                currentCategory = category
             }
-
-            val semesterKeys = root.keys()
-            val sdfDisplay = SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH)
-            val sdfParse = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
-
-            val parsedSems = mutableListOf<SemTemp>()
-
-            while (semesterKeys.hasNext()) {
-                val semKey = semesterKeys.next()
-                if (semKey == "blocked_dates") continue
-
-                val semObj = root.optJSONObject(semKey)
-                if (semObj != null) {
-                    val id = semObj.optString("id", semKey)
-                    val semesterEvents = mutableListOf<AcademicEvent>()
-                    if (semObj.has("holidays")) semesterEvents.addAll(
-                        parseCategory(
-                            semObj.getJSONObject(
-                                "holidays"
-                            ), "Holiday"
-                        )
-                    )
-                    if (semObj.has("exams")) semesterEvents.addAll(
-                        parseCategory(
-                            semObj.getJSONObject(
-                                "exams"
-                            ), "Exam"
-                        )
-                    )
-                    if (semObj.has("events")) semesterEvents.addAll(
-                        parseCategory(
-                            semObj.getJSONObject(
-                                "events"
-                            ), "Event"
-                        )
-                    )
-
-                    semesterEvents.sortBy { it.sortIndex }
-
-                    val startDateRaw = semObj.optString("start_date", "")
-                    val lastDayRaw = semObj.optString("last_instructional_day", "")
-
-                    val startMs = try {
-                        sdfParse.parse(startDateRaw.replace(" ", ""))?.time ?: 0L
-                    } catch (e: Exception) {
-                        0L
-                    }
-                    var endMs = try {
-                        sdfParse.parse(lastDayRaw.replace(" ", ""))?.time ?: Long.MAX_VALUE
-                    } catch (e: Exception) {
-                        Long.MAX_VALUE
-                    }
-
-                    var trueEndMs = endMs
-                    val examsObj = semObj.optJSONObject("exams")
-                    if (examsObj != null && trueEndMs != Long.MAX_VALUE) {
-                        val examKeys = examsObj.keys()
-                        while (examKeys.hasNext()) {
-                            val examType = examKeys.next()
-                            val datesArray = examsObj.optJSONArray(examType)
-                            if (datesArray != null) {
-                                for (i in 0 until datesArray.length()) {
-                                    val dateStr = datesArray.optString(i, "")
-                                    val examMs = try {
-                                        sdfParse.parse(dateStr.replace(" ", ""))?.time ?: 0L
-                                    } catch (e: Exception) {
-                                        0L
-                                    }
-                                    if (examMs > trueEndMs && examMs != 0L) {
-                                        trueEndMs = examMs
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // THE OVERLAP FIX: Add exactly 23 hours, 59 mins, 59 secs to the true end date
-                    if (trueEndMs != Long.MAX_VALUE) {
-                        trueEndMs += (23L * 3600 + 59 * 60 + 59) * 1000
-                    }
-
-                    val startDateFmt = try {
-                        sdfDisplay.format(sdfParse.parse(startDateRaw)!!)
-                    } catch (e: Exception) {
-                        startDateRaw
-                    }
-                    val lastDayFmt = try {
-                        sdfDisplay.format(sdfParse.parse(lastDayRaw)!!)
-                    } catch (e: Exception) {
-                        lastDayRaw
-                    }
-
-                    val weekOffArr = semObj.optJSONArray("week_off")
-                    val weekOffs = if (weekOffArr != null) {
-                        (0 until weekOffArr.length()).map { weekOffArr.getString(it) }
-                            .joinToString(", ")
-                    } else {
-                        "Sunday"
-                    }
-
-                    parsedSems.add(
-                        SemTemp(
-                            semKey,
-                            id,
-                            startMs,
-                            trueEndMs,
-                            semesterEvents,
-                            startDateFmt,
-                            lastDayFmt,
-                            weekOffs
-                        )
-                    )
-                }
-            }
-
-            // =========================================================
-            // MULTI-CURRENT SEMESTER ENGINE
-            // =========================================================
-
-            // A semester is CURRENT if:
-            // now ∈ [startMs, trueEndMs]
-            //
-            // Multiple semesters may be current simultaneously.
-            // Example:
-            // - Long Summer
-            // - Short Summer 1
-            //
-            // Both receive CURRENT tag
-            // Both remain fully visible
-            // Neither gets faded
-
-            val activeSemesterKeys = parsedSems
-                .filter { now in it.startMs..it.trueEndMs }
-                .map { it.key }
-                .toSet()
-
-            // Build final semester list
-            parsedSems.forEach { temp ->
-
-                val isCurrent = activeSemesterKeys.contains(temp.key)
-
-                list.add(
-                    SemesterCalendar(
-                        semesterName = temp.key,
-                        startDateFormatted = temp.startDateFmt,
-                        lastInstructionalDayFormatted = temp.lastDayFmt,
-                        weekOffs = temp.weekOffs,
-                        events = temp.events,
-                        isCurrent = isCurrent
-                    )
-                )
-            }
-
-            // =========================================================
-            // SORTING RULES
-            // =========================================================
-            //
-            // 1. Current semesters first
-            // 2. Future semesters next
-            // 3. Past semesters last
-            //
-            // Within groups:
-            // - current/future -> ascending start date
-            // - past -> descending end date
-            //
-            // This keeps:
-            // - active overlaps grouped together
-            // - upcoming semesters intuitive
-            // - old semesters naturally pushed downward
-
-            list.sortWith(
-                compareByDescending<SemesterCalendar> { it.isCurrent }
-            )
-
-        } catch (e: Exception) {
-            e.printStackTrace()
         }
-        list
-    }
 
-    val nextExam = remember(semesters) {
-        semesters.flatMap { it.events }
-            .filter { it.category.equals("Exam", true) && !it.endDate.before(todayDate) }
-            .minByOrNull { it.startDate.time }
-    }
-
-    val nextHoliday = remember(semesters) {
-        semesters.flatMap { it.events }
-            .filter { it.category.equals("Holiday", true) && !it.endDate.before(todayDate) }
-            .minByOrNull { it.startDate.time }
+        if (currentStart != null) {
+            val finalEnd = currentEnd ?: currentStart
+            groupedEvents.add(
+                TimelineEvent(
+                    startDate = currentStart, endDate = finalEnd,
+                    displayStartDate = sdfDisplay.format(currentStart), displayEndDate = sdfDisplay.format(finalEnd),
+                    title = currentTitle, category = currentCategory
+                )
+            )
+        }
+        groupedEvents
     }
 
     var selectedFilter by remember { mutableStateOf("All") }
     val filterOptions = listOf("All", "Exams", "Holidays", "Events")
 
-    // Filter the semesters based on chip selection
-    val filteredSemesters = remember(semesters, selectedFilter) {
-        semesters.mapNotNull { sem ->
-            val filteredEvents = if (selectedFilter == "All") {
-                sem.events
-            } else {
-                val targetCategory =
-                    if (selectedFilter == "Exams") "Exam" else if (selectedFilter == "Holidays") "Holiday" else "Event"
-                sem.events.filter { it.category.equals(targetCategory, ignoreCase = true) }
-            }
-            if (filteredEvents.isEmpty() && selectedFilter != "All") null else sem.copy(events = filteredEvents)
-        }
+    val filteredEvents = remember(parsedTimeline, selectedFilter) {
+        if (selectedFilter == "All") parsedTimeline
+        else parsedTimeline.filter { it.category.equals(selectedFilter.trimEnd('s'), ignoreCase = true) }
     }
-    // Multiple semesters may be current simultaneously.
-    // Therefore, fading is based ONLY on whether a semester
-    // is current or not — not distance from a single index.
 
-    val hasCurrentSemester = remember(filteredSemesters) {
-        filteredSemesters.any { it.isCurrent }
+    val nextExam = remember(parsedTimeline) {
+        parsedTimeline.filter { it.category == "Exam" && !it.endDate.before(todayDate) }.minByOrNull { it.startDate.time }
     }
+
+    val nextHoliday = remember(parsedTimeline) {
+        parsedTimeline.filter { it.category == "Holiday" && !it.endDate.before(todayDate) }.minByOrNull { it.startDate.time }
+    }
+
     Scaffold(
         topBar = {
-            // Adds a 96.dp gap above the header so it sits cleanly below your GlobalTopBar
             Box(modifier = Modifier.padding(top = 96.dp)) {
                 TopAppBar(
-                    title = {
-                        Text(
-                            "Academic Calendar",
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    },
+                    title = { Text("Academic Calendar", fontSize = 20.sp, fontWeight = FontWeight.Bold) },
                     navigationIcon = {
-                        IconButton(
-                            onClick = onBack,
-                            modifier = Modifier.padding(start = 4.dp)
-                        ) {
+                        IconButton(onClick = onBack, modifier = Modifier.padding(start = 4.dp)) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { fetchCalendar(selectedSemId) }) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Refresh Calendar")
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = Color.Transparent,
-                        scrolledContainerColor = MaterialTheme.colorScheme.background,
-                        titleContentColor = MaterialTheme.colorScheme.onBackground,
-                        navigationIconContentColor = MaterialTheme.colorScheme.onBackground
+                        scrolledContainerColor = MaterialTheme.colorScheme.background
                     )
                 )
             }
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { paddingValues ->
+        Column(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
 
-        if (semesters.isEmpty()) {
-            // Uses paddingValues to ensure the empty state stays centered within the remaining space
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        Icons.Default.Event,
-                        null,
-                        modifier = Modifier.size(64.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                    )
-                    Spacer(Modifier.height(16.dp))
+            // --- BOTTOM SHEET SELECTOR TRIGGER ---
+            Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                        .clickable { showSemesterSheet = true }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
-                        "No calendar data found",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 16.sp
+                        text = selectedSemName,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Icon(
+                        imageVector = Icons.Default.ArrowDropDown,
+                        contentDescription = "Select Semester",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues), // Automatically handles the top offset including your 96.dp buffer
-                contentPadding = PaddingValues(bottom = 40.dp, start = 16.dp, end = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                if (nextExam != null || nextHoliday != null) {
-                    item {
-                        NextEventDashboard(nextExam, nextHoliday, todayDate)
-                    }
+
+            // --- BOTTOM SHEET IMPLEMENTATION ---
+            if (showSemesterSheet) {
+                val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+
+                val groupedSemesters = remember(availableSemesters) {
+                    availableSemesters.groupBy { extractYearFromSemId(it.id) }
+                        .toSortedMap(compareByDescending { it })
+                }
+                val yearTabs = groupedSemesters.keys.toList()
+
+                var selectedYearTab by remember {
+                    mutableStateOf(extractYearFromSemId(selectedSemId).takeIf { yearTabs.contains(it) } ?: yearTabs.firstOrNull() ?: "")
                 }
 
-                item {
-                    CategoryFilters(
-                        options = filterOptions,
-                        selectedOption = selectedFilter,
-                        onOptionSelected = { selectedFilter = it }
-                    )
-                }
-
-                if (filteredSemesters.isEmpty()) {
-                    item {
+                ModalBottomSheet(
+                    onDismissRequest = { showSemesterSheet = false },
+                    sheetState = sheetState,
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    dragHandle = { BottomSheetDefaults.DragHandle() }
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.7f)) {
                         Text(
-                            text = "No ${selectedFilter.lowercase()} scheduled.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.fillMaxWidth().padding(32.dp),
-                            textAlign = TextAlign.Center
+                            text = "Select Semester",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 16.dp)
+                        )
+
+                        if (isFetchingSemesters) {
+                            Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator()
+                            }
+                        } else if (yearTabs.isEmpty()) {
+                            Text(
+                                "No semesters available.",
+                                modifier = Modifier.fillMaxWidth().padding(32.dp),
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            ScrollableTabRow(
+                                selectedTabIndex = yearTabs.indexOf(selectedYearTab).coerceAtLeast(0),
+                                containerColor = Color.Transparent,
+                                edgePadding = 24.dp,
+                                divider = { HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)) },
+                                indicator = { tabPositions ->
+                                    val index = yearTabs.indexOf(selectedYearTab).coerceAtLeast(0)
+                                    if (index < tabPositions.size) {
+                                        TabRowDefaults.SecondaryIndicator(
+                                            modifier = Modifier.tabIndicatorOffset(tabPositions[index]),
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            ) {
+                                yearTabs.forEach { year ->
+                                    Tab(
+                                        selected = year == selectedYearTab,
+                                        onClick = { selectedYearTab = year },
+                                        text = {
+                                            Text(
+                                                text = year,
+                                                fontWeight = if (year == selectedYearTab) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (year == selectedYearTab) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    )
+                                }
+                            }
+
+                            val semestersInActiveYear = groupedSemesters[selectedYearTab] ?: emptyList()
+
+                            LazyColumn(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(vertical = 8.dp)
+                            ) {
+                                items(items = semestersInActiveYear) { option ->
+                                    val isSelected = option.id == selectedSemId
+
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                selectedSemId = option.id
+                                                selectedSemName = option.name
+                                                showSemesterSheet = false
+                                            }
+                                            .padding(horizontal = 24.dp, vertical = 16.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = option.name,
+                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                            fontSize = 15.sp,
+                                            modifier = Modifier.weight(1f)
+                                        )
+
+                                        if (isSelected) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = "Selected",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- MAIN CONTENT ---
+            if (rawEvents.isEmpty() || isSyncing) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
+                        if (syncError == "RECONNECTING") {
+                            // SHOW LIVE LOGIN STATUS
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.height(16.dp))
+                            Text(
+                                text = "Reconnecting to VTOP...\n$globalSyncStatus",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 15.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        } else if (isSyncing) {
+                            if (syncTotalSteps > 0) {
+                                val progress = syncCompletedSteps.toFloat() / syncTotalSteps.toFloat()
+                                LinearProgressIndicator(
+                                    progress = { progress },
+                                    modifier = Modifier.fillMaxWidth(0.8f).height(8.dp).clip(RoundedCornerShape(4.dp)),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    strokeCap = StrokeCap.Round
+                                )
+                                Spacer(Modifier.height(16.dp))
+                                Text(
+                                    text = "Syncing $selectedSemName\nMonth $syncCompletedSteps of $syncTotalSteps",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 15.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                            } else {
+                                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.height(16.dp))
+                                Text(
+                                    text = "Initializing calendar sync...",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 15.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        } else if (syncError != null) {
+                            Icon(Icons.Default.Event, null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
+                            Spacer(Modifier.height(16.dp))
+                            Text(
+                                text = "Sync Failed",
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = syncError!!,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 14.sp,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(Modifier.height(24.dp))
+                            Button(
+                                onClick = { fetchCalendar(selectedSemId) },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                            ) {
+                                Text("Retry Sync", fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            Icon(Icons.Default.Event, null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                            Spacer(Modifier.height(16.dp))
+                            Text(
+                                text = "No calendar events found.\nTap the refresh icon at the top to sync.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 16.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 40.dp, start = 16.dp, end = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    if (nextExam != null || nextHoliday != null) {
+                        item { NextEventDashboard(nextExam, nextHoliday, todayDate) }
+                    }
+
+                    item {
+                        CategoryFilters(
+                            options = filterOptions,
+                            selectedOption = selectedFilter,
+                            onOptionSelected = { selectedFilter = it }
                         )
                     }
-                } else {
-                    itemsIndexed(filteredSemesters) { index, semester ->
-                        val baseOpacity = when {
-                            semester.isCurrent -> 1f
-                            hasCurrentSemester -> 0.45f
-                            else -> 1f
-                        }
 
-                        SemesterTimelineCard(
-                            semester = semester,
-                            todayDate = todayDate,
-                            baseOpacity = baseOpacity
-                        )
+                    if (filteredEvents.isEmpty()) {
+                        item {
+                            Text(
+                                text = "No ${selectedFilter.lowercase()} scheduled.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.fillMaxWidth().padding(32.dp),
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    } else {
+                        item {
+                            Card(
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp)) {
+                                    var todayMarkerPlaced = false
+
+                                    filteredEvents.forEachIndexed { index, event ->
+                                        if (!todayMarkerPlaced && !event.startDate.before(todayDate)) {
+                                            TodayDividerMarker()
+                                            todayMarkerPlaced = true
+                                        }
+
+                                        val isLast = index == filteredEvents.lastIndex && todayMarkerPlaced
+                                        TimelineEventRow(event, isLast)
+                                    }
+
+                                    if (!todayMarkerPlaced) {
+                                        TodayDividerMarker()
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -531,7 +606,7 @@ fun CategoryFilters(options: List<String>, selectedOption: String, onOptionSelec
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        items(options) { option ->
+        items(items = options) { option ->
             val isSelected = option == selectedOption
             val bgColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
             val textColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
@@ -543,19 +618,14 @@ fun CategoryFilters(options: List<String>, selectedOption: String, onOptionSelec
                     .clickable { onOptionSelected(option) }
                     .padding(horizontal = 20.dp, vertical = 8.dp)
             ) {
-                Text(
-                    text = option,
-                    color = textColor,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Text(text = option, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
 }
 
 @Composable
-fun NextEventDashboard(nextExam: AcademicEvent?, nextHoliday: AcademicEvent?, today: Date) {
+fun NextEventDashboard(nextExam: TimelineEvent?, nextHoliday: TimelineEvent?, today: Date) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -566,7 +636,7 @@ fun NextEventDashboard(nextExam: AcademicEvent?, nextHoliday: AcademicEvent?, to
                 label = "NEXT EXAM",
                 event = nextExam,
                 today = today,
-                accentColor = Color(0xFF8B5CF6) // Sleek Purple
+                accentColor = Color(0xFF8B5CF6)
             )
         }
         if (nextHoliday != null) {
@@ -575,14 +645,14 @@ fun NextEventDashboard(nextExam: AcademicEvent?, nextHoliday: AcademicEvent?, to
                 label = "NEXT HOLIDAY",
                 event = nextHoliday,
                 today = today,
-                accentColor = Color(0xFF4ADE80) // Green
+                accentColor = Color(0xFF4ADE80)
             )
         }
     }
 }
 
 @Composable
-fun CountdownCard(modifier: Modifier, label: String, event: AcademicEvent, today: Date, accentColor: Color) {
+fun CountdownCard(modifier: Modifier, label: String, event: TimelineEvent, today: Date, accentColor: Color) {
     val diff = event.startDate.time - today.time
     val days = TimeUnit.MILLISECONDS.toDays(diff)
 
@@ -600,165 +670,11 @@ fun CountdownCard(modifier: Modifier, label: String, event: AcademicEvent, today
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = label,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                color = accentColor,
-                letterSpacing = 0.5.sp
-            )
+            Text(text = label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = accentColor, letterSpacing = 0.5.sp)
             Spacer(Modifier.height(8.dp))
-            Text(
-                text = timeText,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Black,
-                color = MaterialTheme.colorScheme.onSurface
-            )
+            Text(text = timeText, fontSize = 18.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(4.dp))
-            Text(
-                text = "${event.title} · ${event.displayStartDate.take(6)}",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun SemesterTimelineCard(semester: SemesterCalendar, todayDate: Date, baseOpacity: Float = 1f) {
-    var expanded by remember { mutableStateOf(semester.isCurrent) }
-
-    // If user expands a past/dimmed semester, animate it to full opacity (1f) so it's readable
-    val targetOpacity = if (expanded) 1f else baseOpacity
-    val animatedOpacity by animateFloatAsState(targetValue = targetOpacity, label = "opacityAnim")
-
-    val bringIntoViewRequester = remember { BringIntoViewRequester() }
-
-    // When the card expands, wait a split second for the animation to finish, then auto-scroll to the TODAY marker
-    LaunchedEffect(expanded) {
-        if (expanded) {
-            delay(350)
-            try {
-                bringIntoViewRequester.bringIntoView()
-            } catch (e: Exception) {
-                // Ignore if the user interrupts the scroll manually
-            }
-        }
-    }
-
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
-        modifier = Modifier
-            .fillMaxWidth()
-            .alpha(animatedOpacity) // Applied the dimming/fade effect here!
-            .animateContentSize(animationSpec = tween(300))
-    ) {
-        Column {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { expanded = !expanded }
-                    .padding(horizontal = 16.dp, vertical = 16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = semester.semesterName,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    if (semester.isCurrent) {
-                        Spacer(Modifier.width(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .background(Color(0xFF4ADE80).copy(alpha = 0.15f), RoundedCornerShape(4.dp))
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Text("CURRENT", color = Color(0xFF4ADE80), fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
-                        }
-                    }
-                }
-                Icon(
-                    imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Expand/Collapse",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            if (expanded) {
-                if (semester.startDateFormatted.isNotBlank() && semester.lastInstructionalDayFormatted.isNotBlank()) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
-                            .padding(horizontal = 16.dp, vertical = 12.dp)
-                    ) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Column {
-                                Text("COMMENCEMENT", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
-                                Spacer(Modifier.height(2.dp))
-                                Text(semester.startDateFormatted, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
-                            }
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text("LAST INSTRUCTIONAL DAY", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
-                                Spacer(Modifier.height(2.dp))
-                                Text(semester.lastInstructionalDayFormatted, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
-                            }
-                        }
-
-                        if (semester.weekOffs.isNotBlank()) {
-                            Spacer(Modifier.height(10.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Outlined.Info, contentDescription = "Info", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(12.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Regular Week Offs: ${semester.weekOffs}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Medium)
-                            }
-                        }
-                    }
-                }
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp)
-                ) {
-                    var todayMarkerPlaced = false
-
-                    if (semester.events.isEmpty()) {
-                        Text(
-                            text = "No events matched the filter for this semester.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 12.sp,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(16.dp)
-                        )
-                    } else {
-                        semester.events.forEachIndexed { index, event ->
-                            if (!todayMarkerPlaced && !event.startDate.before(todayDate)) {
-                                // Attach the scroll requester to the TODAY marker
-                                TodayDividerMarker(Modifier.bringIntoViewRequester(bringIntoViewRequester))
-                                todayMarkerPlaced = true
-                            }
-
-                            val isLast = index == semester.events.lastIndex && todayMarkerPlaced
-                            TimelineEventRow(event, isLast)
-                        }
-
-                        if (!todayMarkerPlaced) {
-                            // If all events are in the past, place TODAY at the very end
-                            TodayDividerMarker(Modifier.bringIntoViewRequester(bringIntoViewRequester))
-                        }
-                    }
-                }
-            }
+            Text(text = "${event.title} · ${event.displayStartDate.take(6)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -766,9 +682,7 @@ fun SemesterTimelineCard(semester: SemesterCalendar, todayDate: Date, baseOpacit
 @Composable
 fun TodayDividerMarker(modifier: Modifier = Modifier) {
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
+        modifier = modifier.fillMaxWidth().padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
@@ -785,93 +699,45 @@ fun TodayDividerMarker(modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun TimelineEventRow(event: AcademicEvent, isLast: Boolean) {
+fun TimelineEventRow(event: TimelineEvent, isLast: Boolean) {
     val indicatorColor = when {
-        event.category.equals("Exam", ignoreCase = true) -> Color(0xFF8B5CF6) // Purple
-        event.category.equals("Event", ignoreCase = true) -> Color(0xFF3B82F6) // Blue
-        else -> Color(0xFF4ADE80) // Green
+        event.category.equals("Exam", ignoreCase = true) -> Color(0xFF8B5CF6)
+        event.category.equals("Event", ignoreCase = true) -> Color(0xFF3B82F6)
+        else -> Color(0xFF4ADE80)
     }
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(IntrinsicSize.Min)
-    ) {
-        // Left Column: Dates
+    Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
         Column(
-            modifier = Modifier
-                .width(80.dp)
-                .padding(end = 12.dp, top = 2.dp),
+            modifier = Modifier.width(80.dp).padding(end = 12.dp, top = 2.dp),
             horizontalAlignment = Alignment.End
         ) {
-            Text(
-                text = event.displayStartDate.take(6), // e.g. "14-Apr"
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
+            Text(text = event.displayStartDate.take(6), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
             if (event.displayStartDate != event.displayEndDate) {
-                Text(
-                    text = "to",
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 1.dp)
-                )
-                Text(
-                    text = event.displayEndDate.take(6),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+                Text(text = "to", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 1.dp))
+                Text(text = event.displayEndDate.take(6), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
             }
         }
 
-        // Center Column: The Timeline Line & Dot
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(
-                modifier = Modifier
-                    .size(14.dp)
-                    .background(indicatorColor.copy(alpha = 0.2f), CircleShape)
-                    .padding(3.dp),
+                modifier = Modifier.size(14.dp).background(indicatorColor.copy(alpha = 0.2f), CircleShape).padding(3.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Box(modifier = Modifier.fillMaxSize().background(indicatorColor, CircleShape))
             }
 
-            // Continuous vertical line bridging down to the next item
             if (!isLast) {
-                Box(
-                    modifier = Modifier
-                        .width(2.dp)
-                        .weight(1f)
-                        .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                )
+                Box(modifier = Modifier.width(2.dp).weight(1f).background(MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)))
             } else {
                 Spacer(modifier = Modifier.weight(1f))
             }
         }
 
-        // Right Column: Title and Category Tags
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(start = 16.dp, bottom = 24.dp)
-        ) {
-            Text(
-                text = event.title,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
+        Column(modifier = Modifier.weight(1f).padding(start = 16.dp, bottom = 24.dp)) {
+            Text(text = event.title, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(modifier = Modifier.height(6.dp))
             Box(
-                modifier = Modifier
-                    .background(indicatorColor.copy(alpha = 0.1f), RoundedCornerShape(4.dp))
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                modifier = Modifier.background(indicatorColor.copy(alpha = 0.1f), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp)
             ) {
                 Text(
                     text = event.category.uppercase(Locale.getDefault()),

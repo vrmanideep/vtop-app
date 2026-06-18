@@ -47,6 +47,8 @@ public class Vault {
     private static final String KEY_SEMESTER_OPTIONS = "OFFLINE_SEM_OPTIONS";
     private static final String KEY_MARKS = "OFFLINE_MARKS";
     private static final String KEY_GRADES = "OFFLINE_GRADES";
+    private static final String KEY_ACADEMIC_CALENDAR_PREFIX = "OFFLINE_ACADEMIC_CALENDAR_";
+    private static final String KEY_CALENDAR_SEMESTER_OPTIONS = "OFFLINE_CAL_SEM_OPTIONS";
     private static final String KEY_HISTORY_ITEMS = "OFFLINE_HISTORY_ITEMS";
     private static final String KEY_HISTORY_SUMMARY = "OFFLINE_HISTORY_SUMMARY";
 
@@ -298,6 +300,75 @@ public class Vault {
     public static String[] getSelectedSemester(Context context) {
         SharedPreferences prefs = context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE);
         return new String[]{ prefs.getString(KEY_SEM_ID, "AP2025264"), prefs.getString(KEY_SEM_NAME, "Winter Semester 2025-26") };
+    }
+    @SuppressLint("ApplySharedPref")
+    public static void saveCalendarSemesterOptions(Context context, List<SemesterOption> list) {
+        context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_CALENDAR_SEMESTER_OPTIONS, new Gson().toJson(list))
+                .commit();
+    }
+
+    public static List<SemesterOption> getCalendarSemesterOptions(Context context) {
+        String json = context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE)
+                .getString(KEY_CALENDAR_SEMESTER_OPTIONS, "[]");
+        try {
+            List<SemesterOption> list = new Gson().fromJson(json, new TypeToken<ArrayList<SemesterOption>>(){}.getType());
+            return list != null ? list : new ArrayList<>();
+        } catch (Exception e) {
+            return new ArrayList<>();
+        }
+    }
+    @SuppressLint("ApplySharedPref")
+    public static void saveAcademicCalendar(
+            Context context,
+            String semId,
+            List<com.vtop.models.AcademicCalendarEvent> events
+    ) {
+
+        context.getSharedPreferences(
+                        PUBLIC_PREFS,
+                        Context.MODE_PRIVATE
+                ).edit()
+                .putString(
+                        KEY_ACADEMIC_CALENDAR_PREFIX + semId,
+                        new Gson().toJson(events)
+                )
+                .commit();
+    }
+
+    public static List<com.vtop.models.AcademicCalendarEvent>
+    getAcademicCalendar(
+            Context context,
+            String semId
+    ) {
+
+        String json =
+                context.getSharedPreferences(
+                        PUBLIC_PREFS,
+                        Context.MODE_PRIVATE
+                ).getString(
+                        KEY_ACADEMIC_CALENDAR_PREFIX + semId,
+                        "[]"
+                );
+
+        try {
+
+            List<com.vtop.models.AcademicCalendarEvent> list =
+                    new Gson().fromJson(
+                            json,
+                            new TypeToken<ArrayList<com.vtop.models.AcademicCalendarEvent>>() {
+                            }.getType()
+                    );
+
+            return list != null
+                    ? list
+                    : new ArrayList<>();
+
+        } catch (Exception e) {
+
+            return new ArrayList<>();
+        }
     }
     public static void clearAll(Context context) {
         context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE).edit().clear().apply();

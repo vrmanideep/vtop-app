@@ -494,18 +494,19 @@ fun Profile(
                     )
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                    Box {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().clickable { syncDropdownExpanded = true }.padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Background Auto Sync", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                Spacer(Modifier.height(2.dp))
-                                Text("Frequency of background updates", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
-                            }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { syncDropdownExpanded = true }.padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Background Auto Sync", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(2.dp))
+                            Text("Frequency of background updates", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                        }
 
+                        // NEW: Wrap ONLY the right-side pill and the DropdownMenu in the Box
+                        Box(contentAlignment = Alignment.TopEnd) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 6.dp)
@@ -513,34 +514,34 @@ fun Profile(
                                 Text(text = syncOptions[autoSyncInterval] ?: "8 hrs", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 Icon(imageVector = Icons.Default.KeyboardArrowDown, contentDescription = "Select", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp).padding(start = 4.dp))
                             }
-                        }
 
-                        DropdownMenu(
-                            expanded = syncDropdownExpanded,
-                            onDismissRequest = { syncDropdownExpanded = false },
-                            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
-                        ) {
-                            syncOptions.forEach { (hours, label) ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(text = label, color = if (autoSyncInterval == hours) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = if (autoSyncInterval == hours) FontWeight.Bold else FontWeight.Normal)
-                                    },
-                                    onClick = {
-                                        autoSyncInterval = hours
-                                        sharedPrefs.edit().putInt("AUTO_SYNC_INTERVAL", hours).apply()
-                                        syncDropdownExpanded = false
+                            DropdownMenu(
+                                expanded = syncDropdownExpanded,
+                                onDismissRequest = { syncDropdownExpanded = false },
+                                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                            ) {
+                                syncOptions.forEach { (hours, label) ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(text = label, color = if (autoSyncInterval == hours) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = if (autoSyncInterval == hours) FontWeight.Bold else FontWeight.Normal)
+                                        },
+                                        onClick = {
+                                            autoSyncInterval = hours
+                                            sharedPrefs.edit().putInt("AUTO_SYNC_INTERVAL", hours).apply()
+                                            syncDropdownExpanded = false
 
-                                        val workManager = androidx.work.WorkManager.getInstance(context)
-                                        if (hours == 0) {
-                                            workManager.cancelUniqueWork("VTOP_BACKGROUND_SYNC")
-                                            Toast.makeText(context, "Auto sync disabled", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            val syncRequest = androidx.work.PeriodicWorkRequestBuilder<com.vtop.ui.core.VtopSyncWorker>(hours.toLong(), java.util.concurrent.TimeUnit.HOURS).build()
-                                            workManager.enqueueUniquePeriodicWork("VTOP_BACKGROUND_SYNC", androidx.work.ExistingPeriodicWorkPolicy.REPLACE, syncRequest)
-                                            Toast.makeText(context, "Auto sync set to $label", Toast.LENGTH_SHORT).show()
+                                            val workManager = androidx.work.WorkManager.getInstance(context)
+                                            if (hours == 0) {
+                                                workManager.cancelUniqueWork("VTOP_BACKGROUND_SYNC")
+                                                Toast.makeText(context, "Auto sync disabled", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                val syncRequest = androidx.work.PeriodicWorkRequestBuilder<com.vtop.ui.core.VtopSyncWorker>(hours.toLong(), java.util.concurrent.TimeUnit.HOURS).build()
+                                                workManager.enqueueUniquePeriodicWork("VTOP_BACKGROUND_SYNC", androidx.work.ExistingPeriodicWorkPolicy.REPLACE, syncRequest)
+                                                Toast.makeText(context, "Auto sync set to $label", Toast.LENGTH_SHORT).show()
+                                            }
                                         }
-                                    }
-                                )
+                                    )
+                                }
                             }
                         }
                     }
