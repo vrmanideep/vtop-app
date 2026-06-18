@@ -12,12 +12,18 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 object H2P {
 
-    private val client =
-        OkHttpClient()
 
+
+    // INCREASED TIMEOUTS: Render free tier takes 50+ seconds to wake up from sleep.
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(90, TimeUnit.SECONDS)
+        .writeTimeout(90, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
+        .build()
     private const val SERVER_URL =
         "https://html-to-png-pqzs.onrender.com"
 
