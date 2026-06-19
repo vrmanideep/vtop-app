@@ -47,6 +47,9 @@ fun AboutScreen(
     onBack: () -> Unit
 ) {
     var selectedDocument by remember { mutableStateOf<LegalDocumentType?>(null) }
+    var showChangelog by remember { mutableStateOf(false) }
+    var showLicenses by remember { mutableStateOf(false) }
+
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
 
@@ -55,6 +58,10 @@ fun AboutScreen(
             type = selectedDocument!!,
             onBack = { selectedDocument = null }
         )
+    } else if (showChangelog) {
+        ChangelogScreen(onBack = { showChangelog = false })
+    } else if (showLicenses) {
+        LicensesScreen(onBack = { showLicenses = false })
     } else {
         Scaffold(
             topBar = {
@@ -153,7 +160,7 @@ fun AboutScreen(
                             icon = Icons.Outlined.Article,
                             title = "Release notes",
                             subtitle = "v${BuildConfig.VERSION_NAME} · Latest changes",
-                            onClick = { selectedDocument = LegalDocumentType.CHANGELOG }
+                            onClick = { showChangelog = true }
                         )
                     }
                 }
@@ -203,7 +210,7 @@ fun AboutScreen(
                             icon = Icons.Outlined.Code,
                             title = "Open source licenses",
                             subtitle = "Libraries and acknowledgements",
-                            onClick = { selectedDocument = LegalDocumentType.OPEN_SOURCE }
+                            onClick = { showLicenses = true }
                         )
                     }
                 }
