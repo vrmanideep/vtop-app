@@ -224,17 +224,72 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
 
         val validDays = rawEvents.mapNotNull { event ->
             val dateObj = try { sdfParse.parse(event.date) } catch (ignored: Exception) { null } ?: return@mapNotNull null
-            val title = event.particulars.replace(" - General (Semester)", "").replace(" - Combined", "").trim()
-            val isGenericSunday = title.contains("Sunday", ignoreCase = true) && !title.contains("Working", ignoreCase = true)
-            val isWorkingDay = title.contains("Working Day", ignoreCase = true)
-            if (isGenericSunday || isWorkingDay) return@mapNotNull null
+
+            var cleanTitle = event.particulars
+                .replace(" - General (Semester)", "")
+                .replace(" - Combined", "")
+                .replace("\n", " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+
+            val cal = Calendar.getInstance().apply { time = dateObj }
+
+            // --- NEW SUNDAY LOGIC: Guilty until proven innocent ---
+            val isSunday = cal.get(Calendar.DAY_OF_WEEK) == Calendar.SUNDAY
+            var dropSunday = false
+
+            if (isSunday) {
+                dropSunday = true // Default: Ignore all Sundays
+
+                // Exception 1: Real Instructional Day (Safeguarded against "No" and "Non")
+                val isRealInstructional = cleanTitle.contains("Instructional", ignoreCase = true) &&
+                        !cleanTitle.contains("No ", ignoreCase = true) &&
+                        !cleanTitle.contains("Non", ignoreCase = true)
+
+                // Exception 2: Specific Holiday or Event (Ugadi, VITOPIA, Exams)
+                // We keep it as long as it's NOT a generic VTOP placeholder
+                val isGenericPlaceholder = cleanTitle.equals("Holiday", ignoreCase = true) ||
+                        cleanTitle.equals("Holiday (Holiday)", ignoreCase = true) ||
+                        cleanTitle.contains("Sunday", ignoreCase = true) ||
+                        cleanTitle.contains("Instructional Day (Holiday)", ignoreCase = true) ||
+                        cleanTitle.contains("No Instructional", ignoreCase = true)
+
+                if (isRealInstructional || !isGenericPlaceholder) {
+                    dropSunday = false // Save it!
+                }
+            }
+
+            // --- MONDAY LOGIC ---
+            val isMonday = cal.get(Calendar.DAY_OF_WEEK) == Calendar.MONDAY
+            val dropGenericMonday = isMonday && (
+                    cleanTitle.equals("No Instructional Day (Non Instructional Day)", ignoreCase = true) ||
+                            cleanTitle.equals("No Instructional Day (No Instructional Day)", ignoreCase = true)
+                    )
+
+            // If it failed the Sunday or Monday checks, throw it in the trash
+            if (dropSunday || dropGenericMonday) return@mapNotNull null
+
+            // --- Normalize Titles for Perfect Grouping ---
+            if (cleanTitle.contains("Instructional Day", ignoreCase = true) && !cleanTitle.contains("No Instructional", ignoreCase = true) && !cleanTitle.contains("Non Instructional", ignoreCase = true)) {
+                cleanTitle = "Instructional Day"
+            } else if (cleanTitle.contains("VITOPIA", ignoreCase = true)) {
+                cleanTitle = "VITOPIA"
+            } else if (cleanTitle.contains("CAT - I", ignoreCase = true) || cleanTitle.contains("Continuous Assessment Test - I", ignoreCase = true)) {
+                cleanTitle = "CAT - I (Exam)"
+            } else if (cleanTitle.contains("CAT - II", ignoreCase = true) || cleanTitle.contains("Continuous Assessment Test - II", ignoreCase = true)) {
+                cleanTitle = "CAT - II (Exam)"
+            } else if (cleanTitle.contains("Lab FAT", ignoreCase = true) || cleanTitle.contains("Laboratory FAT", ignoreCase = true)) {
+                cleanTitle = "Lab FAT (Exam)"
+            } else if (cleanTitle.contains("FAT", ignoreCase = true) || cleanTitle.contains("Final Assessment Test", ignoreCase = true)) {
+                cleanTitle = "FAT (Exam)"
+            }
 
             val category = when {
-                title.contains("Exam", true) || title.contains("CAT", true) || title.contains("FAT", true) -> "Exam"
-                title.contains("Holiday", true) -> "Holiday"
+                cleanTitle.contains("Exam", true) || cleanTitle.contains("CAT", true) || cleanTitle.contains("FAT", true) -> "Exam"
+                cleanTitle.contains("Holiday", true) || cleanTitle.contains("no instructional", true) || cleanTitle.contains("non instructional", true) || cleanTitle.contains("VITOPIA", true) -> "Holiday"
                 else -> "Event"
             }
-            Triple(dateObj, title, category)
+            Triple(dateObj, cleanTitle, category)
         }.sortedBy { it.first.time }
 
         val groupedEvents = mutableListOf<TimelineEvent>()
@@ -243,8 +298,18 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
         var currentTitle = ""
         var currentCategory = ""
 
+        val todayMidnight = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.time
+
         for ((date, title, category) in validDays) {
-            if (currentTitle == title) {
+            val isConsecutive = currentEnd != null && (date.time - currentEnd.time) <= 350_000_000L
+            val crossesTodayBoundary = currentEnd != null && currentEnd.before(todayMidnight) && !date.before(todayMidnight)
+
+            if (currentTitle == title && isConsecutive && !crossesTodayBoundary) {
                 currentEnd = date
             } else {
                 if (currentStart != null) {
@@ -578,7 +643,8 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                                     var todayMarkerPlaced = false
 
                                     filteredEvents.forEachIndexed { index, event ->
-                                        if (!todayMarkerPlaced && !event.startDate.before(todayDate)) {
+                                        // FIX: Check the endDate instead of startDate so ongoing merged blocks are caught!
+                                        if (!todayMarkerPlaced && !event.endDate.before(todayDate)) {
                                             TodayDividerMarker()
                                             todayMarkerPlaced = true
                                         }

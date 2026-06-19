@@ -18,9 +18,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -76,8 +76,6 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.unit.sp
 
 class MainActivity : ComponentActivity() {
 
@@ -103,140 +101,132 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-        override fun onCreate(savedInstanceState: Bundle?) {
-            super.onCreate(savedInstanceState)
-            com.google.firebase.FirebaseApp.initializeApp(this)
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
 
-            WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            window.isNavigationBarContrastEnforced = false
+        }
 
-            val sharedPrefs = getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
-            val savedThemeString = sharedPrefs.getString("APP_THEME", AppThemeMode.SYSTEM.name) ?: AppThemeMode.SYSTEM.name
-            ThemeManager.themeMode.value = try {
-                AppThemeMode.valueOf(savedThemeString)
-            } catch (e: IllegalArgumentException) {
-                AppThemeMode.DARK
-            }
+        com.google.firebase.FirebaseApp.initializeApp(this)
 
-            ThemeManager.useDynamicColor.value = sharedPrefs.getBoolean("USE_DYNAMIC_COLOR", true)
-            val defaultAccentInt = VtopPrimaryBlue.toArgb()
-            val savedAccentInt = sharedPrefs.getInt("CUSTOM_ACCENT", defaultAccentInt)
-            ThemeManager.customAccent.value = Color(savedAccentInt)
+        val sharedPrefs = getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
+        val savedThemeString = sharedPrefs.getString("APP_THEME", AppThemeMode.SYSTEM.name) ?: AppThemeMode.SYSTEM.name
+        ThemeManager.themeMode.value = try {
+            AppThemeMode.valueOf(savedThemeString)
+        } catch (e: IllegalArgumentException) {
+            AppThemeMode.DARK
+        }
 
-            NotificationHelper.createNotificationChannel(this)
+        ThemeManager.useDynamicColor.value = sharedPrefs.getBoolean("USE_DYNAMIC_COLOR", true)
+        val defaultAccentInt = VtopPrimaryBlue.toArgb()
+        val savedAccentInt = sharedPrefs.getInt("CUSTOM_ACCENT", defaultAccentInt)
+        ThemeManager.customAccent.value = Color(savedAccentInt)
 
-            // Silent OTA Check in the background
-            lifecycleScope.launch(Dispatchers.IO) {
-                OtaManager.checkForOtaUpdates(this@MainActivity)
-            }
+        NotificationHelper.createNotificationChannel(this)
 
-            // Detect FCM Click on fresh app launch
-            if (intent?.getBooleanExtra("SHOW_UPDATE", false) == true || intent?.action == "SHOW_UPDATE") {
-                updateTriggerFlow.value = true
-            }
+        // Silent OTA Check in the background
+        lifecycleScope.launch(Dispatchers.IO) {
+            OtaManager.checkForOtaUpdates(this@MainActivity)
+        }
 
-            // --- DYNAMIC BACKGROUND SYNC SCHEDULING ---
-            val autoSyncInterval =
-                try {
-                    sharedPrefs.getInt(
-                        "AUTO_SYNC_INTERVAL",
-                        8
-                    )
-                } catch (_: ClassCastException) {
+        // Detect FCM Click on fresh app launch
+        if (intent?.getBooleanExtra("SHOW_UPDATE", false) == true || intent?.action == "SHOW_UPDATE") {
+            updateTriggerFlow.value = true
+        }
 
-                    val legacy =
-                        sharedPrefs.getLong(
-                            "AUTO_SYNC_INTERVAL",
-                            8L
-                        ).toInt()
-
-                    sharedPrefs.edit()
-                        .putInt(
-                            "AUTO_SYNC_INTERVAL",
-                            legacy
-                        )
-                        .apply()
-
-                    legacy
-                }
-            if (autoSyncInterval > 0) {
-                val syncRequest = PeriodicWorkRequestBuilder<VtopSyncWorker>(autoSyncInterval.toLong(), TimeUnit.HOURS).build()
-                WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-                    "VTOP_BACKGROUND_SYNC",
-                    ExistingPeriodicWorkPolicy.KEEP,
-                    syncRequest
+        // --- DYNAMIC BACKGROUND SYNC SCHEDULING ---
+        val autoSyncInterval =
+            try {
+                sharedPrefs.getInt(
+                    "AUTO_SYNC_INTERVAL",
+                    8
                 )
-            } else {
-                WorkManager.getInstance(this).cancelUniqueWork("VTOP_BACKGROUND_SYNC")
+            } catch (_: ClassCastException) {
+
+                val legacy =
+                    sharedPrefs.getLong(
+                        "AUTO_SYNC_INTERVAL",
+                        8L
+                    ).toInt()
+
+                sharedPrefs.edit()
+                    .putInt(
+                        "AUTO_SYNC_INTERVAL",
+                        legacy
+                    )
+                    .apply()
+
+                legacy
+            }
+        if (autoSyncInterval > 0) {
+            val syncRequest = PeriodicWorkRequestBuilder<VtopSyncWorker>(autoSyncInterval.toLong(), TimeUnit.HOURS).build()
+            WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+                "VTOP_BACKGROUND_SYNC",
+                ExistingPeriodicWorkPolicy.KEEP,
+                syncRequest
+            )
+        } else {
+            WorkManager.getInstance(this).cancelUniqueWork("VTOP_BACKGROUND_SYNC")
+        }
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            val timetable = Vault.getTimetable(this@MainActivity)
+            val attendance = Vault.getAttendance(this@MainActivity) ?: emptyList()
+            val exams = Vault.getExamSchedule(this@MainActivity) ?: emptyList()
+            val outings = Vault.getOutings(this@MainActivity) ?: emptyList()
+            val marks = Vault.getMarks(this@MainActivity) ?: emptyList()
+            val grades = Vault.getGrades(this@MainActivity) ?: emptyList()
+            val historySummary = Vault.getCGPASummary(this@MainActivity)
+            val historyItems = Vault.getHistory(this@MainActivity) ?: emptyList()
+
+            withContext(Dispatchers.Main) {
+                AppBridge.timetableState.value = timetable
+                AppBridge.attendanceState.value = attendance
+                AppBridge.examsState.value = exams
+                AppBridge.outingsState.value = outings
+                AppBridge.marksState.value = marks
+                AppBridge.gradesState.value = grades
+                AppBridge.historySummaryState.value = historySummary
+                AppBridge.historyItemsState.value = historyItems
+
+                isDataLoaded.value = true
+            }
+        }
+
+        setContent {
+            val themeMode = ThemeManager.themeMode.value
+            val isDark = when (themeMode) {
+                AppThemeMode.LIGHT -> false
+                AppThemeMode.DARK -> true
+                AppThemeMode.SYSTEM -> isSystemInDarkTheme()
             }
 
-            lifecycleScope.launch(Dispatchers.IO) {
-                val timetable = Vault.getTimetable(this@MainActivity)
-                val attendance = Vault.getAttendance(this@MainActivity) ?: emptyList()
-                val exams = Vault.getExamSchedule(this@MainActivity) ?: emptyList()
-                val outings = Vault.getOutings(this@MainActivity) ?: emptyList()
-                val marks = Vault.getMarks(this@MainActivity) ?: emptyList()
-                val grades = Vault.getGrades(this@MainActivity) ?: emptyList()
-                val historySummary = Vault.getCGPASummary(this@MainActivity)
-                val historyItems = Vault.getHistory(this@MainActivity) ?: emptyList()
-
-                withContext(Dispatchers.Main) {
-                    AppBridge.timetableState.value = timetable
-                    AppBridge.attendanceState.value = attendance
-                    AppBridge.examsState.value = exams
-                    AppBridge.outingsState.value = outings
-                    AppBridge.marksState.value = marks
-                    AppBridge.gradesState.value = grades
-                    AppBridge.historySummaryState.value = historySummary
-                    AppBridge.historyItemsState.value = historyItems
-
-                    isDataLoaded.value = true
+            val view = LocalView.current
+            val currentWindow = this.window
+            if (!view.isInEditMode) {
+                LaunchedEffect(isDark) {
+                    val insetsController = WindowCompat.getInsetsController(currentWindow, view)
+                    insetsController.isAppearanceLightStatusBars = !isDark
+                    insetsController.isAppearanceLightNavigationBars = !isDark
                 }
             }
 
-            setContent {
-                val themeMode = ThemeManager.themeMode.value
-                val isDark = when (themeMode) {
-                    AppThemeMode.LIGHT -> false
-                    AppThemeMode.DARK -> true
-                    AppThemeMode.SYSTEM -> isSystemInDarkTheme()
-                }
+            AppShortcuts.setupDynamicShortcuts(this)
+            val shortcutAction = intent?.action
 
-                val view = LocalView.current
-                val currentWindow = this.window
-                if (!view.isInEditMode) {
-                    LaunchedEffect(isDark) {
-                        val insetsController = WindowCompat.getInsetsController(currentWindow, view)
-                        insetsController.isAppearanceLightStatusBars = !isDark
-                        insetsController.isAppearanceLightNavigationBars = !isDark
-                    }
-                }
+            var showOtaGooglePrompt by remember { mutableStateOf(!Vault.hasPromptedGoogleSignIn(this@MainActivity) && Vault.getGoogleEmail(this@MainActivity).isEmpty()) }
 
-                AppShortcuts.setupDynamicShortcuts(this)
-                val shortcutAction = intent?.action
+            var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
+            var isDownloadingUpdate by remember { mutableStateOf(false) }
+            val triggerUpdate by updateTriggerFlow.collectAsState()
 
-                var showOtaGooglePrompt by remember { mutableStateOf(!Vault.hasPromptedGoogleSignIn(this@MainActivity) && Vault.getGoogleEmail(this@MainActivity).isEmpty()) }
-
-                var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
-                var isDownloadingUpdate by remember { mutableStateOf(false) }
-                val triggerUpdate by updateTriggerFlow.collectAsState()
-
-                // Triggered by FCM intent
-                LaunchedEffect(triggerUpdate) {
-                    if (triggerUpdate) {
-                        try {
-                            val info = UpdateManager.checkForUpdates()
-                            if (info.isUpdateAvailable) {
-                                updateInfo = info
-                            }
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        }
-                        updateTriggerFlow.value = false // Reset trigger
-                    }
-                }
-
-                // Normal Startup Check
-                LaunchedEffect(Unit) {
+            // Triggered by FCM intent
+            LaunchedEffect(triggerUpdate) {
+                if (triggerUpdate) {
                     try {
                         val info = UpdateManager.checkForUpdates()
                         if (info.isUpdateAvailable) {
@@ -245,18 +235,36 @@ class MainActivity : ComponentActivity() {
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
+                    updateTriggerFlow.value = false // Reset trigger
                 }
+            }
 
-                val triggerInitialSync = remember { intent.getBooleanExtra("TRIGGER_INITIAL_SYNC", false) }
-
-                LaunchedEffect(triggerInitialSync) {
-                    if (triggerInitialSync && !GlobalSyncer.isSyncing.value) {
-                        intent.putExtra("TRIGGER_INITIAL_SYNC", false)
-                        GlobalSyncer.performSync(this@MainActivity, "PROFILE", false)
+            // Normal Startup Check
+            LaunchedEffect(Unit) {
+                try {
+                    val info = UpdateManager.checkForUpdates()
+                    if (info.isUpdateAvailable) {
+                        updateInfo = info
                     }
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
+            }
 
-                AppTheme(themeMode = themeMode) {
+            val triggerInitialSync = remember { intent.getBooleanExtra("TRIGGER_INITIAL_SYNC", false) }
+
+            LaunchedEffect(triggerInitialSync) {
+                if (triggerInitialSync && !GlobalSyncer.isSyncing.value) {
+                    intent.putExtra("TRIGGER_INITIAL_SYNC", false)
+                    GlobalSyncer.performSync(this@MainActivity, "PROFILE", false)
+                }
+            }
+
+            AppTheme(themeMode = themeMode) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
                     Crossfade(
                         targetState = isDataLoaded.value,
                         animationSpec = tween(500),
@@ -547,6 +555,7 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+}
 
 @Composable
 fun VtopSplashScreen() {
