@@ -589,15 +589,24 @@ fun FloatingDockContainer(currentScreen: String, items: List<String>, offsetX: F
             val rotation = when (position) { DockPosition.LEFT -> -90f; DockPosition.RIGHT -> 90f; else -> 0f }
             val isVertical = position == DockPosition.LEFT || position == DockPosition.RIGHT
 
-            Box(modifier = Modifier.size(width = if (isVertical) 44.dp else 140.dp, height = if (isVertical) 140.dp else 44.dp), contentAlignment = Alignment.Center) {
+            // FIX 1: Increased from 140.dp to 160.dp
+            Box(modifier = Modifier.size(width = if (isVertical) 44.dp else 160.dp, height = if (isVertical) 160.dp else 44.dp), contentAlignment = Alignment.Center) {
                 Card(
-                    modifier = Modifier.requiredSize(width = 140.dp, height = 44.dp).graphicsLayer { rotationZ = rotation }.clickable { expanded = !expanded },
+                    // FIX 2: Increased from 140.dp to 160.dp
+                    modifier = Modifier.requiredSize(width = 160.dp, height = 44.dp).graphicsLayer { rotationZ = rotation }.clickable { expanded = !expanded },
                     shape = RoundedCornerShape(22.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)),
                     border = BorderStroke(1.dp, AppColors.glassBorder)
                 ) {
                     Row(Modifier.fillMaxSize().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                        Text(text = currentScreen.uppercase(Locale.getDefault()), color = MaterialTheme.colorScheme.onBackground, fontWeight = FontWeight.Bold, fontSize = 12.sp, letterSpacing = 1.sp)
+                        Text(
+                            text = currentScreen.uppercase(Locale.getDefault()),
+                            color = MaterialTheme.colorScheme.onBackground,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            letterSpacing = 1.sp,
+                            maxLines = 1 // FIX 3: Force single line
+                        )
                         Icon(imageVector = if (expanded) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp).padding(start = 4.dp))
                     }
                 }
@@ -644,7 +653,6 @@ fun FloatingDockContainer(currentScreen: String, items: List<String>, offsetX: F
         }
     }
 }
-
 @Composable
 fun HomepagePermissionHandler() {
     val context = LocalContext.current

@@ -12,9 +12,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.outlined.Article
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Gavel
 import androidx.compose.material.icons.outlined.Info
@@ -33,11 +33,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import com.composables.icons.lucide.Compass
 import com.composables.icons.lucide.Github
 import com.composables.icons.lucide.Lucide
-import com.mikepenz.markdown.m3.Markdown
 import com.vtop.BuildConfig
 import com.vtop.ui.legal.LegalDocumentType
+import com.vtop.utils.UpdateInfo
 import com.vtop.utils.UpdateManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -52,7 +53,7 @@ fun AboutScreen(navController: NavController) {
 
     var isCheckingUpdate by remember { mutableStateOf(false) }
     var isDownloadingUpdate by remember { mutableStateOf(false) }
-    var updateInfo by remember { mutableStateOf<com.vtop.utils.UpdateInfo?>(null) }
+    var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
 
     Scaffold(
         topBar = {
@@ -89,7 +90,7 @@ fun AboutScreen(navController: NavController) {
                             .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(12.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("⚡", fontSize = 28.sp)
+                        Text(text = "V", fontSize = 28.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
                     }
                     Spacer(modifier = Modifier.width(16.dp))
                     Column {
@@ -117,7 +118,7 @@ fun AboutScreen(navController: NavController) {
                 SectionHeader("WHAT'S NEW")
                 CardGroup {
                     GroupedActionRow(
-                        icon = Icons.Outlined.Article, title = "Release notes", subtitle = "v${BuildConfig.VERSION_NAME} · Latest changes",
+                        icon = Icons.AutoMirrored.Outlined.Article, title = "Release notes", subtitle = "v${BuildConfig.VERSION_NAME} · Latest changes",
                         onClick = { navController.navigate("changelog") }
                     )
                 }
@@ -212,7 +213,7 @@ fun AboutScreen(navController: NavController) {
                             Spacer(modifier = Modifier.height(2.dp))
                             Text("Student developer · VIT-AP", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(modifier = Modifier.height(2.dp))
-                            Text("Built with ❤️ for VIT students", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Built with ❤️ for VIT- AP students", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -232,25 +233,56 @@ fun AboutScreen(navController: NavController) {
         }
     }
 
-    if (updateInfo != null) {
+    updateInfo?.let { info ->
         AlertDialog(
             onDismissRequest = { updateInfo = null },
             title = {
                 Column {
                     Text("Update Available", fontWeight = FontWeight.Black, fontSize = 20.sp)
-                    if (!updateInfo?.releaseTitle.isNullOrBlank()) {
+                    if (info.releaseTitle.isNotBlank()) {
                         Spacer(Modifier.height(4.dp))
-                        Text(text = updateInfo!!.releaseTitle, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        Text(text = info.releaseTitle, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                     }
                 }
             },
             text = {
-                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 350.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(text = "Version ${updateInfo?.latestVersion} is ready to download. Do you want to install it now?", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
-                    if (!updateInfo?.releaseNotes.isNullOrBlank()) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                        Text(text = "Release Notes:", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
-                        Markdown(content = updateInfo!!.releaseNotes.replace("\\n", "\n"), modifier = Modifier.fillMaxWidth())
+                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 350.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text(text = "Version ${info.latestVersion} is ready to download. Do you want to install it now?", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
+
+                    if (info.features.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("✨ Features", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary, letterSpacing = 0.5.sp)
+                            info.features.forEach { feature ->
+                                Row(verticalAlignment = Alignment.Top) {
+                                    Text("•", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 8.dp))
+                                    Text(feature, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
+                                }
+                            }
+                        }
+                    }
+
+                    if (info.fixes.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("🛠 Fixes", fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFF10B981), letterSpacing = 0.5.sp)
+                            info.fixes.forEach { fix ->
+                                Row(verticalAlignment = Alignment.Top) {
+                                    Text("•", color = Color(0xFF10B981), modifier = Modifier.padding(end = 8.dp))
+                                    Text(fix, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
+                                }
+                            }
+                        }
+                    }
+
+                    if (info.important.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("📢 Important", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.error, letterSpacing = 0.5.sp)
+                            info.important.forEach { note ->
+                                Row(verticalAlignment = Alignment.Top) {
+                                    Text("•", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(end = 8.dp))
+                                    Text(note, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
+                                }
+                            }
+                        }
                     }
                 }
             },
@@ -258,7 +290,7 @@ fun AboutScreen(navController: NavController) {
                 Button(
                     onClick = {
                         isDownloadingUpdate = true
-                        UpdateManager.downloadAndInstallUpdate(context = context, downloadUrl = updateInfo!!.downloadUrl, version = updateInfo!!.latestVersion)
+                        UpdateManager.downloadAndInstallUpdate(context = context, downloadUrl = info.downloadUrl, version = info.latestVersion)
                         updateInfo = null
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)

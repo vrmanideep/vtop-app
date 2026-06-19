@@ -6,30 +6,38 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.animation.*
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,37 +56,42 @@ import androidx.navigation.compose.rememberNavController
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
-import com.mikepenz.markdown.m3.Markdown
+import com.composables.icons.lucide.Compass
+import com.composables.icons.lucide.Lucide
 import com.vtop.models.TimetableModel
 import com.vtop.network.VtopClient
 import com.vtop.ui.core.AppBridge
 import com.vtop.ui.core.GlobalSyncer
 import com.vtop.ui.core.VtopSyncWorker
+import com.vtop.ui.screens.auth.GoogleSignInDialog
 import com.vtop.ui.screens.main.FetchCallback
 import com.vtop.ui.screens.main.MainScreen
 import com.vtop.ui.screens.main.OutingActionHandler
-import com.vtop.ui.screens.auth.GoogleSignInDialog
-
-// Sub-screens imports
-import com.vtop.ui.screens.sub.AcademicCalendarScreen
-import com.vtop.ui.screens.sub.BunkSimulatorTab
-import com.vtop.ui.screens.sub.FacultyScreen
-import com.vtop.ui.screens.sub.AboutScreen
-import com.vtop.ui.screens.sub.ChangelogScreen
-import com.vtop.ui.screens.sub.LicensesScreen
 import com.vtop.ui.screens.portal.VtopPortalScreen
 import com.vtop.ui.screens.profile.LegalDocumentScreen
-import com.vtop.ui.legal.LegalDocumentType
-
-import com.vtop.ui.theme.*
-import com.vtop.utils.*
+import com.vtop.ui.screens.sub.AcademicCalendarScreen
+import com.vtop.ui.screens.sub.BunkSimulatorTab
+import com.vtop.ui.screens.sub.ChangelogScreen
+import com.vtop.ui.screens.sub.FacultyScreen
+import com.vtop.ui.screens.sub.LicensesScreen
+import com.vtop.ui.screens.sub.loadFaculty
+import com.vtop.ui.theme.AppColors
+import com.vtop.ui.theme.AppTheme
+import com.vtop.ui.theme.AppThemeMode
+import com.vtop.ui.theme.ThemeManager
+import com.vtop.ui.theme.VtopPrimaryBlue
+import com.vtop.utils.AppShortcuts
+import com.vtop.utils.NotificationHelper
+import com.vtop.utils.OtaManager
+import com.vtop.utils.UpdateInfo
+import com.vtop.utils.UpdateManager
+import com.vtop.utils.Vault
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.TimeUnit
-import androidx.compose.foundation.shape.RoundedCornerShape
 
 class MainActivity : ComponentActivity() {
 
@@ -116,14 +129,11 @@ class MainActivity : ComponentActivity() {
         com.google.firebase.FirebaseApp.initializeApp(this)
 
         val sharedPrefs = getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
-
-        // --- SURGICAL VERSION MIGRATION CHECK ---
         val vaultPrefs = getSharedPreferences("VTOP_VAULT", Context.MODE_PRIVATE)
+
         val currentAppVersion = try {
             packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.0"
-        } catch (e: Exception) {
-            "1.0.0"
-        }
+        } catch (e: Exception) { "1.0.0" }
 
         val savedAppVersion = sharedPrefs.getString("SAVED_APP_VERSION", "0.0.0") ?: "0.0.0"
 
@@ -132,54 +142,37 @@ class MainActivity : ComponentActivity() {
             vaultEditor.remove("OFFLINE_SEM_OPTIONS")
             vaultEditor.remove("OFFLINE_CAL_SEM_OPTIONS")
             vaultPrefs.all.keys.forEach { key ->
-                if (key.startsWith("OFFLINE_ACADEMIC_CALENDAR_")) {
-                    vaultEditor.remove(key)
-                }
+                if (key.startsWith("OFFLINE_ACADEMIC_CALENDAR_")) vaultEditor.remove(key)
             }
             vaultEditor.apply()
             sharedPrefs.edit().putString("SAVED_APP_VERSION", currentAppVersion).apply()
             intent.putExtra("TRIGGER_INITIAL_SYNC", true)
         }
-        // ----------------------------------------
 
         val savedThemeString = sharedPrefs.getString("APP_THEME", AppThemeMode.SYSTEM.name) ?: AppThemeMode.SYSTEM.name
-        ThemeManager.themeMode.value = try {
-            AppThemeMode.valueOf(savedThemeString)
-        } catch (e: IllegalArgumentException) {
-            AppThemeMode.DARK
-        }
+        ThemeManager.themeMode.value = try { AppThemeMode.valueOf(savedThemeString) } catch (e: IllegalArgumentException) { AppThemeMode.DARK }
 
         ThemeManager.useDynamicColor.value = sharedPrefs.getBoolean("USE_DYNAMIC_COLOR", true)
         val defaultAccentInt = VtopPrimaryBlue.toArgb()
-        val savedAccentInt = sharedPrefs.getInt("CUSTOM_ACCENT", defaultAccentInt)
-        ThemeManager.customAccent.value = Color(savedAccentInt)
+        ThemeManager.customAccent.value = Color(sharedPrefs.getInt("CUSTOM_ACCENT", defaultAccentInt))
 
         NotificationHelper.createNotificationChannel(this)
 
-        lifecycleScope.launch(Dispatchers.IO) {
-            OtaManager.checkForOtaUpdates(this@MainActivity)
-        }
+        lifecycleScope.launch(Dispatchers.IO) { OtaManager.checkForOtaUpdates(this@MainActivity) }
 
         if (intent?.getBooleanExtra("SHOW_UPDATE", false) == true || intent?.action == "SHOW_UPDATE") {
             updateTriggerFlow.value = true
         }
 
-        val autoSyncInterval =
-            try {
-                sharedPrefs.getInt("AUTO_SYNC_INTERVAL", 8)
-            } catch (_: ClassCastException) {
-                val legacy = sharedPrefs.getLong("AUTO_SYNC_INTERVAL", 8L).toInt()
-                sharedPrefs.edit().putInt("AUTO_SYNC_INTERVAL", legacy).apply()
-                legacy
-            }
+        val autoSyncInterval = try { sharedPrefs.getInt("AUTO_SYNC_INTERVAL", 8) } catch (_: ClassCastException) {
+            val legacy = sharedPrefs.getLong("AUTO_SYNC_INTERVAL", 8L).toInt()
+            sharedPrefs.edit().putInt("AUTO_SYNC_INTERVAL", legacy).apply()
+            legacy
+        }
 
         if (autoSyncInterval > 0) {
             val syncRequest = PeriodicWorkRequestBuilder<VtopSyncWorker>(autoSyncInterval.toLong(), TimeUnit.HOURS).build()
-            WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-                "VTOP_BACKGROUND_SYNC",
-                ExistingPeriodicWorkPolicy.KEEP,
-                syncRequest
-            )
+            WorkManager.getInstance(this).enqueueUniquePeriodicWork("VTOP_BACKGROUND_SYNC", ExistingPeriodicWorkPolicy.KEEP, syncRequest)
         } else {
             WorkManager.getInstance(this).cancelUniqueWork("VTOP_BACKGROUND_SYNC")
         }
@@ -237,12 +230,8 @@ class MainActivity : ComponentActivity() {
                 if (triggerUpdate) {
                     try {
                         val info = UpdateManager.checkForUpdates()
-                        if (info.isUpdateAvailable) {
-                            updateInfo = info
-                        }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
+                        if (info.isUpdateAvailable) updateInfo = info
+                    } catch (e: Exception) { e.printStackTrace() }
                     updateTriggerFlow.value = false
                 }
             }
@@ -250,12 +239,8 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(Unit) {
                 try {
                     val info = UpdateManager.checkForUpdates()
-                    if (info.isUpdateAvailable) {
-                        updateInfo = info
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
+                    if (info.isUpdateAvailable) updateInfo = info
+                } catch (e: Exception) { e.printStackTrace() }
             }
 
             val triggerInitialSync = remember { intent.getBooleanExtra("TRIGGER_INITIAL_SYNC", false) }
@@ -268,32 +253,17 @@ class MainActivity : ComponentActivity() {
             }
 
             AppTheme(themeMode = themeMode) {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    Crossfade(
-                        targetState = isDataLoaded.value,
-                        animationSpec = tween(500),
-                        label = "DataLoadTransition"
-                    ) { loaded ->
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    Crossfade(targetState = isDataLoaded.value, animationSpec = tween(500), label = "DataLoadTransition") { loaded ->
                         if (loaded) {
-                            // -------------------------------------------------------------
-                            // NEW NATIVE NAVIGATION ARCHITECTURE
-                            // -------------------------------------------------------------
                             val navController = rememberNavController()
-
-                            NavHost(
-                                navController = navController,
-                                startDestination = "main"
-                            ) {
-                                // 1. MAIN SCREEN
+                            NavHost(navController = navController, startDestination = "main") {
                                 composable(
                                     route = "main",
-                                    enterTransition = { fadeIn() },
-                                    exitTransition = { fadeOut() },
-                                    popEnterTransition = { fadeIn() },
-                                    popExitTransition = { fadeOut() }
+                                    enterTransition = { androidx.compose.animation.EnterTransition.None },
+                                    exitTransition = { androidx.compose.animation.ExitTransition.None },
+                                    popEnterTransition = { androidx.compose.animation.EnterTransition.None },
+                                    popExitTransition = { androidx.compose.animation.ExitTransition.None }
                                 ) {
                                     MainScreen(
                                         navController = navController,
@@ -302,9 +272,7 @@ class MainActivity : ComponentActivity() {
                                         attendanceData = AppBridge.attendanceState.value ?: emptyList(),
                                         examsData = AppBridge.examsState.value ?: emptyList(),
                                         onSyncClick = { activeTab, forceNewSession ->
-                                            lifecycleScope.launch {
-                                                GlobalSyncer.performSync(this@MainActivity, activeTab, forceNewSession)
-                                            }
+                                            lifecycleScope.launch { GlobalSyncer.performSync(this@MainActivity, activeTab, forceNewSession) }
                                         },
                                         onLogoutClick = {
                                             sharedPrefs.edit { putBoolean("IS_EXPLICITLY_LOGGED_OUT", true) }
@@ -355,11 +323,8 @@ class MainActivity : ComponentActivity() {
                                                             }
                                                             withContext(Dispatchers.Main) {
                                                                 NotificationHelper.showDownloadNotificationFromUri(
-                                                                    context = this@MainActivity,
-                                                                    uri = uri,
-                                                                    fileName = fileName,
-                                                                    title = "Outpass Downloaded",
-                                                                    description = "Tap to open $fileName"
+                                                                    context = this@MainActivity, uri = uri, fileName = fileName,
+                                                                    title = "Outpass Downloaded", description = "Tap to open $fileName"
                                                                 )
                                                                 Toast.makeText(this@MainActivity, "Outpass saved to Downloads", Toast.LENGTH_SHORT).show()
                                                                 onReady(tempFile)
@@ -433,7 +398,6 @@ class MainActivity : ComponentActivity() {
                                     )
                                 }
 
-                                // 2. SLIDING SUB-SCREENS
                                 composable(
                                     route = "simulator",
                                     enterTransition = { slideInVertically(initialOffsetY = { it }, animationSpec = tween(300)) + fadeIn() },
@@ -441,12 +405,7 @@ class MainActivity : ComponentActivity() {
                                 ) {
                                     val semInfo = Vault.getSelectedSemester(this@MainActivity)
                                     val currentSemName = semInfo[1] ?: semInfo[0] ?: "Unknown Semester"
-                                    BunkSimulatorTab(
-                                        timetable = AppBridge.timetableState.value ?: TimetableModel(),
-                                        attendanceData = AppBridge.attendanceState.value ?: emptyList(),
-                                        selectedSemester = currentSemName,
-                                        onBack = { navController.popBackStack() }
-                                    )
+                                    BunkSimulatorTab(timetable = AppBridge.timetableState.value ?: TimetableModel(), attendanceData = AppBridge.attendanceState.value ?: emptyList(), selectedSemester = currentSemName, onBack = { navController.popBackStack() })
                                 }
 
                                 composable(
@@ -465,7 +424,7 @@ class MainActivity : ComponentActivity() {
                                     enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
                                     exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
                                 ) {
-                                    FacultyScreen(facultyList = com.vtop.ui.screens.sub.loadFaculty(this@MainActivity))
+                                    FacultyScreen(facultyList = loadFaculty(this@MainActivity))
                                 }
 
                                 composable(
@@ -473,7 +432,7 @@ class MainActivity : ComponentActivity() {
                                     enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
                                     exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
                                 ) {
-                                    AboutScreen(navController = navController)
+                                    com.vtop.ui.screens.sub.AboutScreen(navController = navController)
                                 }
 
                                 composable(
@@ -507,10 +466,8 @@ class MainActivity : ComponentActivity() {
                                 ) { backStackEntry ->
                                     val docTypeStr = backStackEntry.arguments?.getString("docType") ?: "PRIVACY_POLICY"
                                     val docType = try {
-                                        LegalDocumentType.valueOf(docTypeStr)
-                                    } catch (e: Exception) {
-                                        LegalDocumentType.PRIVACY_POLICY
-                                    }
+                                        com.vtop.ui.legal.LegalDocumentType.valueOf(docTypeStr)
+                                    } catch (e: Exception) { com.vtop.ui.legal.LegalDocumentType.PRIVACY_POLICY }
                                     LegalDocumentScreen(type = docType, onBack = { navController.popBackStack() })
                                 }
 
@@ -519,7 +476,6 @@ class MainActivity : ComponentActivity() {
                                     enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
                                     exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
                                 ) {
-                                    // Fallback blank screen in case it's triggered, pops immediately to prevent crash
                                     LaunchedEffect(Unit) { navController.popBackStack() }
                                 }
                             }
@@ -535,26 +491,71 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    if (updateInfo != null) {
+                    updateInfo?.let { info ->
                         AlertDialog(
                             onDismissRequest = { updateInfo = null },
                             title = {
                                 Column {
                                     Text("Update Available", fontWeight = FontWeight.Black, fontSize = 20.sp)
-                                    if (!updateInfo?.releaseTitle.isNullOrBlank()) { Spacer(Modifier.height(4.dp)); Text(text = updateInfo!!.releaseTitle, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) }
-                                }
-                            },
-                            text = {
-                                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 350.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text(text = "Version ${updateInfo?.latestVersion} is ready to download. Do you want to install it now?", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
-                                    if (!updateInfo?.releaseNotes.isNullOrBlank()) {
-                                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                                        Text(text = "Release Notes:", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
-                                        Markdown(content = updateInfo!!.releaseNotes.replace("\\n", "\n"), modifier = Modifier.fillMaxWidth())
+                                    if (info.releaseTitle.isNotBlank()) {
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(text = info.releaseTitle, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             },
-                            confirmButton = { Button(onClick = { isDownloadingUpdate = true; UpdateManager.downloadAndInstallUpdate(context = this@MainActivity, downloadUrl = updateInfo!!.downloadUrl, version = updateInfo!!.latestVersion); updateInfo = null }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) { Text(if (isDownloadingUpdate) "Downloading..." else "Update Now", fontWeight = FontWeight.Bold) } },
+                            text = {
+                                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 350.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                    Text(text = "Version ${info.latestVersion} is ready to download. Do you want to install it now?", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
+
+                                    if (info.features.isNotEmpty()) {
+                                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Text("✨ Features", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary, letterSpacing = 0.5.sp)
+                                            info.features.forEach { feature ->
+                                                Row(verticalAlignment = Alignment.Top) {
+                                                    Text("•", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 8.dp))
+                                                    Text(feature, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if (info.fixes.isNotEmpty()) {
+                                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Text("🛠 Fixes", fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFF10B981), letterSpacing = 0.5.sp)
+                                            info.fixes.forEach { fix ->
+                                                Row(verticalAlignment = Alignment.Top) {
+                                                    Text("•", color = Color(0xFF10B981), modifier = Modifier.padding(end = 8.dp))
+                                                    Text(fix, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if (info.important.isNotEmpty()) {
+                                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Text("📢 Important", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.error, letterSpacing = 0.5.sp)
+                                            info.important.forEach { note ->
+                                                Row(verticalAlignment = Alignment.Top) {
+                                                    Text("•", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(end = 8.dp))
+                                                    Text(note, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        isDownloadingUpdate = true
+                                        UpdateManager.downloadAndInstallUpdate(context = this@MainActivity, downloadUrl = info.downloadUrl, version = info.latestVersion)
+                                        updateInfo = null
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                ) {
+                                    Text(if (isDownloadingUpdate) "Downloading..." else "Update Now", fontWeight = FontWeight.Bold)
+                                }
+                            },
                             dismissButton = { TextButton(onClick = { updateInfo = null }) { Text("Later", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
                             containerColor = MaterialTheme.colorScheme.surface
                         )
@@ -578,9 +579,7 @@ fun VtopSplashScreen() {
                     .background(MaterialTheme.colorScheme.surface, CircleShape)
                     .border(2.dp, AppColors.glassBorder, CircleShape),
                 contentAlignment = Alignment.Center
-            ) {
-                Text(text = "⚡", fontSize = 36.sp)
-            }
+            ) {Text(text = "V", fontSize = 40.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)}
             Spacer(modifier = Modifier.height(24.dp))
             Text(text = "VTOP", color = MaterialTheme.colorScheme.onBackground, fontSize = 24.sp, fontWeight = FontWeight.Black, letterSpacing = 4.sp)
             Spacer(modifier = Modifier.height(32.dp))

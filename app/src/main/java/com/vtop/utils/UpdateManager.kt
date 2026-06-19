@@ -11,9 +11,9 @@ import android.util.Log
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import com.google.android.gms.tasks.Task
 import com.google.firebase.remoteconfig.FirebaseRemoteConfig
 import com.google.firebase.remoteconfig.FirebaseRemoteConfigSettings
-import com.google.android.gms.tasks.Task
 import com.vtop.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -30,7 +30,9 @@ data class UpdateInfo(
     val isUpdateAvailable: Boolean,
     val latestVersion: String,
     val releaseTitle: String,
-    val releaseNotes: String,
+    val features: List<String>,
+    val fixes: List<String>,
+    val important: List<String>,
     val downloadUrl: String
 )
 
@@ -56,7 +58,7 @@ object UpdateManager {
         }
 
         Log.d(TAG, "App is completely up to date.")
-        return@withContext UpdateInfo(false, "", "", "", "")
+        return@withContext UpdateInfo(false, "", "", emptyList(), emptyList(), emptyList(), "")
     }
 
     private suspend fun fetchFromFirebase(): UpdateInfo = suspendCancellableCoroutine { continuation ->
@@ -71,7 +73,37 @@ object UpdateManager {
             if (task.isSuccessful) {
                 val latestVersion = remoteConfig.getString("latest_version")
                 val downloadUrl = remoteConfig.getString("download_url")
-                val releaseNotes = remoteConfig.getString("release_notes")
+
+                val releaseNotesJsonStr = remoteConfig.getString("release_notes_json")
+                val fallbackNotes = remoteConfig.getString("release_notes")
+
+                val features = mutableListOf<String>()
+                val fixes = mutableListOf<String>()
+                val important = mutableListOf<String>()
+
+                if (releaseNotesJsonStr.isNotBlank()) {
+                    try {
+                        val json = JSONObject(releaseNotesJsonStr)
+                        val fArray = json.optJSONArray("features")
+                        if (fArray != null) for (i in 0 until fArray.length()) features.add(fArray.getString(i))
+
+                        val fixArray = json.optJSONArray("fixes")
+                        if (fixArray != null) for (i in 0 until fixArray.length()) fixes.add(fixArray.getString(i))
+
+                        val impArray = json.optJSONArray("important")
+                        if (impArray != null) for (i in 0 until impArray.length()) important.add(impArray.getString(i))
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to parse release_notes_json", e)
+                        features.add("Updates are available. Install to see what's new.")
+                    }
+                } else if (fallbackNotes.isNotBlank()) {
+                    fallbackNotes.replace("\\n", "\n").split("\n").forEach { line ->
+                        val clean = line.trim().removePrefix("-").removePrefix("*").removePrefix("•").trim()
+                        if (clean.isNotBlank() && !clean.startsWith("#")) {
+                            features.add(clean)
+                        }
+                    }
+                }
 
                 if (latestVersion.isNotBlank() && downloadUrl.isNotBlank()) {
                     val isNewer = isVersionGreater(latestVersion, BuildConfig.VERSION_NAME)
@@ -80,16 +112,18 @@ object UpdateManager {
                             isUpdateAvailable = isNewer,
                             latestVersion = latestVersion,
                             releaseTitle = "Version $latestVersion Available",
-                            releaseNotes = releaseNotes,
+                            features = features,
+                            fixes = fixes,
+                            important = important,
                             downloadUrl = downloadUrl
                         )
                     )
                 } else {
-                    continuation.resume(UpdateInfo(false, "", "", "", ""))
+                    continuation.resume(UpdateInfo(false, "", "", emptyList(), emptyList(), emptyList(), ""))
                 }
             } else {
                 Log.e(TAG, "Firebase fetch failed")
-                continuation.resume(UpdateInfo(false, "", "", "", ""))
+                continuation.resume(UpdateInfo(false, "", "", emptyList(), emptyList(), emptyList(), ""))
             }
         }
     }
@@ -113,6 +147,14 @@ object UpdateManager {
                 val releaseName = json.optString("name", "New Update")
                 val body = json.optString("body", "Bug fixes and performance improvements.")
 
+                val features = mutableListOf<String>()
+                body.replace("\\r\\n", "\n").replace("\\n", "\n").split("\n").forEach { line ->
+                    val clean = line.trim().removePrefix("-").removePrefix("*").removePrefix("•").trim()
+                    if (clean.isNotBlank() && !clean.startsWith("#")) {
+                        features.add(clean)
+                    }
+                }
+
                 var downloadUrl = ""
                 val assets = json.optJSONArray("assets")
                 if (assets != null && assets.length() > 0) {
@@ -126,23 +168,23 @@ object UpdateManager {
                         isUpdateAvailable = isNewer,
                         latestVersion = tagName,
                         releaseTitle = releaseName,
-                        releaseNotes = body,
+                        features = features,
+                        fixes = emptyList(),
+                        important = emptyList(),
                         downloadUrl = downloadUrl
                     )
                 }
             }
-            return@withContext UpdateInfo(false, "", "", "", "")
+            return@withContext UpdateInfo(false, "", "", emptyList(), emptyList(), emptyList(), "")
         } catch (e: Exception) {
             Log.e(TAG, "GitHub API fetch failed", e)
-            return@withContext UpdateInfo(false, "", "", "", "")
+            return@withContext UpdateInfo(false, "", "", emptyList(), emptyList(), emptyList(), "")
         }
     }
 
     fun downloadAndInstallUpdate(context: Context, downloadUrl: String, version: String) {
         try {
             val fileName = "vtop_update_v$version.apk"
-
-            // Delete old file if it exists
             val destinationFile = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName)
             if (destinationFile.exists()) destinationFile.delete()
 
@@ -170,7 +212,6 @@ object UpdateManager {
                 }
             }
 
-            // CRITICAL FIX: System broadcasts MUST be EXPORTED in Android 14+
             ContextCompat.registerReceiver(
                 context,
                 onComplete,

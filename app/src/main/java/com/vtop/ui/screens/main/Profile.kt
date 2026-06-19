@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -85,6 +86,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.composables.icons.lucide.Link
+import com.composables.icons.lucide.Link2Off
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.UserRound
 import com.google.firebase.auth.FirebaseAuth
@@ -98,13 +101,15 @@ import com.vtop.ui.core.CalendarSync
 import com.vtop.ui.core.CourseReminder
 import com.vtop.ui.theme.AppThemeMode
 import com.vtop.utils.AnalyticsManager
+import com.vtop.utils.UpdateInfo
+import com.vtop.utils.UpdateManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
-import com.composables.icons.lucide.Link2Off
-import com.composables.icons.lucide.Link
 
 private fun formatReminderDate(dateStr: String): String {
     return try {
@@ -236,7 +241,10 @@ fun Profile(
     var showCredDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
 
-    // --- AUTO SYNC STATE ---
+    var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
+    var isCheckingUpdate by remember { mutableStateOf(false) }
+    var isDownloadingUpdate by remember { mutableStateOf(false) }
+
     var autoSyncInterval by remember { mutableIntStateOf(sharedPrefs.getInt("AUTO_SYNC_INTERVAL", 8)) }
     var syncDropdownExpanded by remember { mutableStateOf(false) }
     val syncOptions = mapOf(0 to "None", 1 to "1 hr", 2 to "2 hrs", 4 to "4 hrs", 8 to "8 hrs")
@@ -484,7 +492,6 @@ fun Profile(
                             Text("Frequency of background updates", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                         }
 
-                        // NEW: Wrap ONLY the right-side pill and the DropdownMenu in the Box
                         Box(contentAlignment = Alignment.TopEnd) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -930,6 +937,76 @@ fun Profile(
                 TextButton(onClick = { showLogoutDialog = false; onLogout() }) { Text("Log Out", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
             },
             dismissButton = { TextButton(onClick = { showLogoutDialog = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    }
+
+    updateInfo?.let { info ->
+        AlertDialog(
+            onDismissRequest = { updateInfo = null },
+            title = {
+                Column {
+                    Text("Update Available", fontWeight = FontWeight.Black, fontSize = 20.sp)
+                    if (info.releaseTitle.isNotBlank()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(text = info.releaseTitle, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 350.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text(text = "Version ${info.latestVersion} is ready to download. Do you want to install it now?", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
+
+                    if (info.features.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("✨ Features", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary, letterSpacing = 0.5.sp)
+                            info.features.forEach { feature ->
+                                Row(verticalAlignment = Alignment.Top) {
+                                    Text("•", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 8.dp))
+                                    Text(feature, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
+                                }
+                            }
+                        }
+                    }
+
+                    if (info.fixes.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("🛠 Fixes", fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFF10B981), letterSpacing = 0.5.sp)
+                            info.fixes.forEach { fix ->
+                                Row(verticalAlignment = Alignment.Top) {
+                                    Text("•", color = Color(0xFF10B981), modifier = Modifier.padding(end = 8.dp))
+                                    Text(fix, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
+                                }
+                            }
+                        }
+                    }
+
+                    if (info.important.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("📢 Important", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.error, letterSpacing = 0.5.sp)
+                            info.important.forEach { note ->
+                                Row(verticalAlignment = Alignment.Top) {
+                                    Text("•", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(end = 8.dp))
+                                    Text(note, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        isDownloadingUpdate = true
+                        UpdateManager.downloadAndInstallUpdate(context = context, downloadUrl = info.downloadUrl, version = info.latestVersion)
+                        updateInfo = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text(if (isDownloadingUpdate) "Downloading..." else "Update Now", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = { TextButton(onClick = { updateInfo = null }) { Text("Later", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
             containerColor = MaterialTheme.colorScheme.surface
         )
     }
