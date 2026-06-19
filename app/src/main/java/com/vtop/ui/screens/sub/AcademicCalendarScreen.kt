@@ -270,9 +270,7 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
             if (dropSunday || dropGenericMonday) return@mapNotNull null
 
             // --- Normalize Titles for Perfect Grouping ---
-            if (cleanTitle.contains("Instructional Day", ignoreCase = true) && !cleanTitle.contains("No Instructional", ignoreCase = true) && !cleanTitle.contains("Non Instructional", ignoreCase = true)) {
-                cleanTitle = "Instructional Day"
-            } else if (cleanTitle.contains("VITOPIA", ignoreCase = true)) {
+            if (cleanTitle.contains("VITOPIA", ignoreCase = true)) {
                 cleanTitle = "VITOPIA"
             } else if (cleanTitle.contains("CAT - I", ignoreCase = true) || cleanTitle.contains("Continuous Assessment Test - I", ignoreCase = true)) {
                 cleanTitle = "CAT - I (Exam)"
@@ -282,6 +280,8 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                 cleanTitle = "Lab FAT (Exam)"
             } else if (cleanTitle.contains("FAT", ignoreCase = true) || cleanTitle.contains("Final Assessment Test", ignoreCase = true)) {
                 cleanTitle = "FAT (Exam)"
+            } else if (cleanTitle.contains("Instructional Day", ignoreCase = true) && !cleanTitle.contains("No Instructional", ignoreCase = true) && !cleanTitle.contains("Non Instructional", ignoreCase = true)) {
+                cleanTitle = "Instructional Day"
             }
 
             val category = when {
@@ -360,25 +360,23 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
 
     Scaffold(
         topBar = {
-            Box(modifier = Modifier.padding(top = 96.dp)) {
-                TopAppBar(
-                    title = { Text("Academic Calendar", fontSize = 20.sp, fontWeight = FontWeight.Bold) },
-                    navigationIcon = {
-                        IconButton(onClick = onBack, modifier = Modifier.padding(start = 4.dp)) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = { fetchCalendar(selectedSemId) }) {
-                            Icon(Icons.Default.Refresh, contentDescription = "Refresh Calendar")
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color.Transparent,
-                        scrolledContainerColor = MaterialTheme.colorScheme.background
-                    )
+            TopAppBar(
+                title = { Text("Academic Calendar", fontSize = 20.sp, fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onBack, modifier = Modifier.padding(start = 4.dp)) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { fetchCalendar(selectedSemId) }) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Refresh Calendar")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = MaterialTheme.colorScheme.background
                 )
-            }
+            )
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { paddingValues ->
