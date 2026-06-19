@@ -33,7 +33,7 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = 2
-        versionName = "1.1.8"
+        versionName = "1.1.9"
 
 
         ndk {
@@ -101,7 +101,6 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.5.0")
 
     // UI & Icons
-    implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.37.0")
     implementation("com.composables:icons-lucide:1.0.0")
     implementation("androidx.compose.material:material:1.6.0")
     implementation("androidx.compose.material:material-icons-extended:1.6.0")

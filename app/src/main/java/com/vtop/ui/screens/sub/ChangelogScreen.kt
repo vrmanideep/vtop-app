@@ -35,6 +35,21 @@ data class ReleaseLog(
 
 val releaseHistory = listOf(
     ReleaseLog(
+        version = "Version 1.1.9",
+        tag = "v1.1.9",
+        date = "19 Jun 2026",
+        features = listOf(
+            "Implemented new structured JSON OTA update engine.",
+            "Native Compose update dialogs.",
+            "Removed external Markdown rendering dependency for OTA dialogs."
+        ),
+        fixes = listOf(
+            "Fixed Academic Calendar bug where Lab FATs were merging into Instructional Days.",
+            "Fixed back-stack navigation issues across the app."
+        )
+    ),
+
+    ReleaseLog(
         version = "Version 1.1.8",
         tag = "v1.1.8",
         date = "18 Jun 2026",
