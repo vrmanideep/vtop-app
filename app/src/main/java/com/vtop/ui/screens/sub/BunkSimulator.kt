@@ -36,8 +36,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vtop.logic.BunkProjectorResult
-import com.vtop.models.AttendanceModel
-import com.vtop.models.TimetableModel
+import com.vtop.models.*
 import com.vtop.utils.AnalyticsManager
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -774,96 +773,65 @@ fun BunkResultCard(
 
 @SuppressLint("NewApi")
 fun getCalendarContext(context: Context, selectedSemester: String): CalendarContext {
-    val allSems = mutableListOf<CalendarContext>()
-    try {
-        val jsonString = try {
-            com.vtop.utils.OtaManager.getCalendarJson(context)
-        } catch (e: Exception) {
-            context.assets.open("academic_calendar.json").bufferedReader().use { it.readText() }
-        }
+    // 1. Fetch Live Academic Calendar from Vault
+    val semId = com.vtop.utils.Vault.getSelectedSemester(context)[0]
+    val liveEvents = com.vtop.utils.Vault.getAcademicCalendar(context, semId)
 
-        val root = JSONObject(jsonString)
-        val keys = root.keys()
-
-        while (keys.hasNext()) {
-            val key = keys.next()
-            val semBlock = root.optJSONObject(key) ?: continue
-
-            val startStr = semBlock.optString("start_date", "").replace(" ", "")
-            val endStr = semBlock.optString("last_instructional_day", "").replace(" ", "")
-
-            var startDate = if (startStr.isNotEmpty()) LocalDate.parse(startStr) else LocalDate.MIN
-            var endDate = if (endStr.isNotEmpty()) LocalDate.parse(endStr) else LocalDate.MAX
-
-            if (startDate.isAfter(endDate) && startDate.year > endDate.year - 2) {
-                startDate = startDate.minusYears(1)
-            }
-
-            val weekOffs = mutableListOf<String>()
-            val wOffArr = semBlock.optJSONArray("week_off")
-            if (wOffArr != null) {
-                for (i in 0 until wOffArr.length()) {
-                    weekOffs.add(wOffArr.getString(i))
-                }
-            }
-
-            val holidaysMap = mutableMapOf<LocalDate, String>()
-            val hols = semBlock.optJSONObject("holidays")
-            if (hols != null) {
-                val holKeys = hols.keys()
-                while (holKeys.hasNext()) {
-                    val hk = holKeys.next()
-                    try { holidaysMap[LocalDate.parse(hk.replace(" ", ""))] = hols.getString(hk) } catch (_: Exception) {}
-                }
-            }
-
-            val exams = semBlock.optJSONObject("exams")
-            if (exams != null) {
-                val examKeys = exams.keys()
-                while (examKeys.hasNext()) {
-                    val examType = examKeys.next()
-                    val dates = exams.optJSONArray(examType)
-                    if (dates != null) {
-                        for (i in 0 until dates.length()) {
-                            try { holidaysMap[LocalDate.parse(dates.getString(i).replace(" ", ""))] = "$examType Exam" } catch (_: Exception) {}
-                        }
-                    }
-                }
-            }
-
-            val trueEndDate = holidaysMap.keys.maxOrNull()?.let {
-                if (it.isAfter(endDate)) it else endDate
-            } ?: endDate
-
-            allSems.add(CalendarContext(key, startDate, endDate, trueEndDate, weekOffs, holidaysMap))
-        }
-    } catch (_: Exception) {}
-
-    if (allSems.isEmpty()) return CalendarContext(semesterName = selectedSemester)
-
-    // 1. EXACT MATCH
-    val exactMatch = allSems.find { it.semesterName.equals(selectedSemester, ignoreCase = true) }
-    if (exactMatch != null) return exactMatch
-
-    // 2. FUZZY MATCH
-    val cleanSelected = selectedSemester.lowercase(Locale.ENGLISH).replace(Regex("[^a-z0-9]"), "")
-    val fuzzyMatch = allSems.find {
-        val cleanKey = it.semesterName.lowercase(Locale.ENGLISH).replace(Regex("[^a-z0-9]"), "")
-        cleanKey.contains(cleanSelected) || cleanSelected.contains(cleanKey) ||
-                (cleanSelected.contains("summer") && cleanKey.contains("summer")) ||
-                (cleanSelected.contains("winter") && cleanKey.contains("winter"))
-    }
-    if (fuzzyMatch != null) {
-        return fuzzyMatch.copy(semesterName = selectedSemester)
+    // Fallback if calendar hasn't been synced yet
+    if (liveEvents.isEmpty()) {
+        return CalendarContext(semesterName = selectedSemester)
     }
 
-    // 3. DATE FALLBACK
-    val today = LocalDate.now()
-    val inSession = allSems.filter { !today.isBefore(it.startDate) && !today.isAfter(it.trueEndDate) }
-    if (inSession.isNotEmpty()) return inSession.first().copy(semesterName = selectedSemester)
+    val sdfParse = java.text.SimpleDateFormat("dd-MMM-yyyy", java.util.Locale.ENGLISH)
+    var startDate = java.time.LocalDate.MAX
+    var endDate = java.time.LocalDate.MIN
+    val holidays = mutableMapOf<java.time.LocalDate, String>()
+    val weekOffs = listOf("SUNDAY") // VTOP default
 
-    val upcomingSems = allSems.filter { today.isBefore(it.startDate) }
-    if (upcomingSems.isNotEmpty()) return upcomingSems.minByOrNull { it.startDate }!!.copy(semesterName = selectedSemester)
+    // 2. Parse live descriptions to build the simulation rules
+    for (event in liveEvents) {
+        try {
+            val dateObj = sdfParse.parse(event.date) ?: continue
+            val localDate = java.time.Instant.ofEpochMilli(dateObj.time).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+            val title = event.particulars.lowercase(java.util.Locale.ENGLISH)
 
-    return allSems.maxByOrNull { it.trueEndDate }?.copy(semesterName = selectedSemester) ?: CalendarContext(semesterName = selectedSemester)
+            // Identify Semester Boundaries
+            if (title.contains("commencement")) {
+                if (localDate.isBefore(startDate)) startDate = localDate
+            }
+            if (title.contains("last instructional day") || title.contains("last working day") || title.contains("last day")) {
+                if (localDate.isAfter(endDate)) endDate = localDate
+            }
+
+            // Identify Bunk Blockers (Holidays, Exams, & No-Class Days)
+            if (title.contains("holiday") || title.contains("exam") || title.contains("cat") || title.contains("fat") ||
+                title.contains("no instructional") || title.contains("non instructional")) {
+                holidays[localDate] = event.particulars
+            }
+        } catch (ignored: Exception) {}
+    }
+
+    // 3. Smart Fallbacks (if VTOP didn't use specific keywords)
+    if (startDate == java.time.LocalDate.MAX) {
+        startDate = try {
+            val d = sdfParse.parse(liveEvents.first().date)
+            java.time.Instant.ofEpochMilli(d!!.time).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        } catch (e: Exception) { java.time.LocalDate.MIN }
+    }
+
+    if (endDate == java.time.LocalDate.MIN) {
+        endDate = try {
+            val d = sdfParse.parse(liveEvents.last().date)
+            java.time.Instant.ofEpochMilli(d!!.time).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        } catch (e: Exception) { java.time.LocalDate.MAX }
+    }
+
+    return CalendarContext(
+        semesterName = selectedSemester,
+        startDate = startDate,
+        endDate = endDate,
+        trueEndDate = endDate, // VTOP dynamic end date
+        weekOffs = weekOffs,
+        holidays = holidays
+    )
 }
