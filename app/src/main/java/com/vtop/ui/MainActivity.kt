@@ -114,6 +114,39 @@ class MainActivity : ComponentActivity() {
         com.google.firebase.FirebaseApp.initializeApp(this)
 
         val sharedPrefs = getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
+
+        // --- SURGICAL VERSION MIGRATION CHECK ---
+        val vaultPrefs = getSharedPreferences("VTOP_VAULT", Context.MODE_PRIVATE)
+        val currentAppVersion = try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.0"
+        } catch (e: Exception) {
+            "1.0.0"
+        }
+
+        val savedAppVersion = sharedPrefs.getString("SAVED_APP_VERSION", "0.0.0") ?: "0.0.0"
+
+        if (savedAppVersion != currentAppVersion) {
+            val vaultEditor = vaultPrefs.edit()
+
+            // 1. Surgically wipe the exact Vault keys for Semesters
+            vaultEditor.remove("OFFLINE_SEM_OPTIONS")
+            vaultEditor.remove("OFFLINE_CAL_SEM_OPTIONS")
+
+            // 2. Find and wipe all dynamically generated Calendar keys
+            vaultPrefs.all.keys.forEach { key ->
+                if (key.startsWith("OFFLINE_ACADEMIC_CALENDAR_")) {
+                    vaultEditor.remove(key)
+                }
+            }
+            vaultEditor.apply()
+
+            // 3. Update the stored version so this only runs once
+            sharedPrefs.edit().putString("SAVED_APP_VERSION", currentAppVersion).apply()
+
+            // 4. Force a silent sync to rebuild the missing data using the new v1.1.8 parsers
+            intent.putExtra("TRIGGER_INITIAL_SYNC", true)
+        }
+        // ----------------------------------------
         val savedThemeString = sharedPrefs.getString("APP_THEME", AppThemeMode.SYSTEM.name) ?: AppThemeMode.SYSTEM.name
         ThemeManager.themeMode.value = try {
             AppThemeMode.valueOf(savedThemeString)

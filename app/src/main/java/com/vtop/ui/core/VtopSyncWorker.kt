@@ -213,7 +213,30 @@ class VtopSyncWorker(
             if (newOutings.isNotEmpty()) {
                 newOutings.forEach { newOut ->
                     val oldOut = oldOutings.find { it.id == newOut.id }
-                    if (oldOut != null && oldOut.status != newOut.status) {
+
+                    // --- THE FIX: EXPIRED LEAVE CHECK ---
+                    val isExpired = try {
+                        val sdfOut = if (newOut.fromDate.contains("-") && newOut.fromDate.split("-")[0].length == 4) {
+                            SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
+                        } else {
+                            SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH)
+                        }
+                        val startDate = sdfOut.parse(newOut.fromDate)
+
+                        val todayMidnight = Calendar.getInstance().apply {
+                            set(Calendar.HOUR_OF_DAY, 0)
+                            set(Calendar.MINUTE, 0)
+                            set(Calendar.SECOND, 0)
+                            set(Calendar.MILLISECOND, 0)
+                        }.time
+
+                        startDate != null && startDate.before(todayMidnight)
+                    } catch (e: Exception) {
+                        false // If parsing fails, default to false to be safe
+                    }
+
+                    // Only trigger notification if status changed AND the leave hasn't expired yet
+                    if (oldOut != null && oldOut.status != newOut.status && !isExpired) {
                         val s = newOut.status.uppercase(Locale.getDefault())
                         val oldS = oldOut.status.uppercase(Locale.getDefault())
                         val notifId = 501 + (newOut.id.hashCode() % 1000)
