@@ -6,7 +6,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -42,6 +42,9 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.edit
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -60,6 +63,12 @@ import com.vtop.ui.screens.auth.GoogleSignInDialog
 import com.vtop.ui.screens.sub.AcademicCalendarScreen
 import com.vtop.ui.screens.sub.BunkSimulatorTab
 import com.vtop.ui.screens.sub.FacultyScreen
+import com.vtop.ui.screens.sub.AboutScreen
+import com.vtop.ui.screens.sub.ChangelogScreen
+import com.vtop.ui.screens.sub.LicensesScreen
+import com.vtop.ui.screens.portal.VtopPortalScreen
+import com.vtop.ui.screens.profile.LegalDocumentScreen
+import com.vtop.ui.legal.LegalDocumentType
 
 import com.vtop.ui.theme.*
 import com.vtop.utils.*
@@ -69,12 +78,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.TimeUnit
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateDp
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.keyframes
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.shape.RoundedCornerShape
 
 class MainActivity : ComponentActivity() {
@@ -95,7 +98,6 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        // Detect FCM Click while app is in background/foreground
         if (intent.getBooleanExtra("SHOW_UPDATE", false) || intent.action == "SHOW_UPDATE") {
             updateTriggerFlow.value = true
         }
@@ -127,26 +129,19 @@ class MainActivity : ComponentActivity() {
 
         if (savedAppVersion != currentAppVersion) {
             val vaultEditor = vaultPrefs.edit()
-
-            // 1. Surgically wipe the exact Vault keys for Semesters
             vaultEditor.remove("OFFLINE_SEM_OPTIONS")
             vaultEditor.remove("OFFLINE_CAL_SEM_OPTIONS")
-
-            // 2. Find and wipe all dynamically generated Calendar keys
             vaultPrefs.all.keys.forEach { key ->
                 if (key.startsWith("OFFLINE_ACADEMIC_CALENDAR_")) {
                     vaultEditor.remove(key)
                 }
             }
             vaultEditor.apply()
-
-            // 3. Update the stored version so this only runs once
             sharedPrefs.edit().putString("SAVED_APP_VERSION", currentAppVersion).apply()
-
-            // 4. Force a silent sync to rebuild the missing data using the new v1.1.8 parsers
             intent.putExtra("TRIGGER_INITIAL_SYNC", true)
         }
         // ----------------------------------------
+
         val savedThemeString = sharedPrefs.getString("APP_THEME", AppThemeMode.SYSTEM.name) ?: AppThemeMode.SYSTEM.name
         ThemeManager.themeMode.value = try {
             AppThemeMode.valueOf(savedThemeString)
@@ -161,40 +156,23 @@ class MainActivity : ComponentActivity() {
 
         NotificationHelper.createNotificationChannel(this)
 
-        // Silent OTA Check in the background
         lifecycleScope.launch(Dispatchers.IO) {
             OtaManager.checkForOtaUpdates(this@MainActivity)
         }
 
-        // Detect FCM Click on fresh app launch
         if (intent?.getBooleanExtra("SHOW_UPDATE", false) == true || intent?.action == "SHOW_UPDATE") {
             updateTriggerFlow.value = true
         }
 
-        // --- DYNAMIC BACKGROUND SYNC SCHEDULING ---
         val autoSyncInterval =
             try {
-                sharedPrefs.getInt(
-                    "AUTO_SYNC_INTERVAL",
-                    8
-                )
+                sharedPrefs.getInt("AUTO_SYNC_INTERVAL", 8)
             } catch (_: ClassCastException) {
-
-                val legacy =
-                    sharedPrefs.getLong(
-                        "AUTO_SYNC_INTERVAL",
-                        8L
-                    ).toInt()
-
-                sharedPrefs.edit()
-                    .putInt(
-                        "AUTO_SYNC_INTERVAL",
-                        legacy
-                    )
-                    .apply()
-
+                val legacy = sharedPrefs.getLong("AUTO_SYNC_INTERVAL", 8L).toInt()
+                sharedPrefs.edit().putInt("AUTO_SYNC_INTERVAL", legacy).apply()
                 legacy
             }
+
         if (autoSyncInterval > 0) {
             val syncRequest = PeriodicWorkRequestBuilder<VtopSyncWorker>(autoSyncInterval.toLong(), TimeUnit.HOURS).build()
             WorkManager.getInstance(this).enqueueUniquePeriodicWork(
@@ -225,7 +203,6 @@ class MainActivity : ComponentActivity() {
                 AppBridge.gradesState.value = grades
                 AppBridge.historySummaryState.value = historySummary
                 AppBridge.historyItemsState.value = historyItems
-
                 isDataLoaded.value = true
             }
         }
@@ -252,12 +229,10 @@ class MainActivity : ComponentActivity() {
             val shortcutAction = intent?.action
 
             var showOtaGooglePrompt by remember { mutableStateOf(!Vault.hasPromptedGoogleSignIn(this@MainActivity) && Vault.getGoogleEmail(this@MainActivity).isEmpty()) }
-
             var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
             var isDownloadingUpdate by remember { mutableStateOf(false) }
             val triggerUpdate by updateTriggerFlow.collectAsState()
 
-            // Triggered by FCM intent
             LaunchedEffect(triggerUpdate) {
                 if (triggerUpdate) {
                     try {
@@ -268,11 +243,10 @@ class MainActivity : ComponentActivity() {
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
-                    updateTriggerFlow.value = false // Reset trigger
+                    updateTriggerFlow.value = false
                 }
             }
 
-            // Normal Startup Check
             LaunchedEffect(Unit) {
                 try {
                     val info = UpdateManager.checkForUpdates()
@@ -304,249 +278,251 @@ class MainActivity : ComponentActivity() {
                         label = "DataLoadTransition"
                     ) { loaded ->
                         if (loaded) {
-                            MainScreen(
-                                initialShortcutAction = shortcutAction,
-                                timetable = AppBridge.timetableState.value ?: TimetableModel(),
-                                attendanceData = AppBridge.attendanceState.value,
-                                examsData = AppBridge.examsState.value,
-                                onSyncClick = { activeTab, forceNewSession ->
-                                    lifecycleScope.launch {
-                                        GlobalSyncer.performSync(this@MainActivity, activeTab, forceNewSession)
-                                    }
-                                },
-                                onLogoutClick = {
-                                    sharedPrefs.edit { putBoolean("IS_EXPLICITLY_LOGGED_OUT", true) }
-                                    Vault.clearAll(this@MainActivity)
-                                    startActivity(Intent(this@MainActivity, LoginActivity::class.java))
-                                    finish()
-                                },
-                                outingHandler = object : OutingActionHandler {
-                                    override fun onFetchGeneralFormData(callback: FetchCallback) {
-                                        val regNo = Vault.getRegNo(this@MainActivity).takeIf { it.isNotBlank() } ?: (Vault.getCredentials(this@MainActivity)[0] ?: "Unknown")
-                                        val dummyData = mapOf("name" to "Student", "regNo" to regNo, "appNo" to "N/A", "gender" to "N/A", "block" to "-", "room" to "-")
-                                        callback.onResult(dummyData)
-                                    }
+                            // -------------------------------------------------------------
+                            // NEW NATIVE NAVIGATION ARCHITECTURE
+                            // -------------------------------------------------------------
+                            val navController = rememberNavController()
 
-                                    override fun onFetchWeekendFormData(callback: FetchCallback) {
-                                        val regNo = Vault.getRegNo(this@MainActivity).takeIf { it.isNotBlank() } ?: (Vault.getCredentials(this@MainActivity)[0] ?: "Unknown")
-                                        val dummyData = mapOf("name" to "Student", "regNo" to regNo, "appNo" to "N/A", "gender" to "N/A", "block" to "-", "room" to "-", "parentContact" to "0000000000")
-                                        callback.onResult(dummyData)
-                                    }
+                            NavHost(
+                                navController = navController,
+                                startDestination = "main"
+                            ) {
+                                // 1. MAIN SCREEN
+                                composable(
+                                    route = "main",
+                                    enterTransition = { fadeIn() },
+                                    exitTransition = { fadeOut() },
+                                    popEnterTransition = { fadeIn() },
+                                    popExitTransition = { fadeOut() }
+                                ) {
+                                    MainScreen(
+                                        navController = navController,
+                                        initialShortcutAction = shortcutAction,
+                                        timetable = AppBridge.timetableState.value ?: TimetableModel(),
+                                        attendanceData = AppBridge.attendanceState.value ?: emptyList(),
+                                        examsData = AppBridge.examsState.value ?: emptyList(),
+                                        onSyncClick = { activeTab, forceNewSession ->
+                                            lifecycleScope.launch {
+                                                GlobalSyncer.performSync(this@MainActivity, activeTab, forceNewSession)
+                                            }
+                                        },
+                                        onLogoutClick = {
+                                            sharedPrefs.edit { putBoolean("IS_EXPLICITLY_LOGGED_OUT", true) }
+                                            Vault.clearAll(this@MainActivity)
+                                            startActivity(Intent(this@MainActivity, com.vtop.ui.LoginActivity::class.java))
+                                            finish()
+                                        },
+                                        outingHandler = object : OutingActionHandler {
+                                            override fun onFetchGeneralFormData(callback: FetchCallback) {
+                                                val regNo = Vault.getRegNo(this@MainActivity).takeIf { it.isNotBlank() } ?: (Vault.getCredentials(this@MainActivity)[0] ?: "Unknown")
+                                                val dummyData = mapOf("name" to "Student", "regNo" to regNo, "appNo" to "N/A", "gender" to "N/A", "block" to "-", "room" to "-")
+                                                callback.onResult(dummyData)
+                                            }
 
-                                    override fun onViewPass(
-                                        id: String,
-                                        isWeekend: Boolean,
-                                        onReady: (File?) -> Unit
-                                    ) {
+                                            override fun onFetchWeekendFormData(callback: FetchCallback) {
+                                                val regNo = Vault.getRegNo(this@MainActivity).takeIf { it.isNotBlank() } ?: (Vault.getCredentials(this@MainActivity)[0] ?: "Unknown")
+                                                val dummyData = mapOf("name" to "Student", "regNo" to regNo, "appNo" to "N/A", "gender" to "N/A", "block" to "-", "room" to "-", "parentContact" to "0000000000")
+                                                callback.onResult(dummyData)
+                                            }
 
-                                        lifecycleScope.launch(Dispatchers.IO) {
+                                            override fun onViewPass(id: String, isWeekend: Boolean, onReady: (File?) -> Unit) {
+                                                lifecycleScope.launch(Dispatchers.IO) {
+                                                    try {
+                                                        val creds = Vault.getCredentials(this@MainActivity)
+                                                        val regNo = Vault.getRegNo(this@MainActivity)
+                                                        val client = VtopClient(this@MainActivity, creds[0]!!, creds[1]!!)
+                                                        client.setAuthorizedId(regNo)
+                                                        val tempFile = File(cacheDir, "outpass_$id.pdf")
+                                                        val success = client.downloadAndCacheOutpass(id, isWeekend, regNo, tempFile)
 
-                                            try {
-
-                                                val creds =
-                                                    Vault.getCredentials(
-                                                        this@MainActivity
-                                                    )
-
-                                                val regNo =
-                                                    Vault.getRegNo(
-                                                        this@MainActivity
-                                                    )
-
-                                                val client =
-                                                    VtopClient(
-                                                        this@MainActivity,
-                                                        creds[0]!!,
-                                                        creds[1]!!
-                                                    )
-
-                                                client.setAuthorizedId(regNo)
-
-                                                val tempFile =
-                                                    File(
-                                                        cacheDir,
-                                                        "outpass_$id.pdf"
-                                                    )
-
-                                                val success =
-                                                    client.downloadAndCacheOutpass(
-                                                        id,
-                                                        isWeekend,
-                                                        regNo,
-                                                        tempFile
-                                                    )
-
-                                                if (
-                                                    success &&
-                                                    tempFile.exists()
-                                                ) {
-
-                                                    val resolver =
-                                                        contentResolver
-
-                                                    val fileName =
-                                                        "outpass_$id.pdf"
-
-                                                    val values =
-                                                        android.content.ContentValues().apply {
-
-                                                            put(
-                                                                android.provider.MediaStore.MediaColumns.DISPLAY_NAME,
-                                                                fileName
-                                                            )
-
-                                                            put(
-                                                                android.provider.MediaStore.MediaColumns.MIME_TYPE,
-                                                                "application/pdf"
-                                                            )
-
-                                                            put(
-                                                                android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
-                                                                android.os.Environment.DIRECTORY_DOWNLOADS
-                                                            )
-                                                        }
-
-                                                    val collection =
-                                                        if (android.os.Build.VERSION.SDK_INT >= 29) {
-
-                                                            android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
-
+                                                        if (success && tempFile.exists()) {
+                                                            val resolver = contentResolver
+                                                            val fileName = "outpass_$id.pdf"
+                                                            val values = android.content.ContentValues().apply {
+                                                                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                                                                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+                                                                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                                                            }
+                                                            val collection = if (android.os.Build.VERSION.SDK_INT >= 29) {
+                                                                android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+                                                            } else {
+                                                                android.provider.MediaStore.Files.getContentUri("external")
+                                                            }
+                                                            val uri = resolver.insert(collection, values)
+                                                            if (uri == null) throw Exception("Failed creating MediaStore entry")
+                                                            resolver.openOutputStream(uri)?.use { output ->
+                                                                tempFile.inputStream().use { input -> input.copyTo(output) }
+                                                            }
+                                                            withContext(Dispatchers.Main) {
+                                                                NotificationHelper.showDownloadNotificationFromUri(
+                                                                    context = this@MainActivity,
+                                                                    uri = uri,
+                                                                    fileName = fileName,
+                                                                    title = "Outpass Downloaded",
+                                                                    description = "Tap to open $fileName"
+                                                                )
+                                                                Toast.makeText(this@MainActivity, "Outpass saved to Downloads", Toast.LENGTH_SHORT).show()
+                                                                onReady(tempFile)
+                                                            }
                                                         } else {
-
-                                                            android.provider.MediaStore.Files.getContentUri(
-                                                                "external"
-                                                            )
+                                                            withContext(Dispatchers.Main) {
+                                                                Toast.makeText(this@MainActivity, "Failed to download outpass", Toast.LENGTH_SHORT).show()
+                                                                onReady(null)
+                                                            }
                                                         }
-
-                                                    val uri =
-                                                        resolver.insert(
-                                                            collection,
-                                                            values
-                                                        )
-
-                                                    if (uri == null) {
-
-                                                        throw Exception(
-                                                            "Failed creating MediaStore entry"
-                                                        )
-                                                    }
-
-                                                    resolver.openOutputStream(uri)?.use { output ->
-
-                                                        tempFile.inputStream().use { input ->
-
-                                                            input.copyTo(output)
+                                                    } catch (e: Exception) {
+                                                        withContext(Dispatchers.Main) {
+                                                            Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                                                            onReady(null)
                                                         }
-                                                    }
-
-                                                    withContext(Dispatchers.Main) {
-
-                                                        NotificationHelper
-                                                            .showDownloadNotificationFromUri(
-                                                                context = this@MainActivity,
-                                                                uri = uri,
-                                                                fileName = fileName,
-                                                                title = "Outpass Downloaded",
-                                                                description = "Tap to open $fileName"
-                                                            )
-
-                                                        Toast.makeText(
-                                                            this@MainActivity,
-                                                            "Outpass saved to Downloads",
-                                                            Toast.LENGTH_SHORT
-                                                        ).show()
-
-                                                        onReady(tempFile)
-                                                    }
-
-                                                } else {
-
-                                                    withContext(Dispatchers.Main) {
-
-                                                        Toast.makeText(
-                                                            this@MainActivity,
-                                                            "Failed to download outpass",
-                                                            Toast.LENGTH_SHORT
-                                                        ).show()
-
-                                                        onReady(null)
                                                     }
                                                 }
+                                            }
 
-                                            } catch (e: Exception) {
+                                            override fun onWeekendSubmit(place: String, purpose: String, date: String, time: String, contact: String) {
+                                                lifecycleScope.launch(Dispatchers.IO) {
+                                                    try {
+                                                        val creds = Vault.getCredentials(this@MainActivity)
+                                                        val regNo = Vault.getRegNo(this@MainActivity)
+                                                        val client = VtopClient(this@MainActivity, creds[0]!!, creds[1]!!)
+                                                        client.setAuthorizedId(regNo)
+                                                        val success = client.submitWeekendOuting(place, purpose, date, time, contact)
 
-                                                withContext(Dispatchers.Main) {
+                                                        withContext(Dispatchers.Main) {
+                                                            Toast.makeText(this@MainActivity, if (success) "Weekend Request Submitted!" else "Submission Failed", Toast.LENGTH_LONG).show()
+                                                            if (success) { lifecycleScope.launch { GlobalSyncer.performSync(this@MainActivity) } }
+                                                        }
+                                                    } catch (_: Exception) { withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error during submission", Toast.LENGTH_SHORT).show() } }
+                                                }
+                                            }
 
-                                                    Toast.makeText(
-                                                        this@MainActivity,
-                                                        "Error: ${e.message}",
-                                                        Toast.LENGTH_LONG
-                                                    ).show()
+                                            override fun onGeneralSubmit(place: String, purpose: String, fromDate: String, toDate: String, fromTime: String, toTime: String) {
+                                                lifecycleScope.launch(Dispatchers.IO) {
+                                                    try {
+                                                        val creds = Vault.getCredentials(this@MainActivity)
+                                                        val regNo = Vault.getRegNo(this@MainActivity)
+                                                        val client = VtopClient(this@MainActivity, creds[0]!!, creds[1]!!)
+                                                        client.setAuthorizedId(regNo)
+                                                        val success = client.submitGeneralOuting(place, purpose, fromDate, toDate, fromTime, toTime)
 
-                                                    onReady(null)
+                                                        withContext(Dispatchers.Main) {
+                                                            Toast.makeText(this@MainActivity, if (success) "General Leave Submitted!" else "Submission Failed", Toast.LENGTH_LONG).show()
+                                                            if (success) { lifecycleScope.launch { GlobalSyncer.performSync(this@MainActivity) } }
+                                                        }
+                                                    } catch (_: Exception) { withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error during submission", Toast.LENGTH_SHORT).show() } }
+                                                }
+                                            }
+
+                                            override fun onDelete(id: String, isWeekend: Boolean) {
+                                                lifecycleScope.launch(Dispatchers.IO) {
+                                                    try {
+                                                        val creds = Vault.getCredentials(this@MainActivity)
+                                                        val regNo = Vault.getRegNo(this@MainActivity)
+                                                        val client = VtopClient(this@MainActivity, creds[0]!!, creds[1]!!)
+                                                        client.setAuthorizedId(regNo)
+                                                        val success = client.deleteOuting(id, isWeekend)
+
+                                                        withContext(Dispatchers.Main) {
+                                                            if (success) { Toast.makeText(this@MainActivity, "Leave Cancelled!", Toast.LENGTH_SHORT).show(); lifecycleScope.launch { GlobalSyncer.performSync(this@MainActivity) } }
+                                                            else { Toast.makeText(this@MainActivity, "Failed to cancel request.", Toast.LENGTH_SHORT).show() }
+                                                        }
+                                                    } catch (e: Exception) { withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_SHORT).show() } }
                                                 }
                                             }
                                         }
-                                    }
-
-                                    override fun onWeekendSubmit(place: String, purpose: String, date: String, time: String, contact: String) {
-                                        lifecycleScope.launch(Dispatchers.IO) {
-                                            try {
-                                                val creds = Vault.getCredentials(this@MainActivity)
-                                                val regNo = Vault.getRegNo(this@MainActivity)
-
-                                                val client = VtopClient(this@MainActivity, creds[0]!!, creds[1]!!)
-                                                client.setAuthorizedId(regNo)
-
-                                                val success = client.submitWeekendOuting(place, purpose, date, time, contact)
-
-                                                withContext(Dispatchers.Main) {
-                                                    Toast.makeText(this@MainActivity, if (success) "Weekend Request Submitted!" else "Submission Failed", Toast.LENGTH_LONG).show()
-                                                    if (success) { lifecycleScope.launch { GlobalSyncer.performSync(this@MainActivity) } }
-                                                }
-                                            } catch (_: Exception) { withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error during submission", Toast.LENGTH_SHORT).show() } }
-                                        }
-                                    }
-
-                                    override fun onGeneralSubmit(place: String, purpose: String, fromDate: String, toDate: String, fromTime: String, toTime: String) {
-                                        lifecycleScope.launch(Dispatchers.IO) {
-                                            try {
-                                                val creds = Vault.getCredentials(this@MainActivity)
-                                                val regNo = Vault.getRegNo(this@MainActivity)
-
-                                                val client = VtopClient(this@MainActivity, creds[0]!!, creds[1]!!)
-                                                client.setAuthorizedId(regNo)
-
-                                                val success = client.submitGeneralOuting(place, purpose, fromDate, toDate, fromTime, toTime)
-
-                                                withContext(Dispatchers.Main) {
-                                                    Toast.makeText(this@MainActivity, if (success) "General Leave Submitted!" else "Submission Failed", Toast.LENGTH_LONG).show()
-                                                    if (success) { lifecycleScope.launch { GlobalSyncer.performSync(this@MainActivity) } }
-                                                }
-                                            } catch (_: Exception) { withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error during submission", Toast.LENGTH_SHORT).show() } }
-                                        }
-                                    }
-
-                                    override fun onDelete(id: String, isWeekend: Boolean) {
-                                        lifecycleScope.launch(Dispatchers.IO) {
-                                            try {
-                                                val creds = Vault.getCredentials(this@MainActivity)
-                                                val regNo = Vault.getRegNo(this@MainActivity)
-
-                                                val client = VtopClient(this@MainActivity, creds[0]!!, creds[1]!!)
-                                                client.setAuthorizedId(regNo)
-
-                                                val success = client.deleteOuting(id, isWeekend)
-
-                                                withContext(Dispatchers.Main) {
-                                                    if (success) { Toast.makeText(this@MainActivity, "Leave Cancelled!", Toast.LENGTH_SHORT).show(); lifecycleScope.launch { GlobalSyncer.performSync(this@MainActivity) } }
-                                                    else { Toast.makeText(this@MainActivity, "Failed to cancel request.", Toast.LENGTH_SHORT).show() }
-                                                }
-                                            } catch (e: Exception) { withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_SHORT).show() } }
-                                        }
-                                    }
+                                    )
                                 }
-                            )
+
+                                // 2. SLIDING SUB-SCREENS
+                                composable(
+                                    route = "simulator",
+                                    enterTransition = { slideInVertically(initialOffsetY = { it }, animationSpec = tween(300)) + fadeIn() },
+                                    exitTransition = { slideOutVertically(targetOffsetY = { it }, animationSpec = tween(300)) + fadeOut() }
+                                ) {
+                                    val semInfo = Vault.getSelectedSemester(this@MainActivity)
+                                    val currentSemName = semInfo[1] ?: semInfo[0] ?: "Unknown Semester"
+                                    BunkSimulatorTab(
+                                        timetable = AppBridge.timetableState.value ?: TimetableModel(),
+                                        attendanceData = AppBridge.attendanceState.value ?: emptyList(),
+                                        selectedSemester = currentSemName,
+                                        onBack = { navController.popBackStack() }
+                                    )
+                                }
+
+                                composable(
+                                    route = "portal",
+                                    enterTransition = { slideInVertically(initialOffsetY = { it }, animationSpec = tween(300)) + fadeIn() },
+                                    exitTransition = { slideOutVertically(targetOffsetY = { it }, animationSpec = tween(300)) + fadeOut() }
+                                ) {
+                                    val creds = Vault.getCredentials(this@MainActivity)
+                                    val client = remember { VtopClient(this@MainActivity, creds[0] ?: "", creds[1] ?: "") }
+                                    AppBridge.activeClient = client
+                                    VtopPortalScreen(vtopClient = client, onClose = { navController.popBackStack() })
+                                }
+
+                                composable(
+                                    route = "faculty",
+                                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
+                                ) {
+                                    FacultyScreen(facultyList = com.vtop.ui.screens.sub.loadFaculty(this@MainActivity))
+                                }
+
+                                composable(
+                                    route = "about",
+                                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
+                                ) {
+                                    AboutScreen(navController = navController)
+                                }
+
+                                composable(
+                                    route = "changelog",
+                                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
+                                ) {
+                                    ChangelogScreen(onBack = { navController.popBackStack() })
+                                }
+
+                                composable(
+                                    route = "licenses",
+                                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
+                                ) {
+                                    LicensesScreen(onBack = { navController.popBackStack() })
+                                }
+
+                                composable(
+                                    route = "academic_calendar",
+                                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
+                                ) {
+                                    AcademicCalendarScreen(onBack = { navController.popBackStack() })
+                                }
+
+                                composable(
+                                    route = "legal/{docType}",
+                                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
+                                ) { backStackEntry ->
+                                    val docTypeStr = backStackEntry.arguments?.getString("docType") ?: "PRIVACY_POLICY"
+                                    val docType = try {
+                                        LegalDocumentType.valueOf(docTypeStr)
+                                    } catch (e: Exception) {
+                                        LegalDocumentType.PRIVACY_POLICY
+                                    }
+                                    LegalDocumentScreen(type = docType, onBack = { navController.popBackStack() })
+                                }
+
+                                composable(
+                                    route = "analytics",
+                                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
+                                ) {
+                                    // Fallback blank screen in case it's triggered, pops immediately to prevent crash
+                                    LaunchedEffect(Unit) { navController.popBackStack() }
+                                }
+                            }
                         } else {
                             VtopSplashScreen()
                         }
@@ -574,7 +550,6 @@ class MainActivity : ComponentActivity() {
                                     if (!updateInfo?.releaseNotes.isNullOrBlank()) {
                                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
                                         Text(text = "Release Notes:", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
-                                        // Replaces \n literals coming from Firebase with true line breaks!
                                         Markdown(content = updateInfo!!.releaseNotes.replace("\\n", "\n"), modifier = Modifier.fillMaxWidth())
                                     }
                                 }
@@ -597,7 +572,15 @@ fun VtopSplashScreen() {
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Box(modifier = Modifier.size(80.dp).background(MaterialTheme.colorScheme.surface, CircleShape).border(2.dp, AppColors.glassBorder, CircleShape), contentAlignment = Alignment.Center) { Text(text = "V", color = MaterialTheme.colorScheme.primary, fontSize = 36.sp, fontWeight = FontWeight.Black) }
+            Box(
+                modifier = Modifier
+                    .size(80.dp)
+                    .background(MaterialTheme.colorScheme.surface, CircleShape)
+                    .border(2.dp, AppColors.glassBorder, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(text = "⚡", fontSize = 36.sp)
+            }
             Spacer(modifier = Modifier.height(24.dp))
             Text(text = "VTOP", color = MaterialTheme.colorScheme.onBackground, fontSize = 24.sp, fontWeight = FontWeight.Black, letterSpacing = 4.sp)
             Spacer(modifier = Modifier.height(32.dp))
@@ -608,221 +591,58 @@ fun VtopSplashScreen() {
 
 @Composable
 fun UiverseLoader() {
-
-    val barWidth = remember {
-        androidx.compose.animation.core.Animatable(16f)
-    }
-
-    val barOffset = remember {
-        androidx.compose.animation.core.Animatable(0f)
-    }
-
-    val textOffset = remember {
-        androidx.compose.animation.core.Animatable(0f)
-    }
-
-    val letterSpacing = remember {
-        androidx.compose.animation.core.Animatable(1f)
-    }
-
-    // =====================================================
-    // MAIN LOOP
-    // =====================================================
+    val barWidth = remember { androidx.compose.animation.core.Animatable(16f) }
+    val barOffset = remember { androidx.compose.animation.core.Animatable(0f) }
+    val textOffset = remember { androidx.compose.animation.core.Animatable(0f) }
+    val letterSpacing = remember { androidx.compose.animation.core.Animatable(1f) }
 
     LaunchedEffect(Unit) {
-
         while (true) {
-
-            // =============================================
-            // PHASE 1
-            // =============================================
-
-            launch {
-
-                barWidth.animateTo(
-                    targetValue = 80f,
-                    animationSpec = tween(1400)
-                )
-            }
-
-            launch {
-
-                textOffset.animateTo(
-                    targetValue = 26f,
-                    animationSpec = tween(1400)
-                )
-            }
-
-            launch {
-
-                letterSpacing.animateTo(
-                    targetValue = 2f,
-                    animationSpec = tween(1400)
-                )
-            }
-
+            launch { barWidth.animateTo(targetValue = 80f, animationSpec = tween(1400)) }
+            launch { textOffset.animateTo(targetValue = 26f, animationSpec = tween(1400)) }
+            launch { letterSpacing.animateTo(targetValue = 2f, animationSpec = tween(1400)) }
             kotlinx.coroutines.delay(1400)
 
-            // =============================================
-            // PHASE 2
-            // =============================================
-
-            launch {
-
-                barWidth.animateTo(
-                    targetValue = 16f,
-                    animationSpec = tween(1400)
-                )
-            }
-
-            launch {
-
-                barOffset.animateTo(
-                    targetValue = 64f,
-                    animationSpec = tween(1400)
-                )
-            }
-
-            launch {
-
-                textOffset.animateTo(
-                    targetValue = 32f,
-                    animationSpec = tween(1400)
-                )
-            }
-
-            launch {
-
-                letterSpacing.animateTo(
-                    targetValue = 1f,
-                    animationSpec = tween(1400)
-                )
-            }
-
+            launch { barWidth.animateTo(targetValue = 16f, animationSpec = tween(1400)) }
+            launch { barOffset.animateTo(targetValue = 64f, animationSpec = tween(1400)) }
+            launch { textOffset.animateTo(targetValue = 32f, animationSpec = tween(1400)) }
+            launch { letterSpacing.animateTo(targetValue = 1f, animationSpec = tween(1400)) }
             kotlinx.coroutines.delay(1400)
 
-            // =============================================
-            // RESET
-            // =============================================
-
-            launch {
-
-                barWidth.animateTo(
-                    targetValue = 80f,
-                    animationSpec = tween(350)
-                )
-            }
-
-            launch {
-
-                barOffset.animateTo(
-                    targetValue = 0f,
-                    animationSpec = tween(350)
-                )
-            }
-
-            launch {
-
-                textOffset.animateTo(
-                    targetValue = 0f,
-                    animationSpec = tween(350)
-                )
-            }
-
-            launch {
-
-                letterSpacing.animateTo(
-                    targetValue = 2f,
-                    animationSpec = tween(350)
-                )
-            }
-
+            launch { barWidth.animateTo(targetValue = 80f, animationSpec = tween(350)) }
+            launch { barOffset.animateTo(targetValue = 0f, animationSpec = tween(350)) }
+            launch { textOffset.animateTo(targetValue = 0f, animationSpec = tween(350)) }
+            launch { letterSpacing.animateTo(targetValue = 2f, animationSpec = tween(350)) }
             kotlinx.coroutines.delay(350)
 
-            // =============================================
-            // FINAL RESET
-            // =============================================
-
-            launch {
-
-                barWidth.animateTo(
-                    targetValue = 16f,
-                    animationSpec = tween(350)
-                )
-            }
-
-            launch {
-
-                letterSpacing.animateTo(
-                    targetValue = 1f,
-                    animationSpec = tween(350)
-                )
-            }
-
+            launch { barWidth.animateTo(targetValue = 16f, animationSpec = tween(350)) }
+            launch { letterSpacing.animateTo(targetValue = 1f, animationSpec = tween(350)) }
             kotlinx.coroutines.delay(350)
         }
     }
 
-    Box(
-        modifier = Modifier
-            .width(80.dp)
-            .height(50.dp)
-    ) {
-
-        // =================================================
-        // TEXT
-        // =================================================
-
+    Box(modifier = Modifier.width(80.dp).height(50.dp)) {
         Text(
-
             text = "loading",
-
             color = MaterialTheme.colorScheme.primary,
-
             fontSize = 12.sp,
-
             letterSpacing = letterSpacing.value.sp,
-
-            modifier = Modifier.offset(
-                x = textOffset.value.dp
-            )
+            modifier = Modifier.offset(x = textOffset.value.dp)
         )
-
-        // =================================================
-        // MAIN BAR
-        // =================================================
-
         Box(
-
             modifier = Modifier
-
-                .offset(
-                    x = barOffset.value.dp,
-                    y = 30.dp
-                )
-
+                .offset(x = barOffset.value.dp, y = 30.dp)
                 .width(barWidth.value.dp)
-
                 .height(16.dp)
-
                 .clip(RoundedCornerShape(50.dp))
-
                 .background(MaterialTheme.colorScheme.primary)
         ) {
-
             Box(
-
                 modifier = Modifier
-
                     .fillMaxHeight()
-
                     .fillMaxWidth(0.8f)
-
                     .clip(RoundedCornerShape(50.dp))
-
-                    .background(
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
-                    )
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
             )
         }
     }

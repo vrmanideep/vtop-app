@@ -25,8 +25,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -43,6 +41,7 @@ import androidx.compose.material.pullrefresh.pullRefresh
 import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,13 +60,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.glance.appwidget.updateAll
+import androidx.navigation.NavController
 import com.composables.icons.lucide.*
 import com.vtop.models.*
 import com.vtop.ui.core.*
-import com.vtop.ui.screens.portal.VtopPortalScreen
-import com.vtop.ui.screens.sub.BunkSimulatorTab
-import com.vtop.ui.screens.sub.FacultyScreen
-import com.vtop.ui.screens.sub.loadFaculty
 import com.vtop.ui.theme.AppColors
 import com.vtop.ui.theme.AppThemeMode
 import com.vtop.ui.theme.DockPosition
@@ -78,12 +74,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.roundToInt
-import com.vtop.ui.screens.sub.AboutScreen
 
 @OptIn(ExperimentalMaterialApi::class)
 @SuppressLint("NewApi")
 @Composable
 fun MainScreen(
+    navController: NavController,
     initialShortcutAction: String? = null,
     timetable: TimetableModel,
     attendanceData: List<AttendanceModel>,
@@ -116,6 +112,12 @@ fun MainScreen(
         }
     }
 
+    LaunchedEffect(initialShortcutAction) {
+        if (initialShortcutAction == "com.vtop.SHORTCUT_SIMULATOR") {
+            navController.navigate("simulator")
+        }
+    }
+
     var navStyle by remember {
         mutableStateOf(
             Vault.getNavStyle(context)
@@ -140,10 +142,10 @@ fun MainScreen(
         navItems.indexOf("OUTINGS")
     } else 0
 
-    var currentTab by remember { mutableStateOf(navItems[initialPage]) }
-    val coroutineScope = rememberCoroutineScope()
+    // THE FIX: Use rememberSaveable to persist the active tab across navigation
+    var currentTab by rememberSaveable { mutableStateOf(navItems[initialPage]) }
 
-    var activeOverlay by remember { mutableStateOf<String?>(if (initialShortcutAction == "com.vtop.SHORTCUT_SIMULATOR") "SIMULATOR" else null) }
+    val coroutineScope = rememberCoroutineScope()
 
     val handleSyncAndUpdateWidget = { screen: String, forceNewSession: Boolean ->
         onSyncClick(screen, forceNewSession)
@@ -153,20 +155,19 @@ fun MainScreen(
         Unit
     }
 
-    BackHandler(enabled = activeOverlay != null || currentTab != "HOME") {
-        if (activeOverlay != null) {
-            activeOverlay = null
-        } else {
-            currentTab = "HOME"
-        }
+    BackHandler(enabled = currentTab != "HOME") {
+        currentTab = "HOME"
     }
 
     val config = LocalConfiguration.current
     val density = LocalDensity.current
     val screenWidthPx = with(density) { config.screenWidthDp.dp.toPx() }
     val screenHeightPx = with(density) { config.screenHeightDp.dp.toPx() }
-    var offsetX by remember { mutableFloatStateOf(0f) }
-    var offsetY by remember { mutableFloatStateOf(0f) }
+
+    // THE FIX: Use rememberSaveable so your dock position doesn't reset either!
+    var offsetX by rememberSaveable { mutableFloatStateOf(0f) }
+    var offsetY by rememberSaveable { mutableFloatStateOf(0f) }
+
     val isRefreshing by remember { derivedStateOf { AppBridge.syncStatus.value != "IDLE" } }
 
     val pullRefreshState = rememberPullRefreshState(
@@ -207,7 +208,6 @@ fun MainScreen(
                                 val selectedSemName = selectedSemInfo[1] ?: ""
                                 var matchedSemester: org.json.JSONObject? = null
 
-                                // THE FIX: Fuzzy matching. Checks ID, or exact Key, or selected Name.
                                 root.keys().forEach { key ->
                                     if (key != "blocked_dates" && key != "semester") {
                                         val obj = root.optJSONObject(key)
@@ -238,7 +238,10 @@ fun MainScreen(
                         )
                     }
                     "ATTENDANCE" -> {
-                        Attendance(attendanceData = attendanceData, onLaunchSimulator = { activeOverlay = "SIMULATOR" })
+                        Attendance(
+                            attendanceData = attendanceData,
+                            onLaunchSimulator = { navController.navigate("simulator") }
+                        )
                     }
                     "EXAMS" -> {
                         Exams(examsData)
@@ -261,7 +264,7 @@ fun MainScreen(
                             onBack = { currentTab = "HOME" },
                             timetable = timetable,
                             examsData = examsData,
-                            onOpenPortal = { activeOverlay = "PORTAL" },
+                            onOpenPortal = { navController.navigate("portal") },
                             currentTheme = ThemeManager.themeMode.value,
                             onThemeChange = { ThemeManager.themeMode.value = it },
                             useDynamicColor = ThemeManager.useDynamicColor.value,
@@ -289,11 +292,12 @@ fun MainScreen(
                             onCredentialsSave = { _, _ -> },
                             reminders = reminders,
                             onDeleteReminder = {},
-                            onNavigateToAnalytics = { activeOverlay = "ANALYTICS" },
+                            onNavigateToAnalytics = { navController.navigate("analytics") },
+                            onNavigateToAcademicCalendar = { navController.navigate("academic_calendar") },
+                            onNavigateToAbout = { navController.navigate("about") },
                             lastSyncTime = Vault.getLastSyncTimestamp(context).toString(),
                             onSyncClick = { handleSyncAndUpdateWidget(currentTab, it) },
-                            onNavigateToFaculty = { activeOverlay = "FACULTY" },
-                            onNavigateToAbout = {activeOverlay = "ABOUT"}
+                            onNavigateToFaculty = { navController.navigate("faculty") }
                         )
                     }
                 }
@@ -361,39 +365,6 @@ fun MainScreen(
             }
         }
 
-        AnimatedVisibility(
-            visible = activeOverlay != null,
-            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-            modifier = Modifier.fillMaxSize().zIndex(50f)
-        ) {
-            Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                when (activeOverlay) {
-                    "SIMULATOR" -> {
-                        val semInfo = Vault.getSelectedSemester(context)
-                        val currentSemName = semInfo[1] ?: semInfo[0] ?: "Unknown Semester"
-                        BunkSimulatorTab(timetable = timetable, attendanceData = attendanceData, selectedSemester = currentSemName, onBack = { activeOverlay = null })
-                    }
-                    "PORTAL" -> {
-                        val creds = Vault.getCredentials(context)
-                        val client = remember { com.vtop.network.VtopClient(context, creds[0] ?: "", creds[1] ?: "") }
-                        AppBridge.activeClient = client
-                        VtopPortalScreen(vtopClient = client, onClose = { activeOverlay = null })
-                    }
-                    "FACULTY" -> {
-                        FacultyScreen(facultyList = loadFaculty(LocalContext.current))
-                    }
-                    "ABOUT" -> {
-                        AboutScreen(
-                            onBack = {
-                                activeOverlay = null
-                            }
-                        )
-                    }
-                }
-            }
-        }
-
         val otpResolver = AppBridge.currentOtpResolver.value
         if (otpResolver != null) {
             var showCancelConfirm by remember { mutableStateOf(false) }
@@ -410,7 +381,9 @@ fun MainScreen(
                                 otpResolver.cancel()
                                 AppBridge.currentOtpResolver.value = null
                                 GlobalSyncer.cancelActiveSync()
-                                if (activeOverlay == "PORTAL") { activeOverlay = null }
+
+                                navController.popBackStack()
+
                                 coroutineScope.launch {
                                     val profileIndex = navItems.indexOf("PROFILE")
                                     if (profileIndex != -1) currentTab = "PROFILE"
@@ -458,7 +431,6 @@ fun GlobalTopBar(
     val syncStatus by AppBridge.syncStatus
     var subtitleText by remember { mutableStateOf("Loading...") }
 
-    // THE FIX: Added a ticking loop when the app is IDLE
     LaunchedEffect(syncStatus) {
         if (syncStatus != "IDLE") {
             subtitleText = syncStatus
@@ -476,7 +448,7 @@ fun GlobalTopBar(
                         else -> "Synced ${diffMinutes / 1440L} days ago"
                     }
                 }
-                delay(60_000L) // Wait exactly 1 minute, then recalculate the text
+                delay(60_000L)
             }
         }
     }
