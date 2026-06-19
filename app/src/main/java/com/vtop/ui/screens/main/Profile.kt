@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -58,7 +57,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -80,7 +78,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -88,13 +85,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.composables.icons.lucide.Github
-import com.composables.icons.lucide.LogOut
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.UserRound
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
-import com.mikepenz.markdown.m3.Markdown
 import com.vtop.BuildConfig
 import com.vtop.models.ExamScheduleModel
 import com.vtop.models.SemesterOption
@@ -102,14 +96,9 @@ import com.vtop.models.TimetableModel
 import com.vtop.ui.core.CalendarInfo
 import com.vtop.ui.core.CalendarSync
 import com.vtop.ui.core.CourseReminder
-import com.vtop.ui.screens.sub.AcademicCalendarScreen
 import com.vtop.ui.theme.AppThemeMode
-import com.vtop.utils.UpdateInfo
-import com.vtop.utils.UpdateManager
 import com.vtop.utils.AnalyticsManager
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -125,6 +114,7 @@ private fun formatReminderDate(dateStr: String): String {
         if (d != null) outFormat.format(d) else dateStr
     } catch (e: Exception) { dateStr }
 }
+
 private fun formatLastSync(timestamp: Long): String {
     if (timestamp <= 0L) return "Never synced"
     val diff = System.currentTimeMillis() - timestamp
@@ -171,6 +161,7 @@ fun Profile(
     reminders: List<CourseReminder>,
     onDeleteReminder: (String) -> Unit,
     onNavigateToAnalytics: () -> Unit,
+    onNavigateToAcademicCalendar: () -> Unit,
     onNavigateToAbout: () -> Unit,
     lastSyncTime: String,
     onSyncClick: (Boolean) -> Unit,
@@ -179,15 +170,8 @@ fun Profile(
     LaunchedEffect(Unit) {
         AnalyticsManager.logScreenView("Profile_Screen")
     }
-    var isViewingAcademicCalendar by remember { mutableStateOf(false) }
-
-    if (isViewingAcademicCalendar) {
-        AcademicCalendarScreen(onBack = { isViewingAcademicCalendar = false })
-        return
-    }
 
     val context = LocalContext.current
-    val uriHandler = LocalUriHandler.current
     val coroutineScope = rememberCoroutineScope()
     val sharedPrefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
 
@@ -251,11 +235,6 @@ fun Profile(
     var showThemeDialog by remember { mutableStateOf(false) }
     var showCredDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
-    var showAboutSheet by remember { mutableStateOf(false) }
-
-    var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
-    var isCheckingUpdate by remember { mutableStateOf(false) }
-    var isDownloadingUpdate by remember { mutableStateOf(false) }
 
     // --- AUTO SYNC STATE ---
     var autoSyncInterval by remember { mutableIntStateOf(sharedPrefs.getInt("AUTO_SYNC_INTERVAL", 8)) }
@@ -293,7 +272,7 @@ fun Profile(
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
-                    .clickable { isViewingAcademicCalendar = true }
+                    .clickable { onNavigateToAcademicCalendar() }
                     .padding(horizontal = 8.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -788,63 +767,6 @@ fun Profile(
     }
 
     // --- DIALOGS & BOTTOM SHEETS ---
-    if (showAboutSheet) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(onDismissRequest = { showAboutSheet = false }, sheetState = sheetState, containerColor = MaterialTheme.colorScheme.surface) {
-            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(modifier = Modifier.size(64.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), CircleShape), contentAlignment = Alignment.Center) {
-                    Text("⚡", fontSize = 32.sp)
-                }
-                Spacer(Modifier.height(16.dp))
-                Text("VTOP App", fontSize = 22.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
-                Text("Version ${BuildConfig.VERSION_NAME}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(32.dp))
-                Button(
-                    onClick = {
-                        AnalyticsManager.logEvent("Checked_For_Updates")
-                        if (!isCheckingUpdate && !isDownloadingUpdate) {
-                            isCheckingUpdate = true
-                            coroutineScope.launch {
-                                val info = UpdateManager.checkForUpdates()
-                                if (info.isUpdateAvailable) {
-                                    updateInfo = info
-                                } else {
-                                    withContext(Dispatchers.Main) {
-                                        Toast.makeText(context, "You are on the latest version!", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                                isCheckingUpdate = false
-                            }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth().height(54.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    val actionText = when {
-                        isDownloadingUpdate -> "Downloading Update..."
-                        isCheckingUpdate -> "Checking for Updates..."
-                        else -> "Check for Updates"
-                    }
-                    Text(actionText, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                }
-                Spacer(Modifier.height(12.dp))
-                Button(
-                    onClick = { uriHandler.openUri("https://github.com/vrmanideep/vtop-app") },
-                    modifier = Modifier.fillMaxWidth().height(54.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurface),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Icon(Lucide.Github, contentDescription = "GitHub", modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("View on GitHub", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                }
-                Spacer(Modifier.height(32.dp))
-                Text("Developed with ❤️ by Mani", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Medium)
-            }
-        }
-    }
-
     if (showCalendarSheet) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         var selectedCalendarId by remember { mutableLongStateOf(availableCalendars.firstOrNull()?.id ?: -1L) }
@@ -909,38 +831,6 @@ fun Profile(
                 dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
             ) { DatePicker(state = datePickerState) }
         }
-    }
-
-    if (updateInfo != null) {
-        AlertDialog(
-            onDismissRequest = { updateInfo = null },
-            title = {
-                Column {
-                    Text("Update Available", fontWeight = FontWeight.Black, fontSize = 20.sp)
-                    if (!updateInfo?.releaseTitle.isNullOrBlank()) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(text = updateInfo!!.releaseTitle, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                    }
-                }
-            },
-            text = {
-                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 350.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(text = "Version ${updateInfo?.latestVersion} is ready to download.", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
-                    if (!updateInfo?.releaseNotes.isNullOrBlank()) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                        Text(text = "Release Notes:", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        Markdown(content = updateInfo!!.releaseNotes.replace("\\n", "\n"), modifier = Modifier.fillMaxWidth())
-                    }
-                }
-            },
-            confirmButton = {
-                Button(onClick = { isDownloadingUpdate = true; UpdateManager.downloadAndInstallUpdate(context, updateInfo!!.downloadUrl, updateInfo!!.latestVersion); updateInfo = null }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
-                    Text("Update Now", fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = { TextButton(onClick = { updateInfo = null }) { Text("Later", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
-            containerColor = MaterialTheme.colorScheme.surface
-        )
     }
 
     if (showThemeDialog) {

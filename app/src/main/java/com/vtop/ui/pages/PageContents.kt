@@ -25,10 +25,14 @@ fun HomePageContent(
 
 @Composable
 fun AttendancePageContent(
-    attendanceData: List<AttendanceModel>
+    attendanceData: List<AttendanceModel>,
+    onLaunchSimulator: () -> Unit
 ) {
 
-    Attendance(attendanceData)
+    Attendance(
+        attendanceData = attendanceData,
+        onLaunchSimulator = onLaunchSimulator
+    )
 }
 
 @Composable
@@ -98,6 +102,7 @@ fun ProfilePageContent(
     reminders: List<CourseReminder>,
     onDeleteReminder: (String) -> Unit,
     onNavigateToAnalytics: () -> Unit,
+    onNavigateToAcademicCalendar: () -> Unit,
     lastSyncTime: String,
     onSyncClick: (Boolean) -> Unit,
     onNavigateToFaculty: () -> Unit,
@@ -134,9 +139,10 @@ fun ProfilePageContent(
         reminders = reminders,
         onDeleteReminder = onDeleteReminder,
         onNavigateToAnalytics = onNavigateToAnalytics,
+        onNavigateToAcademicCalendar = onNavigateToAcademicCalendar,
+        onNavigateToAbout = onNavigateToAbout,
         lastSyncTime = lastSyncTime,
         onSyncClick = onSyncClick,
-        onNavigateToFaculty = onNavigateToFaculty,
-        onNavigateToAbout = onNavigateToAbout,
+        onNavigateToFaculty = onNavigateToFaculty
     )
 }
