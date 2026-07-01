@@ -91,8 +91,6 @@ fun calculateBunkBudget(attended: Int, total: Int, target: Float = 0.75f): BunkS
 
 @Composable
 fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
-    // Use values directly from AttendanceModel
-
 
     val attended =
         item.attendedClasses.toIntOrNull() ?: 0
@@ -140,12 +138,28 @@ fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "${item.courseCode} · $categoryLabel",
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = item.courseCode ?: "",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = categoryLabel,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(text = "$percentage%", color = statusColor, fontSize = 20.sp, fontWeight = FontWeight.Black)
             }
@@ -178,8 +192,11 @@ fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
 private fun BunkPredictorChip(bunkState: BunkState) {
     val (statusText, isDangerous) = when (bunkState) {
         is BunkState.Safe -> {
-            val dangerText = if (bunkState.canMiss == 0) " · Danger" else ""
-            "Can skip ${bunkState.canMiss} more$dangerText" to (bunkState.canMiss == 0)
+            if (bunkState.canMiss == 0) {
+                "Cannot skip anymore" to true
+            } else {
+                "Can skip ${bunkState.canMiss} more" to false
+            }
         }
         is BunkState.AtRisk -> "Must attend ${bunkState.mustAttend} more" to true
         BunkState.NoData -> "" to false
