@@ -98,6 +98,7 @@ import com.vtop.models.TimetableModel
 import com.vtop.ui.core.CourseReminder
 import com.vtop.ui.core.ReminderManager
 import com.vtop.utils.AnalyticsManager
+import com.vtop.utils.Vault
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -259,7 +260,7 @@ fun Timetable(
     timetable: TimetableModel,
     attendanceData: List<AttendanceModel>,
     examsData: List<ExamScheduleModel> = emptyList(),
-    holidays: Map<String, String> = emptyMap()
+    holidays: Map<String, String> = emptyMap() // Left for backwards compatibility, ignored internally
 ) {
     LaunchedEffect(Unit) { AnalyticsManager.logScreenView("Timetable_Screen") }
     val context = LocalContext.current
@@ -287,22 +288,61 @@ fun Timetable(
         }
     }
 
-    // THE FIX: Normalized String map that maps "yyyy-MM-dd" -> "Name" to absolutely prevent Timezone bugs
-    val normalizedHolidays = remember(holidays) {
-        val formats = listOf("yyyy-MM-dd", "dd-MMM-yyyy", "dd/MM/yyyy", "dd-MM-yyyy", "MMM dd, yyyy")
-        val standardSdf = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
-        holidays.mapNotNull { (dateStr, name) ->
-            var d: Date? = null
-            for (f in formats) {
+    // --- NEW DYNAMIC HOLIDAY LOGIC ---
+    val selectedSemId = remember { Vault.getSelectedSemester(context)[0] }
+    val academicEvents = remember(selectedSemId) { Vault.getAcademicCalendar(context, selectedSemId) }
+
+    val normalizedHolidays = remember(academicEvents) {
+        val holidayMap = mutableMapOf<String, String>()
+        val sdfParse = SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH)
+        val sdfKey = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
+
+        academicEvents.forEach { event ->
+            val title = event.particulars ?: ""
+
+            val isHoliday = title.contains("Holiday", true) ||
+                    title.contains("no instructional", true) ||
+                    title.contains("non instructional", true) ||
+                    title.contains("VITOPIA", true)
+
+            if (isHoliday) {
                 try {
-                    val sdf = SimpleDateFormat(f, Locale.ENGLISH).apply { isLenient = false }
-                    d = sdf.parse(dateStr.trim())
-                    if (d != null) break
+                    val date = sdfParse.parse(event.date)
+                    if (date != null) {
+                        val cal = Calendar.getInstance().apply { time = date }
+                        val isSunday = cal.get(Calendar.DAY_OF_WEEK) == Calendar.SUNDAY
+                        val isMonday = cal.get(Calendar.DAY_OF_WEEK) == Calendar.MONDAY
+
+                        val isGenericPlaceholder = title.equals("Holiday", ignoreCase = true) ||
+                                title.equals("Holiday (Holiday)", ignoreCase = true) ||
+                                title.contains("Sunday", ignoreCase = true) ||
+                                title.contains("Instructional Day (Holiday)", ignoreCase = true) ||
+                                title.contains("No Instructional", ignoreCase = true)
+
+                        val dropGenericMonday = isMonday && (
+                                title.equals("No Instructional Day (Non Instructional Day)", ignoreCase = true) ||
+                                        title.equals("No Instructional Day (No Instructional Day)", ignoreCase = true)
+                                )
+
+                        if (!(isSunday && isGenericPlaceholder) && !dropGenericMonday) {
+                            var cleanTitle = title.replace(" - General (Semester)", "")
+                                .replace(" - Combined", "")
+                                .replace(" (Holiday)", "", ignoreCase = true)
+                                .replace("\n", " ")
+                                .replace(Regex("\\s+"), " ")
+                                .trim()
+
+                            if (cleanTitle.contains("VITOPIA", ignoreCase = true)) cleanTitle = "VITOPIA"
+
+                            holidayMap[sdfKey.format(date)] = cleanTitle
+                        }
+                    }
                 } catch (e: Exception) {}
             }
-            if (d != null) standardSdf.format(d) to name else null
-        }.toMap()
+        }
+        holidayMap
     }
+    // ---------------------------------
 
     var expandedDateStr by remember { mutableStateOf(todayDateStr) }
     var selectedCourse by remember { mutableStateOf<ProcessedCourse?>(null) }
@@ -347,8 +387,8 @@ fun Timetable(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                    NextClassCard(timetable, allReminders, sortedExams, normalizedHolidays, currentTimeStr)
-                }
+                NextClassCard(timetable, allReminders, sortedExams, normalizedHolidays, currentTimeStr)
+            }
 
 
             itemsIndexed(timelineDates) { index, dateCal ->
@@ -475,7 +515,7 @@ fun NextClassCard(
     allReminders: List<CourseReminder>,
     sortedExams: List<Pair<String, ExamScheduleModel>>,
     normalizedHolidays: Map<String, String>,
-    currentTimeStr: String // Added parameter
+    currentTimeStr: String
 ) {
     val context = LocalContext.current
     val sharedPrefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
@@ -484,7 +524,6 @@ fun NextClassCard(
     val themeOnSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
     val sdfDateKey = remember { SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH) }
 
-    // Added currentTimeStr as a key so it recalculates when the minute changes
     val nextEvent: Pair<Any, Pair<String, Color>>? = remember(timetable, sortedExams, normalizedHolidays, currentTimeStr) {
         val mergeLabs = sharedPrefs.getBoolean("MERGE_LABS", true)
         val cal = Calendar.getInstance()
@@ -498,7 +537,6 @@ fun NextClassCard(
             return@remember Pair(holidayToday, "HOLIDAY TODAY" to Color(0xFF10B981))
         }
 
-        // FIX: Force Locale.ENGLISH so it matches VTOP's keys (e.g., "Monday") regardless of device language
         val todayStr = SimpleDateFormat("EEEE", Locale.ENGLISH).format(cal.time)
         val todayCourses = processAndMergeCourses(timetable.scheduleMap.entries.firstOrNull { it.key.trim().equals(todayStr, ignoreCase = true) }?.value ?: emptyList(), mergeLabs)
         val nextToday = todayCourses.firstOrNull { getCourseTimeStatus(it.mergedTimeSlot, true, true) in listOf(TimeStatus.NEXT, TimeStatus.ONGOING) }
@@ -547,7 +585,6 @@ fun NextClassCard(
 
             if (normalizedHolidays.containsKey(searchStrKey)) continue
 
-            // FIX: Force Locale.ENGLISH here as well
             val futureDayStr = SimpleDateFormat("EEEE", Locale.ENGLISH).format(searchCal.time)
             val futureCourses = processAndMergeCourses(timetable.scheduleMap.entries.firstOrNull { it.key.trim().equals(futureDayStr, ignoreCase = true) }?.value ?: emptyList(), mergeLabs)
             if (futureCourses.isNotEmpty()) return@remember Pair(futureCourses.first(), (if (i == 1) "TOMORROW" else futureDayStr.uppercase()) to themeOnSurfaceVariant)
@@ -714,7 +751,7 @@ fun ExamRow(timetable: TimetableModel, dateCal: Calendar, exam: ExamScheduleMode
 @Composable
 fun TimetableRow(
     dateCal: Calendar, rawCourses: List<CourseSession>, allReminders: List<CourseReminder>,
-    isToday: Boolean, isExpanded: Boolean, alpha: Float, currentTimeStr: String, // Added parameter
+    isToday: Boolean, isExpanded: Boolean, alpha: Float, currentTimeStr: String,
     onExpandToggle: () -> Unit, onCourseClick: (ProcessedCourse) -> Unit
 ) {
     val context = LocalContext.current
@@ -723,7 +760,6 @@ fun TimetableRow(
     val mergeLabs = remember { sharedPrefs.getBoolean("MERGE_LABS", true) }
     val mergedCourses = remember(rawCourses, mergeLabs) { processAndMergeCourses(rawCourses, mergeLabs) }
 
-    // Re-evaluates live when isToday is true to animate status dots
     val courseStatuses = remember(mergedCourses, isToday, if (isToday) currentTimeStr else "") {
         var foundNextIndex = -1
         mergedCourses.mapIndexed { index, course ->
@@ -755,7 +791,6 @@ fun TimetableRow(
                 if (mergedCourses.isEmpty()) {
                     Text("No Classes 🎉", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp, horizontal = 8.dp))
                 } else {
-                    // FIX: Applied fillMaxWidth() and CenterHorizontally to center the tiles
                     LazyRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
