@@ -1,8 +1,6 @@
 @file:Suppress("SpellCheckingInspection", "UNUSED_VARIABLE")
 
 package com.vtop.ui.screens.main
-
-import com.vtop.models.SemesterOption
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.AlarmManager
@@ -63,6 +61,8 @@ import androidx.glance.appwidget.updateAll
 import androidx.navigation.NavController
 import com.composables.icons.lucide.*
 import com.vtop.models.*
+import com.vtop.network.*
+import com.vtop.telemetry.*
 import com.vtop.ui.core.*
 import com.vtop.ui.theme.AppColors
 import com.vtop.ui.theme.AppThemeMode
@@ -92,6 +92,7 @@ fun MainScreen(
 
     val context = LocalContext.current
     val sharedPrefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
+
 
     LaunchedEffect(examsData) {
         if (examsData.isNotEmpty()) {
@@ -142,8 +143,10 @@ fun MainScreen(
         navItems.indexOf("OUTINGS")
     } else 0
 
-    // THE FIX: Use rememberSaveable to persist the active tab across navigation
     var currentTab by rememberSaveable { mutableStateOf(navItems[initialPage]) }
+    var isProfileSubPage by rememberSaveable {
+        mutableStateOf(false)
+    }
 
     val coroutineScope = rememberCoroutineScope()
 
@@ -154,8 +157,9 @@ fun MainScreen(
         }
         Unit
     }
-
-    BackHandler(enabled = currentTab != "HOME") {
+    BackHandler(
+        enabled = currentTab != "HOME" && !isProfileSubPage
+    ) {
         currentTab = "HOME"
     }
 
@@ -260,6 +264,7 @@ fun MainScreen(
                     "PROFILE" -> {
                         val profileStateValue = AppBridge.profileState.value
                         val profileMap = remember(profileStateValue) { profileStateValue?.takeIf { it.isNotEmpty() } ?: Vault.getProfile(context) }
+                        val vtopClient = AppBridge.activeClient
                         Profile(
                             onBack = { currentTab = "HOME" },
                             timetable = timetable,
@@ -287,17 +292,17 @@ fun MainScreen(
                                 Vault.saveSelectedSemester(context, sem.id, sem.name)
                                 handleSyncAndUpdateWidget(currentTab, true)
                             },
+                            onProfilePageChanged = {
+                                isProfileSubPage = it
+                            },
                             currentRegNo = Vault.getCredentials(context)[0] ?: "",
                             currentPass = Vault.getCredentials(context)[1] ?: "",
                             onCredentialsSave = { _, _ -> },
                             reminders = reminders,
                             onDeleteReminder = {},
-                            onNavigateToAnalytics = { navController.navigate("analytics") },
-                            onNavigateToAcademicCalendar = { navController.navigate("academic_calendar") },
-                            onNavigateToAbout = { navController.navigate("about") },
                             lastSyncTime = Vault.getLastSyncTimestamp(context).toString(),
                             onSyncClick = { handleSyncAndUpdateWidget(currentTab, it) },
-                            onNavigateToFaculty = { navController.navigate("faculty") }
+                            vtopClient = AppBridge.activeClient
                         )
                     }
                 }
@@ -316,6 +321,7 @@ fun MainScreen(
             GlobalTopBar(
                 currentScreen = currentTab,
                 onProfileClick = { coroutineScope.launch { currentTab = "PROFILE" } },
+                isProfileSubPage = isProfileSubPage,
                 onExportTimetable = {
                     coroutineScope.launch {
                         try {
@@ -425,8 +431,10 @@ fun SemesterCompletedView() {
 fun GlobalTopBar(
     currentScreen: String,
     onProfileClick: () -> Unit,
-    onExportTimetable: () -> Unit = {}
+    onExportTimetable: () -> Unit = {},
+    isProfileSubPage: Boolean
 ) {
+    if (isProfileSubPage) return
     val context = LocalContext.current
     val syncStatus by AppBridge.syncStatus
     var subtitleText by remember { mutableStateOf("Loading...") }
@@ -496,7 +504,7 @@ fun GlobalTopBar(
                     fontWeight = FontWeight.Medium
                 )
             }
-            if (currentScreen != "PROFILE") {
+            if (currentScreen != "PROFILE" ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (currentScreen.uppercase(Locale.ROOT) == "HOME") {
                         IconButton(

@@ -71,7 +71,10 @@ fun loadFaculty(context: Context): List<FacultyModel> {
 }
 
 @Composable
-fun FacultyScreen(facultyList: List<FacultyModel>) {
+fun FacultyScreen(
+    facultyList: List<FacultyModel>,
+    onBack: () -> Unit = {}
+) {
     LaunchedEffect(Unit) {
         AnalyticsManager.logScreenView("Faculty_Screen")
     }

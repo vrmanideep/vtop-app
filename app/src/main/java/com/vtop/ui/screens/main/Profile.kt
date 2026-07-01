@@ -3,6 +3,7 @@ package com.vtop.ui.screens.main
 import android.Manifest
 import android.content.Context
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateContentSize
@@ -71,6 +72,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -96,6 +98,8 @@ import com.vtop.BuildConfig
 import com.vtop.models.ExamScheduleModel
 import com.vtop.models.SemesterOption
 import com.vtop.models.TimetableModel
+import com.vtop.network.VtopClient
+import com.vtop.telemetry.Telemetry
 import com.vtop.ui.core.CalendarInfo
 import com.vtop.ui.core.CalendarSync
 import com.vtop.ui.core.CourseReminder
@@ -103,13 +107,18 @@ import com.vtop.ui.theme.AppThemeMode
 import com.vtop.utils.AnalyticsManager
 import com.vtop.utils.UpdateInfo
 import com.vtop.utils.UpdateManager
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
+import com.vtop.ui.legal.*
+import com.vtop.ui.pages.ProfilePage
+import com.vtop.ui.screens.profile.LegalDocumentScreen
+import com.vtop.ui.screens.sub.*
+import androidx.compose.ui.platform.LocalContext
+import com.vtop.ui.core.AppBridge
+import com.vtop.ui.screens.portal.VtopPortalScreen
+import com.vtop.ui.screens.sub.loadFaculty
 
 private fun formatReminderDate(dateStr: String): String {
     return try {
@@ -138,6 +147,8 @@ private fun formatLastSync(timestamp: Long): String {
 @Composable
 fun Profile(
     onBack: () -> Unit,
+    initialPage: ProfilePage = ProfilePage.MAIN,
+    onProfilePageChanged: (Boolean) -> Unit = {},
     timetable: TimetableModel,
     examsData: List<ExamScheduleModel>,
     onOpenPortal: () -> Unit,
@@ -165,20 +176,51 @@ fun Profile(
     onCredentialsSave: (String, String) -> Unit,
     reminders: List<CourseReminder>,
     onDeleteReminder: (String) -> Unit,
-    onNavigateToAnalytics: () -> Unit,
-    onNavigateToAcademicCalendar: () -> Unit,
-    onNavigateToAbout: () -> Unit,
     lastSyncTime: String,
     onSyncClick: (Boolean) -> Unit,
-    onNavigateToFaculty: () -> Unit
+    vtopClient: VtopClient?
 ) {
     LaunchedEffect(Unit) {
         AnalyticsManager.logScreenView("Profile_Screen")
     }
 
+    var currentPage by rememberSaveable {
+        mutableStateOf(initialPage)
+    }
+    LaunchedEffect(currentPage) {
+        onProfilePageChanged(currentPage != ProfilePage.MAIN)
+    }
+
+
+
+
+    BackHandler(enabled = currentPage != ProfilePage.MAIN) {
+        currentPage = when (currentPage) {
+            ProfilePage.ABOUT -> ProfilePage.MAIN
+            ProfilePage.TELEMETRY -> ProfilePage.MAIN
+            ProfilePage.ACADEMIC_CALENDAR -> ProfilePage.MAIN
+            ProfilePage.FACULTY -> ProfilePage.MAIN
+            ProfilePage.PORTAL -> ProfilePage.MAIN
+
+            ProfilePage.CHANGELOG -> ProfilePage.ABOUT
+            ProfilePage.LICENSES -> ProfilePage.ABOUT
+            ProfilePage.LEGAL -> ProfilePage.ABOUT
+
+
+            ProfilePage.MAIN -> ProfilePage.MAIN
+        }
+    }
+
+    var selectedLegalDocument by rememberSaveable {
+        mutableStateOf(LegalDocumentType.PRIVACY_POLICY)
+    }
+
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val sharedPrefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
+    val facultyList = remember {
+        loadFaculty(context)
+    }
 
     var showCalendarSheet by remember { mutableStateOf(false) }
     var availableCalendars by remember { mutableStateOf<List<CalendarInfo>>(emptyList()) }
@@ -249,766 +291,905 @@ fun Profile(
     var syncDropdownExpanded by remember { mutableStateOf(false) }
     val syncOptions = mapOf(0 to "None", 1 to "1 hr", 2 to "2 hrs", 4 to "4 hrs", 8 to "8 hrs")
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(start = 20.dp, end = 20.dp, top = 96.dp, bottom = 40.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        // --- TOP BAR ---
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
+    when (currentPage) {
+        ProfilePage.MAIN -> {
+            Column(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
-                    .clickable { onBack() }
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                contentAlignment = Alignment.Center
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 20.dp, end = 20.dp, top = 96.dp, bottom = 40.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Go Back", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { onNavigateToAcademicCalendar() }
-                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Academic Calendar", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.width(4.dp))
-                Icon(Icons.AutoMirrored.Filled.ArrowForwardIos, contentDescription = "Open Calendar", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(10.dp))
-            }
-        }
-
-        // --- PROFILE HERO CARD ---
-        Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable {
-                    heroTapCount++
-                    if (heroTapCount >= 5) {
-                        val newStyle = if (currentNavStyle == "DOCK") "STATIC" else "DOCK"
-                        sharedPrefs.edit().putString("NAV_STYLE", newStyle).apply()
-                        onNavStyleChange(newStyle)
-                        Toast.makeText(context, "Nav style set to $newStyle", Toast.LENGTH_SHORT).show()
-                        heroTapCount = 0
-                    }
-                }
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+                // --- TOP BAR ---
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(56.dp)
-                            .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
-                            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), CircleShape),
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
+                            .clickable { onBack() }
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(initial, fontSize = 24.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(name, fontSize = 16.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
-                        Spacer(Modifier.height(2.dp))
-                        Text("$regNo · $branch", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(2.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("VIT-AP University", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
-                            Text(
-                                text = "Open VTOP ↗",
-                                color = MaterialTheme.colorScheme.primary,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .combinedClickable(
-                                        onClick = { onOpenPortal() },
-                                        onLongClick = {
-                                            onSyncClick(true)
-                                            onOpenPortal()
-                                        }
-                                    )
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Go Back", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
-                }
-            }
-        }
 
-        // --- ACCOUNT ACTIONS ---
-        SectionHeader("ACCOUNT")
-        CardGroup {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .combinedClickable(
-                        onClick = { onSyncClick(false) },
-                        onLongClick = { onSyncClick(true) }
-                    )
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Last Synced", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = formatLastSync(lastSyncTime.toLongOrNull() ?: 0L),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Box(modifier = Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), CircleShape).padding(8.dp)) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Sync", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                }
-            }
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-            SettingRow(
-                label = "Change Semester",
-                value = "Current: $selectedSemester",
-                actionText = "Switch",
-                onClick = { showSemesterDialog = true }
-            )
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-            SettingRow(
-                label = "Manage Credentials",
-                value = "Update VTOP password",
-                actionText = "Edit",
-                onClick = { showCredDialog = true }
-            )
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-
-            if (googleEmail.isNotBlank()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Linked Gmail for OTP", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(2.dp))
-                        Text(googleEmail, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    IconButton(onClick = {
-                        val client = com.vtop.utils.AuthHelper.getGoogleSignInClient(context, context.getString(context.resources.getIdentifier("default_web_client_id", "string", context.packageName)))
-                        client.signOut().addOnCompleteListener {
-                            com.vtop.utils.Vault.saveGoogleEmail(context, "")
-                            googleEmail = ""
-                            Toast.makeText(context, "Google Account Unlinked", Toast.LENGTH_SHORT).show()
-                        }
-                    }) {
-                        Icon(imageVector = Lucide.Link2Off, contentDescription = "Unlink Google", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
-                    }
-                }
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth().clickable {
-                        val client = com.vtop.utils.AuthHelper.getGoogleSignInClient(context, context.getString(context.resources.getIdentifier("default_web_client_id", "string", context.packageName)))
-                        googleSignInLauncher.launch(client.signInIntent)
-                    }.padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Linked Gmail for OTP", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(2.dp))
-                        Text("Link @vitapstudent.ac.in email", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 6.dp)
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { currentPage = ProfilePage.ACADEMIC_CALENDAR }
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Link", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.width(6.dp))
-                        Icon(imageVector = Lucide.Link, contentDescription = "Link Google", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                        Text("Academic Calendar", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.width(4.dp))
+                        Icon(Icons.AutoMirrored.Filled.ArrowForwardIos, contentDescription = "Open Calendar", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(10.dp))
                     }
                 }
-            }
-        }
 
-        // --- THE "MORE" ACCORDION ---
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
-            modifier = Modifier.fillMaxWidth().animateContentSize()
-        ) {
-            Column {
-                Row(
-                    modifier = Modifier.fillMaxWidth().clickable { isMoreExpanded = !isMoreExpanded }.padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text("More", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                        Spacer(Modifier.height(2.dp))
-                        Text("Calendar export, Auto Sync, Faculty", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Icon(imageVector = if (isMoreExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = "Expand/Collapse", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-
-                if (isMoreExpanded) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                    SettingRow(
-                        label = "Export to Google Calendar",
-                        value = "Add classes & exams to your calendar",
-                        actionText = "Sync",
-                        onClick = {
-                            calendarPermissionLauncher.launch(arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR))
+                // --- PROFILE HERO CARD ---
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            heroTapCount++
+                            if (heroTapCount >= 5) {
+                                val newStyle = if (currentNavStyle == "DOCK") "STATIC" else "DOCK"
+                                sharedPrefs.edit().putString("NAV_STYLE", newStyle).apply()
+                                onNavStyleChange(newStyle)
+                                Toast.makeText(context, "Nav style set to $newStyle", Toast.LENGTH_SHORT).show()
+                                heroTapCount = 0
+                            }
                         }
-                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
+                                    .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(initial, fontSize = 24.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(name, fontSize = 16.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+                                Spacer(Modifier.height(2.dp))
+                                Text("$regNo · $branch", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(Modifier.height(2.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("VIT-AP University", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                                    Text(
+                                        text = "Open VTOP ↗",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .combinedClickable(
+                                                onClick = {
+                                                    currentPage = ProfilePage.PORTAL
+                                                },
+                                                onLongClick = {
+                                                    onSyncClick(true)
+                                                    currentPage = ProfilePage.PORTAL
+                                                }
+                                            )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
 
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                // --- ACCOUNT ACTIONS ---
+                SectionHeader("ACCOUNT")
+                CardGroup {
                     Row(
-                        modifier = Modifier.fillMaxWidth().clickable { syncDropdownExpanded = true }.padding(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .combinedClickable(
+                                onClick = { onSyncClick(false) },
+                                onLongClick = { onSyncClick(true) }
+                            )
+                            .padding(16.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Background Auto Sync", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("Last Synced", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(2.dp))
-                            Text("Frequency of background updates", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                            Text(
+                                text = formatLastSync(lastSyncTime.toLongOrNull() ?: 0L),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
+                        Box(modifier = Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), CircleShape).padding(8.dp)) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Sync", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                        }
+                    }
 
-                        Box(contentAlignment = Alignment.TopEnd) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                    SettingRow(
+                        label = "Change Semester",
+                        value = "Current: $selectedSemester",
+                        actionText = "Switch",
+                        onClick = { showSemesterDialog = true }
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                    SettingRow(
+                        label = "Manage Credentials",
+                        value = "Update VTOP password",
+                        actionText = "Edit",
+                        onClick = { showCredDialog = true }
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
+                    if (googleEmail.isNotBlank()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Linked Gmail for OTP", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(2.dp))
+                                Text(googleEmail, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            IconButton(onClick = {
+                                val client = com.vtop.utils.AuthHelper.getGoogleSignInClient(context, context.getString(context.resources.getIdentifier("default_web_client_id", "string", context.packageName)))
+                                client.signOut().addOnCompleteListener {
+                                    com.vtop.utils.Vault.saveGoogleEmail(context, "")
+                                    googleEmail = ""
+                                    Toast.makeText(context, "Google Account Unlinked", Toast.LENGTH_SHORT).show()
+                                }
+                            }) {
+                                Icon(imageVector = Lucide.Link2Off, contentDescription = "Unlink Google", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                            }
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                val client = com.vtop.utils.AuthHelper.getGoogleSignInClient(context, context.getString(context.resources.getIdentifier("default_web_client_id", "string", context.packageName)))
+                                googleSignInLauncher.launch(client.signInIntent)
+                            }.padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Linked Gmail for OTP", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(2.dp))
+                                Text("Link @vitapstudent.ac.in email", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 6.dp)
                             ) {
-                                Text(text = syncOptions[autoSyncInterval] ?: "8 hrs", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                Icon(imageVector = Icons.Default.KeyboardArrowDown, contentDescription = "Select", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp).padding(start = 4.dp))
-                            }
-
-                            DropdownMenu(
-                                expanded = syncDropdownExpanded,
-                                onDismissRequest = { syncDropdownExpanded = false },
-                                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
-                            ) {
-                                syncOptions.forEach { (hours, label) ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(text = label, color = if (autoSyncInterval == hours) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = if (autoSyncInterval == hours) FontWeight.Bold else FontWeight.Normal)
-                                        },
-                                        onClick = {
-                                            autoSyncInterval = hours
-                                            sharedPrefs.edit().putInt("AUTO_SYNC_INTERVAL", hours).apply()
-                                            syncDropdownExpanded = false
-
-                                            val workManager = androidx.work.WorkManager.getInstance(context)
-                                            if (hours == 0) {
-                                                workManager.cancelUniqueWork("VTOP_BACKGROUND_SYNC")
-                                                Toast.makeText(context, "Auto sync disabled", Toast.LENGTH_SHORT).show()
-                                            } else {
-                                                val syncRequest = androidx.work.PeriodicWorkRequestBuilder<com.vtop.ui.core.VtopSyncWorker>(hours.toLong(), java.util.concurrent.TimeUnit.HOURS).build()
-                                                workManager.enqueueUniquePeriodicWork("VTOP_BACKGROUND_SYNC", androidx.work.ExistingPeriodicWorkPolicy.REPLACE, syncRequest)
-                                                Toast.makeText(context, "Auto sync set to $label", Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
-                                    )
-                                }
+                                Text("Link", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.width(6.dp))
+                                Icon(imageVector = Lucide.Link, contentDescription = "Link Google", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
                             }
                         }
                     }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                    SettingRow(
-                        label = "Faculty Directory",
-                        value = "Find cabins, emails & domains",
-                        actionText = "Open",
-                        onClick = onNavigateToFaculty
-                    )
                 }
-            }
-        }
 
-        // --- PREFERENCES & APPEARANCE ACCORDION ---
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
-            modifier = Modifier.fillMaxWidth().animateContentSize()
-        ) {
-            Column {
-                Row(
-                    modifier = Modifier.fillMaxWidth().clickable { isPreferencesExpanded = !isPreferencesExpanded }.padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                // --- THE "MORE" ACCORDION ---
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
+                    modifier = Modifier.fillMaxWidth().animateContentSize()
                 ) {
                     Column {
-                        Text("Preferences & Appearance", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                        Spacer(Modifier.height(2.dp))
-                        Text("Theme, Accent, Outings, Timetable", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Icon(imageVector = if (isPreferencesExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = "Expand/Collapse", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-
-                if (isPreferencesExpanded) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Show Outings Tab", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                            Spacer(Modifier.height(2.dp))
-                            Text("Display hostel outings in navigation", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Switch(
-                            checked = showOutings,
-                            onCheckedChange = { newValue ->
-                                sharedPrefs.edit().putBoolean("SHOW_OUTINGS", newValue).apply()
-                                onShowOutingsChange(newValue)
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable { isMoreExpanded = !isMoreExpanded }.padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text("More", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                Spacer(Modifier.height(2.dp))
+                                Text("Calendar export, Auto Sync, Faculty", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                        )
-                    }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Merge Consecutive Labs", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                            Spacer(Modifier.height(2.dp))
-                            Text("Combine Lab slots in Timetable", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Icon(imageVector = if (isMoreExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = "Expand/Collapse", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Switch(
-                            checked = mergeLabs,
-                            onCheckedChange = { newValue ->
-                                sharedPrefs.edit().putBoolean("MERGE_LABS", newValue).apply()
-                                onMergeLabsChange(newValue)
-                            }
-                        )
-                    }
 
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                        if (isMoreExpanded) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                            SettingRow(
+                                label = "Export to Google Calendar",
+                                value = "Add classes & exams to your calendar",
+                                actionText = "Sync",
+                                onClick = {
+                                    calendarPermissionLauncher.launch(arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR))
+                                }
+                            )
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Merge Marks Components", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                            Spacer(Modifier.height(2.dp))
-                            Text("Group Theory & Lab/Project marks together", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Switch(
-                            checked = mergeMarks,
-                            onCheckedChange = { newValue ->
-                                sharedPrefs.edit().putBoolean("MERGE_MARKS", newValue).apply()
-                                onMergeMarksChange(newValue)
-                            }
-                        )
-                    }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-
-                    SettingRow(
-                        label = "App Theme",
-                        value = "Current: ${currentTheme.name.lowercase(Locale.getDefault()).replaceFirstChar { it.uppercase() }}",
-                        actionText = "Change",
-                        onClick = { showThemeDialog = true }
-                    )
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Accent Color", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                        Spacer(Modifier.height(12.dp))
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .background(Brush.sweepGradient(listOf(Color.Red, Color.Yellow, Color.Green, Color.Blue, Color.Magenta, Color.Red)), CircleShape)
-                                    .border(
-                                        width = if (useDynamicColor) 3.dp else 0.dp,
-                                        color = if (useDynamicColor) MaterialTheme.colorScheme.onSurface else Color.Transparent,
-                                        shape = CircleShape
-                                    )
-                                    .clickable {
-                                        sharedPrefs.edit().putBoolean("USE_DYNAMIC_COLOR", true).apply()
-                                        onDynamicColorChange(true)
-                                    },
-                                contentAlignment = Alignment.Center
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clickable { syncDropdownExpanded = true }.padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(modifier = Modifier.size(28.dp).background(MaterialTheme.colorScheme.surface, CircleShape), contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Background Auto Sync", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Spacer(Modifier.height(2.dp))
+                                    Text("Frequency of background updates", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                                }
+
+                                Box(contentAlignment = Alignment.TopEnd) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(text = syncOptions[autoSyncInterval] ?: "8 hrs", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Icon(imageVector = Icons.Default.KeyboardArrowDown, contentDescription = "Select", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp).padding(start = 4.dp))
+                                    }
+
+                                    DropdownMenu(
+                                        expanded = syncDropdownExpanded,
+                                        onDismissRequest = { syncDropdownExpanded = false },
+                                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                                    ) {
+                                        syncOptions.forEach { (hours, label) ->
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Text(text = label, color = if (autoSyncInterval == hours) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = if (autoSyncInterval == hours) FontWeight.Bold else FontWeight.Normal)
+                                                },
+                                                onClick = {
+                                                    autoSyncInterval = hours
+                                                    sharedPrefs.edit().putInt("AUTO_SYNC_INTERVAL", hours).apply()
+                                                    syncDropdownExpanded = false
+
+                                                    val workManager = androidx.work.WorkManager.getInstance(context)
+                                                    if (hours == 0) {
+                                                        workManager.cancelUniqueWork("VTOP_BACKGROUND_SYNC")
+                                                        Toast.makeText(context, "Auto sync disabled", Toast.LENGTH_SHORT).show()
+                                                    } else {
+                                                        val syncRequest = androidx.work.PeriodicWorkRequestBuilder<com.vtop.ui.core.VtopSyncWorker>(hours.toLong(), java.util.concurrent.TimeUnit.HOURS).build()
+                                                        workManager.enqueueUniquePeriodicWork("VTOP_BACKGROUND_SYNC", androidx.work.ExistingPeriodicWorkPolicy.REPLACE, syncRequest)
+                                                        Toast.makeText(context, "Auto sync set to $label", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                            )
+                                        }
+                                    }
                                 }
                             }
 
-                            com.vtop.ui.theme.AccentColors.forEach { color ->
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .background(color, CircleShape)
-                                        .border(
-                                            width = if (!useDynamicColor && customAccent == color) 3.dp else 0.dp,
-                                            color = if (!useDynamicColor && customAccent == color) MaterialTheme.colorScheme.onSurface else Color.Transparent,
-                                            shape = CircleShape
-                                        )
-                                        .clickable {
-                                            sharedPrefs.edit().putBoolean("USE_DYNAMIC_COLOR", false).apply()
-                                            sharedPrefs.edit().putInt("CUSTOM_ACCENT", color.toArgb()).apply()
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                            SettingRow(
+                                label = "Faculty Directory",
+                                value = "Find cabins, emails & domains",
+                                actionText = "Open",
+                                onClick = { currentPage = ProfilePage.FACULTY }
+                            )
+                        }
+                    }
+                }
 
-                                            onDynamicColorChange(false)
-                                            onAccentChange(color)
-                                        }
+                // --- PREFERENCES & APPEARANCE ACCORDION ---
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
+                    modifier = Modifier.fillMaxWidth().animateContentSize()
+                ) {
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable { isPreferencesExpanded = !isPreferencesExpanded }.padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text("Preferences & Appearance", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                Spacer(Modifier.height(2.dp))
+                                Text("Theme, Accent, Outings, Timetable", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Icon(imageVector = if (isPreferencesExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = "Expand/Collapse", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+
+                        if (isPreferencesExpanded) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Show Outings Tab", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                    Spacer(Modifier.height(2.dp))
+                                    Text("Display hostel outings in navigation", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Switch(
+                                    checked = showOutings,
+                                    onCheckedChange = { newValue ->
+                                        sharedPrefs.edit().putBoolean("SHOW_OUTINGS", newValue).apply()
+                                        onShowOutingsChange(newValue)
+                                    }
                                 )
                             }
+
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Merge Consecutive sessions", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                    Spacer(Modifier.height(2.dp))
+                                    Text("Combine consecutive slots of same course in Timetable", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Switch(
+                                    checked = mergeLabs,
+                                    onCheckedChange = { newValue ->
+                                        sharedPrefs.edit().putBoolean("MERGE_LABS", newValue).apply()
+                                        onMergeLabsChange(newValue)
+                                    }
+                                )
+                            }
+
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Merge Marks Components", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                    Spacer(Modifier.height(2.dp))
+                                    Text("Group Theory & Lab/Project marks together", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Switch(
+                                    checked = mergeMarks,
+                                    onCheckedChange = { newValue ->
+                                        sharedPrefs.edit().putBoolean("MERGE_MARKS", newValue).apply()
+                                        onMergeMarksChange(newValue)
+                                    }
+                                )
+                            }
+
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
+                            SettingRow(
+                                label = "App Theme",
+                                value = "Current: ${currentTheme.name.lowercase(Locale.getDefault()).replaceFirstChar { it.uppercase() }}",
+                                actionText = "Change",
+                                onClick = { showThemeDialog = true }
+                            )
+
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text("Accent Color", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                Spacer(Modifier.height(12.dp))
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .background(Brush.sweepGradient(listOf(Color.Red, Color.Yellow, Color.Green, Color.Blue, Color.Magenta, Color.Red)), CircleShape)
+                                            .border(
+                                                width = if (useDynamicColor) 3.dp else 0.dp,
+                                                color = if (useDynamicColor) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                                shape = CircleShape
+                                            )
+                                            .clickable {
+                                                sharedPrefs.edit().putBoolean("USE_DYNAMIC_COLOR", true).apply()
+                                                onDynamicColorChange(true)
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Box(modifier = Modifier.size(28.dp).background(MaterialTheme.colorScheme.surface, CircleShape), contentAlignment = Alignment.Center) {
+                                            Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
+                                        }
+                                    }
+
+                                    com.vtop.ui.theme.AccentColors.forEach { color ->
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .background(color, CircleShape)
+                                                .border(
+                                                    width = if (!useDynamicColor && customAccent == color) 3.dp else 0.dp,
+                                                    color = if (!useDynamicColor && customAccent == color) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                                    shape = CircleShape
+                                                )
+                                                .clickable {
+                                                    sharedPrefs.edit().putBoolean("USE_DYNAMIC_COLOR", false).apply()
+                                                    sharedPrefs.edit().putInt("CUSTOM_ACCENT", color.toArgb()).apply()
+
+                                                    onDynamicColorChange(false)
+                                                    onAccentChange(color)
+                                                }
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-            }
-        }
 
-        // --- REMINDERS ---
-        SectionHeader("UPCOMING REMINDERS")
-        if (reminders.isEmpty()) {
-            Text(
-                "No upcoming reminders.\nCreate one by tapping on a subject in home page.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 12.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp)
-            )
-        } else {
-            reminders.forEach { reminder ->
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                // --- REMINDERS ---
+                SectionHeader("UPCOMING REMINDERS")
+                if (reminders.isEmpty()) {
+                    Text(
+                        "No upcoming reminders.\nCreate one by tapping on a subject in home page.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp)
+                    )
+                } else {
+                    reminders.forEach { reminder ->
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("${reminder.courseCode} · ${reminder.type}", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Spacer(Modifier.height(4.dp))
+                                    Text("Due: ${formatReminderDate(reminder.date)}", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                    if (reminder.syllabus.isNotBlank()) {
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(reminder.syllabus, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
+                                IconButton(onClick = { onDeleteReminder(reminder.id) }) {
+                                    Icon(Icons.Default.DeleteOutline, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                SectionHeader("SYSTEM")
+                CardGroup {
+                    // --- ABOUT ---
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                currentPage = ProfilePage.ABOUT
+                            }
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                "About the app",
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "Version ${BuildConfig.VERSION_NAME}",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
+                    // --- TELEMETRY TOGGLE ---
+                    var isTelemetryEnabled by rememberSaveable {
+                        mutableStateOf(Telemetry.isEnabled())
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("${reminder.courseCode} · ${reminder.type}", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.height(4.dp))
-                            Text("Due: ${formatReminderDate(reminder.date)}", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                            if (reminder.syllabus.isNotBlank()) {
-                                Spacer(Modifier.height(2.dp))
-                                Text(reminder.syllabus, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                "Developer Debug Logs",
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "Record app behavior",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.sp
+                            )
+                        }
+
+                        Switch(
+                            checked = isTelemetryEnabled,
+                            onCheckedChange = {
+                                isTelemetryEnabled = it
+                                Telemetry.setEnabled(it)
                             }
-                        }
-                        IconButton(onClick = { onDeleteReminder(reminder.id) }) {
-                            Icon(Icons.Default.DeleteOutline, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
-                        }
+                        )
                     }
-                }
-            }
-        }
 
-        // --- SYSTEM (ABOUT & UPDATES) ---
-        SectionHeader("SYSTEM")
-        CardGroup {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        onNavigateToAbout()
-                    }
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text("About the app", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        "Version ${BuildConfig.VERSION_NAME}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp
-                    )
-                }
-                Icon(Icons.AutoMirrored.Filled.ArrowForwardIos, contentDescription = "Open", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(12.dp))
-            }
-        }
-
-        // --- LOGOUT BUTTON ---
-        Spacer(Modifier.height(16.dp))
-        Row(
-            modifier = Modifier
-                .align(Alignment.CenterHorizontally)
-                .clip(RoundedCornerShape(50))
-                .clickable { showLogoutDialog = true }
-                .background(Color.Transparent)
-                .padding(horizontal = 24.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(imageVector = Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Logout", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(text = "Log Out", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-        }
-    }
-
-    // --- DIALOGS & BOTTOM SHEETS ---
-    if (showCalendarSheet) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        var selectedCalendarId by remember { mutableLongStateOf(availableCalendars.firstOrNull()?.id ?: -1L) }
-        var calendarDropdownExpanded by remember { mutableStateOf(false) }
-        var reminderMins by remember { mutableIntStateOf(10) }
-        var reminderDropdownExpanded by remember { mutableStateOf(false) }
-        val reminderOptions = mapOf(0 to "No Reminder", 10 to "10 mins before", 30 to "30 mins before", 60 to "1 hour before")
-        var titleTemplate by remember { mutableStateOf("{courseCode} ({slot})") }
-        var descTemplate by remember { mutableStateOf("{courseTitle}\nFaculty: {faculty}\nType: {courseType}\nClass ID: {classId}") }
-        var locTemplate by remember { mutableStateOf("{venue}") }
-        val sdf = remember { SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH) }
-        var endDate by remember { mutableStateOf(CalendarSync.getDefaultEndDate(context)) }
-        var showDatePicker by remember { mutableStateOf(false) }
-
-        ModalBottomSheet(onDismissRequest = { showCalendarSheet = false }, sheetState = sheetState, containerColor = MaterialTheme.colorScheme.surface) {
-            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("Export to Google Calendar", fontSize = 20.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
-                Text("SELECT CALENDAR", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                Box(modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.2f), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { calendarDropdownExpanded = true }.padding(16.dp)) {
-                    val selectedName = availableCalendars.find { it.id == selectedCalendarId }?.name ?: "None"
-                    Text(selectedName, color = MaterialTheme.colorScheme.onSurface)
-                    DropdownMenu(expanded = calendarDropdownExpanded, onDismissRequest = { calendarDropdownExpanded = false }) {
-                        availableCalendars.forEach { cal ->
-                            DropdownMenuItem(text = { Text(cal.name) }, onClick = { selectedCalendarId = cal.id; calendarDropdownExpanded = false })
-                        }
-                    }
-                }
-                Text("REMINDER", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                Box(modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.2f), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { reminderDropdownExpanded = true }.padding(16.dp)) {
-                    Text(reminderOptions[reminderMins] ?: "None", color = MaterialTheme.colorScheme.onSurface)
-                    DropdownMenu(expanded = reminderDropdownExpanded, onDismissRequest = { reminderDropdownExpanded = false }) {
-                        reminderOptions.forEach { (mins, label) ->
-                            DropdownMenuItem(text = { Text(label) }, onClick = { reminderMins = mins; reminderDropdownExpanded = false })
-                        }
-                    }
-                }
-                Text("END SYNC ON (LAST INSTRUCTIONAL DAY)", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                Row(modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.2f), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { showDatePicker = true }.padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text(endDate, color = MaterialTheme.colorScheme.onSurface)
-                    Icon(Icons.Outlined.Edit, "Edit", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                }
-                Text("EVENT TEMPLATES", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                OutlinedTextField(value = titleTemplate, onValueChange = { titleTemplate = it }, label = { Text("Event Title") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                OutlinedTextField(value = descTemplate, onValueChange = { descTemplate = it }, label = { Text("Event Description") }, modifier = Modifier.fillMaxWidth().height(100.dp))
-                OutlinedTextField(value = locTemplate, onValueChange = { locTemplate = it }, label = { Text("Location") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                Spacer(Modifier.height(8.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = { CalendarSync.clearSyncedEvents(context, selectedCalendarId); showCalendarSheet = false }, modifier = Modifier.weight(1f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.15f)), shape = RoundedCornerShape(12.dp)) {
-                        Text("Clear Old", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Black)
-                    }
-                    Button(onClick = { if (selectedCalendarId != -1L) { CalendarSync.syncToCalendar(context, timetable, examsData, mergeLabs, selectedCalendarId, reminderMins, endDate, titleTemplate, descTemplate, locTemplate) }; showCalendarSheet = false }, modifier = Modifier.weight(1f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary), shape = RoundedCornerShape(12.dp)) {
-                        Text("Sync Now", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Black)
-                    }
-                }
-            }
-        }
-        if (showDatePicker) {
-            val datePickerState = rememberDatePickerState(initialSelectedDateMillis = sdf.parse(endDate)?.time?.plus(TimeZone.getDefault().rawOffset))
-            DatePickerDialog(
-                onDismissRequest = { showDatePicker = false },
-                confirmButton = { TextButton(onClick = { datePickerState.selectedDateMillis?.let { millis -> val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = millis }; endDate = sdf.format(cal.time) }; showDatePicker = false }) { Text("OK", color = MaterialTheme.colorScheme.primary) } },
-                dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
-            ) { DatePicker(state = datePickerState) }
-        }
-    }
-
-    if (showThemeDialog) {
-        AlertDialog(
-            onDismissRequest = { showThemeDialog = false },
-            title = { Text("Select App Theme", fontWeight = FontWeight.Bold, fontSize = 18.sp) },
-            text = {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ThemeChip("🌑", "Dark", currentTheme == AppThemeMode.DARK, Modifier.weight(1f)) {
-                        sharedPrefs.edit().putString("APP_THEME", AppThemeMode.DARK.name).apply()
-                        onThemeChange(AppThemeMode.DARK)
-                        showThemeDialog = false
-                    }
-                    ThemeChip("☀️", "Light", currentTheme == AppThemeMode.LIGHT, Modifier.weight(1f)) {
-                        sharedPrefs.edit().putString("APP_THEME", AppThemeMode.LIGHT.name).apply()
-                        onThemeChange(AppThemeMode.LIGHT)
-                        showThemeDialog = false
-                    }
-                    ThemeChip("⚙️", "System", currentTheme == AppThemeMode.SYSTEM, Modifier.weight(1f)) {
-                        sharedPrefs.edit().putString("APP_THEME", AppThemeMode.SYSTEM.name).apply()
-                        onThemeChange(AppThemeMode.SYSTEM)
-                        showThemeDialog = false
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = { TextButton(onClick = { showThemeDialog = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
-            containerColor = MaterialTheme.colorScheme.surface
-        )
-    }
-
-    if (showSemesterDialog) {
-        AlertDialog(
-            onDismissRequest = { showSemesterDialog = false },
-            title = { Text("Select Semester", fontWeight = FontWeight.Bold, fontSize = 18.sp) },
-            text = {
-                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    availableSemesters.forEach { sem ->
-                        val isSelected = sem.name == selectedSemester
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth().clickable { onSemesterChange(sem); showSemesterDialog = false }
-                        ) {
-                            Text(sem.name, color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.padding(16.dp))
-                        }
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = { TextButton(onClick = { showSemesterDialog = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
-            containerColor = MaterialTheme.colorScheme.surface
-        )
-    }
-
-    if (showCredDialog) {
-        var tempReg by remember { mutableStateOf(currentRegNo) }
-        var tempPass by remember { mutableStateOf(currentPass) }
-        var passwordVisible by remember { mutableStateOf(false) }
-
-        AlertDialog(
-            onDismissRequest = { showCredDialog = false },
-            title = { Text("Update Credentials", fontWeight = FontWeight.Bold) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedTextField(
-                        value = tempReg, onValueChange = { tempReg = it }, label = { Text("Username") },
-                        leadingIcon = { Icon(Lucide.UserRound, null) }, singleLine = true, modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = tempPass, onValueChange = { tempPass = it }, label = { Text("VTOP Password") },
-                        leadingIcon = { Icon(Icons.Outlined.Lock, null) }, visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        trailingIcon = {
-                            val image = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff
-                            IconButton(onClick = { passwordVisible = !passwordVisible }) { Icon(imageVector = image, contentDescription = "Toggle Password", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
-                        },
-                        singleLine = true, modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(onClick = { onCredentialsSave(tempReg, tempPass); showCredDialog = false }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
-                    Text("Save & Sync", fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = { TextButton(onClick = { showCredDialog = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
-            containerColor = MaterialTheme.colorScheme.surface
-        )
-    }
-
-    if (showLogoutDialog) {
-        AlertDialog(
-            onDismissRequest = { showLogoutDialog = false },
-            title = { Text("Confirm Logout", fontWeight = FontWeight.Bold) },
-            text = { Text("Are you sure you want to log out? All data will be cleared.") },
-            confirmButton = {
-                TextButton(onClick = { showLogoutDialog = false; onLogout() }) { Text("Log Out", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = { TextButton(onClick = { showLogoutDialog = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
-            containerColor = MaterialTheme.colorScheme.surface
-        )
-    }
-
-    updateInfo?.let { info ->
-        AlertDialog(
-            onDismissRequest = { updateInfo = null },
-            title = {
-                Column {
-                    Text("Update Available", fontWeight = FontWeight.Black, fontSize = 20.sp)
-                    if (info.releaseTitle.isNotBlank()) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(text = info.releaseTitle, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                    }
-                }
-            },
-            text = {
-                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 350.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Text(text = "Version ${info.latestVersion} is ready to download. Do you want to install it now?", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
-
-                    if (info.features.isNotEmpty()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("✨ Features", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary, letterSpacing = 0.5.sp)
-                            info.features.forEach { feature ->
-                                Row(verticalAlignment = Alignment.Top) {
-                                    Text("•", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 8.dp))
-                                    Text(feature, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
-                                }
+                    if (isTelemetryEnabled) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                        SettingRow(
+                            label = "Telemetry Viewer",
+                            value = "Browse captured sessions",
+                            actionText = "View",
+                            onClick = {
+                                currentPage = ProfilePage.TELEMETRY
                             }
-                        }
-                    }
-
-                    if (info.fixes.isNotEmpty()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("🛠 Fixes", fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFF10B981), letterSpacing = 0.5.sp)
-                            info.fixes.forEach { fix ->
-                                Row(verticalAlignment = Alignment.Top) {
-                                    Text("•", color = Color(0xFF10B981), modifier = Modifier.padding(end = 8.dp))
-                                    Text(fix, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
-                                }
-                            }
-                        }
-                    }
-
-                    if (info.important.isNotEmpty()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("📢 Important", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.error, letterSpacing = 0.5.sp)
-                            info.important.forEach { note ->
-                                Row(verticalAlignment = Alignment.Top) {
-                                    Text("•", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(end = 8.dp))
-                                    Text(note, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
-                                }
-                            }
-                        }
+                        )
                     }
                 }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        isDownloadingUpdate = true
-                        UpdateManager.downloadAndInstallUpdate(context = context, downloadUrl = info.downloadUrl, version = info.latestVersion)
-                        updateInfo = null
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+
+                // --- LOGOUT BUTTON ---
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .clip(RoundedCornerShape(50))
+                        .clickable { showLogoutDialog = true }
+                        .background(Color.Transparent)
+                        .padding(horizontal = 24.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(if (isDownloadingUpdate) "Downloading..." else "Update Now", fontWeight = FontWeight.Bold)
+                    Icon(imageVector = Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Logout", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = "Log Out", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 }
-            },
-            dismissButton = { TextButton(onClick = { updateInfo = null }) { Text("Later", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
-            containerColor = MaterialTheme.colorScheme.surface
-        )
+            }
+
+            // --- DIALOGS & BOTTOM SHEETS ---
+            if (showCalendarSheet) {
+                val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                var selectedCalendarId by remember { mutableLongStateOf(availableCalendars.firstOrNull()?.id ?: -1L) }
+                var calendarDropdownExpanded by remember { mutableStateOf(false) }
+                var reminderMins by remember { mutableIntStateOf(10) }
+                var reminderDropdownExpanded by remember { mutableStateOf(false) }
+                val reminderOptions = mapOf(0 to "No Reminder", 10 to "10 mins before", 30 to "30 mins before", 60 to "1 hour before")
+                var titleTemplate by remember { mutableStateOf("{courseCode} ({slot})") }
+                var descTemplate by remember { mutableStateOf("{courseTitle}\nFaculty: {faculty}\nType: {courseType}\nClass ID: {classId}") }
+                var locTemplate by remember { mutableStateOf("{venue}") }
+                val sdf = remember { SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH) }
+                var endDate by remember { mutableStateOf(CalendarSync.getDefaultEndDate(context)) }
+                var showDatePicker by remember { mutableStateOf(false) }
+
+                ModalBottomSheet(onDismissRequest = { showCalendarSheet = false }, sheetState = sheetState, containerColor = MaterialTheme.colorScheme.surface) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Text("Export to Google Calendar", fontSize = 20.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+                        Text("SELECT CALENDAR", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Box(modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.2f), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { calendarDropdownExpanded = true }.padding(16.dp)) {
+                            val selectedName = availableCalendars.find { it.id == selectedCalendarId }?.name ?: "None"
+                            Text(selectedName, color = MaterialTheme.colorScheme.onSurface)
+                            DropdownMenu(expanded = calendarDropdownExpanded, onDismissRequest = { calendarDropdownExpanded = false }) {
+                                availableCalendars.forEach { cal ->
+                                    DropdownMenuItem(text = { Text(cal.name) }, onClick = { selectedCalendarId = cal.id; calendarDropdownExpanded = false })
+                                }
+                            }
+                        }
+                        Text("REMINDER", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Box(modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.2f), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { reminderDropdownExpanded = true }.padding(16.dp)) {
+                            Text(reminderOptions[reminderMins] ?: "None", color = MaterialTheme.colorScheme.onSurface)
+                            DropdownMenu(expanded = reminderDropdownExpanded, onDismissRequest = { reminderDropdownExpanded = false }) {
+                                reminderOptions.forEach { (mins, label) ->
+                                    DropdownMenuItem(text = { Text(label) }, onClick = { reminderMins = mins; reminderDropdownExpanded = false })
+                                }
+                            }
+                        }
+                        Text("END SYNC ON (LAST INSTRUCTIONAL DAY)", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Row(modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.2f), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { showDatePicker = true }.padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text(endDate, color = MaterialTheme.colorScheme.onSurface)
+                            Icon(Icons.Outlined.Edit, "Edit", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                        }
+                        Text("EVENT TEMPLATES", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        OutlinedTextField(value = titleTemplate, onValueChange = { titleTemplate = it }, label = { Text("Event Title") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                        OutlinedTextField(value = descTemplate, onValueChange = { descTemplate = it }, label = { Text("Event Description") }, modifier = Modifier.fillMaxWidth().height(100.dp))
+                        OutlinedTextField(value = locTemplate, onValueChange = { locTemplate = it }, label = { Text("Location") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                        Spacer(Modifier.height(8.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Button(onClick = { CalendarSync.clearSyncedEvents(context, selectedCalendarId); showCalendarSheet = false }, modifier = Modifier.weight(1f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.15f)), shape = RoundedCornerShape(12.dp)) {
+                                Text("Clear Old", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Black)
+                            }
+                            Button(onClick = { if (selectedCalendarId != -1L) { CalendarSync.syncToCalendar(context, timetable, examsData, mergeLabs, selectedCalendarId, reminderMins, endDate, titleTemplate, descTemplate, locTemplate) }; showCalendarSheet = false }, modifier = Modifier.weight(1f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary), shape = RoundedCornerShape(12.dp)) {
+                                Text("Sync Now", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Black)
+                            }
+                        }
+                    }
+                }
+                if (showDatePicker) {
+                    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = sdf.parse(endDate)?.time?.plus(TimeZone.getDefault().rawOffset))
+                    DatePickerDialog(
+                        onDismissRequest = { showDatePicker = false },
+                        confirmButton = { TextButton(onClick = { datePickerState.selectedDateMillis?.let { millis -> val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = millis }; endDate = sdf.format(cal.time) }; showDatePicker = false }) { Text("OK", color = MaterialTheme.colorScheme.primary) } },
+                        dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+                    ) { DatePicker(state = datePickerState) }
+                }
+            }
+
+            if (showThemeDialog) {
+                AlertDialog(
+                    onDismissRequest = { showThemeDialog = false },
+                    title = { Text("Select App Theme", fontWeight = FontWeight.Bold, fontSize = 18.sp) },
+                    text = {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ThemeChip("🌑", "Dark", currentTheme == AppThemeMode.DARK, Modifier.weight(1f)) {
+                                sharedPrefs.edit().putString("APP_THEME", AppThemeMode.DARK.name).apply()
+                                onThemeChange(AppThemeMode.DARK)
+                                showThemeDialog = false
+                            }
+                            ThemeChip("☀️", "Light", currentTheme == AppThemeMode.LIGHT, Modifier.weight(1f)) {
+                                sharedPrefs.edit().putString("APP_THEME", AppThemeMode.LIGHT.name).apply()
+                                onThemeChange(AppThemeMode.LIGHT)
+                                showThemeDialog = false
+                            }
+                            ThemeChip("⚙️", "System", currentTheme == AppThemeMode.SYSTEM, Modifier.weight(1f)) {
+                                sharedPrefs.edit().putString("APP_THEME", AppThemeMode.SYSTEM.name).apply()
+                                onThemeChange(AppThemeMode.SYSTEM)
+                                showThemeDialog = false
+                            }
+                        }
+                    },
+                    confirmButton = {},
+                    dismissButton = { TextButton(onClick = { showThemeDialog = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
+            }
+
+            if (showSemesterDialog) {
+                AlertDialog(
+                    onDismissRequest = { showSemesterDialog = false },
+                    title = { Text("Select Semester", fontWeight = FontWeight.Bold, fontSize = 18.sp) },
+                    text = {
+                        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            availableSemesters.forEach { sem ->
+                                val isSelected = sem.name == selectedSemester
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth().clickable { onSemesterChange(sem); showSemesterDialog = false }
+                                ) {
+                                    Text(sem.name, color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.padding(16.dp))
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {},
+                    dismissButton = { TextButton(onClick = { showSemesterDialog = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
+            }
+
+            if (showCredDialog) {
+                var tempReg by remember { mutableStateOf(currentRegNo) }
+                var tempPass by remember { mutableStateOf(currentPass) }
+                var passwordVisible by remember { mutableStateOf(false) }
+
+                AlertDialog(
+                    onDismissRequest = { showCredDialog = false },
+                    title = { Text("Update Credentials", fontWeight = FontWeight.Bold) },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            OutlinedTextField(
+                                value = tempReg, onValueChange = { tempReg = it }, label = { Text("Username") },
+                                leadingIcon = { Icon(Lucide.UserRound, null) }, singleLine = true, modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedTextField(
+                                value = tempPass, onValueChange = { tempPass = it }, label = { Text("VTOP Password") },
+                                leadingIcon = { Icon(Icons.Outlined.Lock, null) }, visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                trailingIcon = {
+                                    val image = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff
+                                    IconButton(onClick = { passwordVisible = !passwordVisible }) { Icon(imageVector = image, contentDescription = "Toggle Password", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                },
+                                singleLine = true, modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(onClick = { onCredentialsSave(tempReg, tempPass); showCredDialog = false }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
+                            Text("Save & Sync", fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = { TextButton(onClick = { showCredDialog = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
+            }
+
+            if (showLogoutDialog) {
+                AlertDialog(
+                    onDismissRequest = { showLogoutDialog = false },
+                    title = { Text("Confirm Logout", fontWeight = FontWeight.Bold) },
+                    text = { Text("Are you sure you want to log out? All data will be cleared.") },
+                    confirmButton = {
+                        TextButton(onClick = { showLogoutDialog = false; onLogout() }) { Text("Log Out", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
+                    },
+                    dismissButton = { TextButton(onClick = { showLogoutDialog = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
+            }
+
+            updateInfo?.let { info ->
+                AlertDialog(
+                    onDismissRequest = { updateInfo = null },
+                    title = {
+                        Column {
+                            Text("Update Available", fontWeight = FontWeight.Black, fontSize = 20.sp)
+                            if (info.releaseTitle.isNotBlank()) {
+                                Spacer(Modifier.height(4.dp))
+                                Text(text = info.releaseTitle, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    },
+                    text = {
+                        Column(modifier = Modifier.fillMaxWidth().heightIn(max = 350.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Text(text = "Version ${info.latestVersion} is ready to download. Do you want to install it now?", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
+
+                            if (info.features.isNotEmpty()) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("✨ Features", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary, letterSpacing = 0.5.sp)
+                                    info.features.forEach { feature ->
+                                        Row(verticalAlignment = Alignment.Top) {
+                                            Text("•", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 8.dp))
+                                            Text(feature, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (info.fixes.isNotEmpty()) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("🛠 Fixes", fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFF10B981), letterSpacing = 0.5.sp)
+                                    info.fixes.forEach { fix ->
+                                        Row(verticalAlignment = Alignment.Top) {
+                                            Text("•", color = Color(0xFF10B981), modifier = Modifier.padding(end = 8.dp))
+                                            Text(fix, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (info.important.isNotEmpty()) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("📢 Important", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.error, letterSpacing = 0.5.sp)
+                                    info.important.forEach { note ->
+                                        Row(verticalAlignment = Alignment.Top) {
+                                            Text("•", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(end = 8.dp))
+                                            Text(note, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                isDownloadingUpdate = true
+                                UpdateManager.downloadAndInstallUpdate(context = context, downloadUrl = info.downloadUrl, version = info.latestVersion)
+                                updateInfo = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            Text(if (isDownloadingUpdate) "Downloading..." else "Update Now", fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = { TextButton(onClick = { updateInfo = null }) { Text("Later", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
+            }
+        }
+
+        ProfilePage.PORTAL -> {
+            if (vtopClient != null) {
+                VtopPortalScreen(
+                    vtopClient = vtopClient,
+                    onBack = {
+                        currentPage = ProfilePage.MAIN
+                    }
+                )
+            } else {
+                LaunchedEffect(Unit) {
+                    onSyncClick(true)
+                }
+
+                Text(
+                    "Preparing VTOP session..."
+                )
+            }
+        }
+
+        ProfilePage.ABOUT -> {
+            AboutScreen(
+                onBack = {
+                    currentPage = ProfilePage.MAIN
+                },
+                onOpenChangelog = {
+                    currentPage = ProfilePage.CHANGELOG
+                },
+                onOpenLicenses = {
+                    currentPage = ProfilePage.LICENSES
+                },
+                onOpenLegal = { type ->
+                    selectedLegalDocument = type
+                    currentPage = ProfilePage.LEGAL
+                }
+            )
+        }
+        ProfilePage.CHANGELOG -> {
+            ChangelogScreen(
+                onBack = {
+                    currentPage = ProfilePage.ABOUT
+                }
+            )
+        }
+
+        ProfilePage.LICENSES -> {
+            LicensesScreen(
+                onBack = {
+                    currentPage = ProfilePage.ABOUT
+                }
+            )
+        }
+        ProfilePage.LEGAL -> {
+            LegalDocumentScreen(
+                type = selectedLegalDocument,
+                onBack = {
+                    currentPage = ProfilePage.ABOUT
+                }
+            )
+        }
+
+        ProfilePage.TELEMETRY -> {
+            TelemetryScreen(
+                onBack = { currentPage = ProfilePage.MAIN }
+            )
+        }
+
+        ProfilePage.FACULTY -> {
+            FacultyScreen(
+                facultyList = facultyList,
+                onBack = {
+                    currentPage = ProfilePage.MAIN
+                }
+            )
+        }
+
+        ProfilePage.ACADEMIC_CALENDAR -> {
+            AcademicCalendarScreen(
+                onBack = { currentPage = ProfilePage.MAIN }
+            )
+        }
     }
 }
 

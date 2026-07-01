@@ -13,6 +13,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -62,8 +63,11 @@ private const val MOBILE_UA =
 @Composable
 fun VtopPortalScreen(
     vtopClient: VtopClient,
-    onClose: () -> Unit
-) {
+    onBack: () -> Unit
+    ){
+    BackHandler {
+        onBack()
+    }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -338,7 +342,7 @@ fun VtopPortalScreen(
 
                 navigationIcon = {
 
-                    IconButton(onClick = onClose) {
+                    IconButton(onClick = onBack) {
 
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,

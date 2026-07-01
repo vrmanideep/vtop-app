@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-
 <paths>
 
     <cache-path
@@ -8,15 +7,19 @@
 
     <cache-path
         name="cache_files"
-        path="." />
+        path="/" />
 
     <files-path
         name="internal_files"
-        path="." />
+        path="/" />
+
+    <files-path
+        name="debug_logs"
+        path="logs/" />
 
     <external-files-path
         name="external_files"
-        path="." />
+        path="/" />
 
     <external-path
         name="external_downloads"

@@ -33,7 +33,7 @@ object GmailOtpExtractor {
             for (attempt in 1..10) {
                 Log.d(TAG, "Attempt $attempt to fetch new OTP...")
 
-                val searchUrl = URL("https://gmail.googleapis.com/gmail/v1/users/me/messages?q=from:info1@vitap.ac.in subject:OTP&maxResults=1")
+                val searchUrl = URL("https://gmail.googleapis.com/gmail/v1/users/me/messages?q=from:noreply.sdc@vitap.ac.in subject:OTP&maxResults=1")
                 val searchConn = searchUrl.openConnection() as HttpURLConnection
                 searchConn.setRequestProperty("Authorization", "Bearer $accessToken")
                 searchConn.requestMethod = "GET"

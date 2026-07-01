@@ -3,6 +3,7 @@ package com.vtop.ui
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -25,8 +26,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -56,36 +55,18 @@ import androidx.navigation.compose.rememberNavController
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
-import com.composables.icons.lucide.Compass
-import com.composables.icons.lucide.Lucide
 import com.vtop.models.TimetableModel
 import com.vtop.network.VtopClient
-import com.vtop.ui.core.AppBridge
-import com.vtop.ui.core.GlobalSyncer
-import com.vtop.ui.core.VtopSyncWorker
+import com.vtop.telemetry.*
+import com.vtop.telemetry.lifecycle.*
+import com.vtop.telemetry.collectors.*
+import com.vtop.ui.core.*
 import com.vtop.ui.screens.auth.GoogleSignInDialog
-import com.vtop.ui.screens.main.FetchCallback
-import com.vtop.ui.screens.main.MainScreen
-import com.vtop.ui.screens.main.OutingActionHandler
+import com.vtop.ui.screens.main.*
 import com.vtop.ui.screens.portal.VtopPortalScreen
-import com.vtop.ui.screens.profile.LegalDocumentScreen
-import com.vtop.ui.screens.sub.AcademicCalendarScreen
-import com.vtop.ui.screens.sub.BunkSimulatorTab
-import com.vtop.ui.screens.sub.ChangelogScreen
-import com.vtop.ui.screens.sub.FacultyScreen
-import com.vtop.ui.screens.sub.LicensesScreen
-import com.vtop.ui.screens.sub.loadFaculty
-import com.vtop.ui.theme.AppColors
-import com.vtop.ui.theme.AppTheme
-import com.vtop.ui.theme.AppThemeMode
-import com.vtop.ui.theme.ThemeManager
-import com.vtop.ui.theme.VtopPrimaryBlue
-import com.vtop.utils.AppShortcuts
-import com.vtop.utils.NotificationHelper
-import com.vtop.utils.OtaManager
-import com.vtop.utils.UpdateInfo
-import com.vtop.utils.UpdateManager
-import com.vtop.utils.Vault
+import com.vtop.ui.screens.sub.*
+import com.vtop.ui.theme.*
+import com.vtop.utils.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -199,6 +180,7 @@ class MainActivity : ComponentActivity() {
                 isDataLoaded.value = true
             }
         }
+
 
         setContent {
             val themeMode = ThemeManager.themeMode.value
@@ -408,76 +390,7 @@ class MainActivity : ComponentActivity() {
                                     BunkSimulatorTab(timetable = AppBridge.timetableState.value ?: TimetableModel(), attendanceData = AppBridge.attendanceState.value ?: emptyList(), selectedSemester = currentSemName, onBack = { navController.popBackStack() })
                                 }
 
-                                composable(
-                                    route = "portal",
-                                    enterTransition = { slideInVertically(initialOffsetY = { it }, animationSpec = tween(300)) + fadeIn() },
-                                    exitTransition = { slideOutVertically(targetOffsetY = { it }, animationSpec = tween(300)) + fadeOut() }
-                                ) {
-                                    val creds = Vault.getCredentials(this@MainActivity)
-                                    val client = remember { VtopClient(this@MainActivity, creds[0] ?: "", creds[1] ?: "") }
-                                    AppBridge.activeClient = client
-                                    VtopPortalScreen(vtopClient = client, onClose = { navController.popBackStack() })
-                                }
 
-                                composable(
-                                    route = "faculty",
-                                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                                ) {
-                                    FacultyScreen(facultyList = loadFaculty(this@MainActivity))
-                                }
-
-                                composable(
-                                    route = "about",
-                                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                                ) {
-                                    com.vtop.ui.screens.sub.AboutScreen(navController = navController)
-                                }
-
-                                composable(
-                                    route = "changelog",
-                                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                                ) {
-                                    ChangelogScreen(onBack = { navController.popBackStack() })
-                                }
-
-                                composable(
-                                    route = "licenses",
-                                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                                ) {
-                                    LicensesScreen(onBack = { navController.popBackStack() })
-                                }
-
-                                composable(
-                                    route = "academic_calendar",
-                                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                                ) {
-                                    AcademicCalendarScreen(onBack = { navController.popBackStack() })
-                                }
-
-                                composable(
-                                    route = "legal/{docType}",
-                                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                                ) { backStackEntry ->
-                                    val docTypeStr = backStackEntry.arguments?.getString("docType") ?: "PRIVACY_POLICY"
-                                    val docType = try {
-                                        com.vtop.ui.legal.LegalDocumentType.valueOf(docTypeStr)
-                                    } catch (e: Exception) { com.vtop.ui.legal.LegalDocumentType.PRIVACY_POLICY }
-                                    LegalDocumentScreen(type = docType, onBack = { navController.popBackStack() })
-                                }
-
-                                composable(
-                                    route = "analytics",
-                                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                                ) {
-                                    LaunchedEffect(Unit) { navController.popBackStack() }
-                                }
                             }
                         } else {
                             VtopSplashScreen()
@@ -564,7 +477,15 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+/*
+    override fun onDestroy() {
+        super.onDestroy()
+
+        Telemetry.shutdown()
+    }
 }
+
+ */
 
 @Composable
 fun VtopSplashScreen() {
@@ -645,4 +566,5 @@ fun UiverseLoader() {
             )
         }
     }
+}
 }

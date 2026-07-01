@@ -3,6 +3,8 @@ package com.vtop.ui.pages
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import com.vtop.models.*
+import com.vtop.network.VtopClient
+import com.vtop.ui.core.AppBridge
 import com.vtop.ui.core.CourseReminder
 import com.vtop.ui.screens.main.*
 import com.vtop.ui.theme.AppThemeMode
@@ -101,12 +103,9 @@ fun ProfilePageContent(
     onCredentialsSave: (String, String) -> Unit,
     reminders: List<CourseReminder>,
     onDeleteReminder: (String) -> Unit,
-    onNavigateToAnalytics: () -> Unit,
-    onNavigateToAcademicCalendar: () -> Unit,
     lastSyncTime: String,
     onSyncClick: (Boolean) -> Unit,
-    onNavigateToFaculty: () -> Unit,
-    onNavigateToAbout: () -> Unit
+    vtopClient: VtopClient?
 ) {
 
     Profile(
@@ -138,11 +137,8 @@ fun ProfilePageContent(
         onCredentialsSave = onCredentialsSave,
         reminders = reminders,
         onDeleteReminder = onDeleteReminder,
-        onNavigateToAnalytics = onNavigateToAnalytics,
-        onNavigateToAcademicCalendar = onNavigateToAcademicCalendar,
-        onNavigateToAbout = onNavigateToAbout,
         lastSyncTime = lastSyncTime,
         onSyncClick = onSyncClick,
-        onNavigateToFaculty = onNavigateToFaculty
+        vtopClient = AppBridge.activeClient
     )
 }
