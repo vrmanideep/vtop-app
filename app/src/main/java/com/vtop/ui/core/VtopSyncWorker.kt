@@ -25,6 +25,10 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import android.os.SystemClock
+import com.vtop.telemetry.Telemetry
+import com.vtop.telemetry.model.TelemetryModule
+import com.vtop.telemetry.model.TelemetryStatus
 
 class VtopSyncWorker(
     private val context: Context,
@@ -42,6 +46,18 @@ class VtopSyncWorker(
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        val workerStart = SystemClock.elapsedRealtime()
+
+        Telemetry.log(
+            level = TelemetryStatus.INFO,
+            tag = "VTOP_WORKER",
+            message = "Worker started",
+            module = TelemetryModule.WORK,
+            metadata = mapOf(
+                "worker" to javaClass.simpleName,
+                "runAttemptCount" to runAttemptCount
+            )
+        )
         Log.d(tag, "Background sync started.")
 
         try {
@@ -50,6 +66,14 @@ class VtopSyncWorker(
             val password = creds[1]
 
             if (username.isNullOrBlank() || password.isNullOrBlank()) {
+
+                Telemetry.log(
+                    level = TelemetryStatus.FAILURE,
+                    tag = "VTOP_WORKER",
+                    message = "Credentials missing",
+                    module = TelemetryModule.WORK
+                )
+
                 return@withContext Result.failure()
             }
 
@@ -265,9 +289,37 @@ class VtopSyncWorker(
                 }
             }
 
+            val duration = SystemClock.elapsedRealtime() - workerStart
+
+            Telemetry.log(
+                level = TelemetryStatus.SUCCESS,
+                tag = "VTOP_WORKER",
+                message = "Worker completed",
+                module = TelemetryModule.WORK,
+                metadata = mapOf(
+                    "worker" to javaClass.simpleName,
+                    "durationMs" to duration
+                )
+            )
+
             return@withContext Result.success()
         } catch (e: Exception) {
             Log.e(tag, "Sync failed: ${e.message}")
+            val duration = SystemClock.elapsedRealtime() - workerStart
+
+            Telemetry.log(
+                level = TelemetryStatus.ERROR,
+                tag = "VTOP_WORKER",
+                message = "Worker failed",
+                module = TelemetryModule.WORK,
+                metadata = mapOf(
+                    "worker" to javaClass.simpleName,
+                    "durationMs" to duration,
+                    "exception" to e.javaClass.simpleName,
+                    "message" to e.message
+                )
+            )
+
             return@withContext Result.retry()
         }
     }

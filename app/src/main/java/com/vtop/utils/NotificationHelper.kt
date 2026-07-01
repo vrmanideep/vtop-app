@@ -14,6 +14,9 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
 import androidx.core.content.FileProvider
 import com.vtop.ui.MainActivity
+import com.vtop.telemetry.Telemetry
+import com.vtop.telemetry.model.TelemetryModule
+import com.vtop.telemetry.model.TelemetryStatus
 import java.io.File
 
 object NotificationHelper {
@@ -26,6 +29,23 @@ object NotificationHelper {
     private const val CHANNEL_DOWNLOADS = "DOWNLOADS_CHANNEL"
     private const val CHANNEL_EXAMS = "EXAMS_CHANNEL"
     const val EXAM_NOTIF_ID = 1001
+
+    private fun telemetry(
+        event: String,
+        title: String,
+        id: Int
+    ) {
+        Telemetry.log(
+            level = TelemetryStatus.INFO,
+            tag = "NOTIFICATION",
+            message = event,
+            module = TelemetryModule.NOTIFICATION,
+            metadata = mapOf(
+                "title" to title,
+                "notificationId" to id
+            )
+        )
+    }
 
     // 1. Create All Channels (Required for Android 8.0+)
     fun createNotificationChannel(context: Context) {
@@ -71,6 +91,11 @@ object NotificationHelper {
             .setAutoCancel(true)
 
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        telemetry(
+            "STANDARD_POSTED",
+            title,
+            notificationId
+        )
         notificationManager.notify(notificationId, builder.build())
     }
 
@@ -107,12 +132,26 @@ object NotificationHelper {
             .build()
 
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        telemetry(
+            "OTP_POSTED",
+            "OTP",
+            OTP_NOTIFICATION_ID
+        )
         manager.notify(OTP_NOTIFICATION_ID, notification)
     }
 
     // 4. Safely dismiss a specific notification
     fun dismissNotification(context: Context, id: Int) {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        Telemetry.log(
+            level = TelemetryStatus.INFO,
+            tag = "NOTIFICATION",
+            message = "Notification dismissed",
+            module = TelemetryModule.NOTIFICATION,
+            metadata = mapOf(
+                "notificationId" to id
+            )
+        )
         manager.cancel(id)
     }
 
@@ -172,6 +211,11 @@ object NotificationHelper {
             .build()
 
         try {
+            telemetry(
+                "DOWNLOAD_POSTED",
+                title,
+                fileName.hashCode()
+            )
             NotificationManagerCompat.from(context).notify(fileName.hashCode(), notification)
         } catch (e: SecurityException) {
             e.printStackTrace()
@@ -198,6 +242,11 @@ object NotificationHelper {
         }
 
         try {
+            telemetry(
+                "EXAM_POSTED",
+                title,
+                EXAM_NOTIF_ID
+            )
             NotificationManagerCompat.from(context).notify(EXAM_NOTIF_ID, builder.build())
         } catch (e: SecurityException) {
             e.printStackTrace()

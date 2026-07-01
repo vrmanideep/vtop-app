@@ -25,6 +25,9 @@ import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.coroutines.resume
+import com.vtop.telemetry.Telemetry
+import com.vtop.telemetry.model.TelemetryModule
+import com.vtop.telemetry.model.TelemetryStatus
 
 data class UpdateInfo(
     val isUpdateAvailable: Boolean,
@@ -42,11 +45,26 @@ object UpdateManager {
     private const val GITHUB_API_URL = "https://api.github.com/repos/vrmanideep/vtop-app/releases/latest"
 
     suspend fun checkForUpdates(): UpdateInfo = withContext(Dispatchers.IO) {
+        Telemetry.log(
+            level = TelemetryStatus.INFO,
+            tag = TAG,
+            message = "Checking for updates",
+            module = TelemetryModule.UPDATE
+        )
         Log.d(TAG, "Starting Dual-Engine Update Check...")
 
         val firebaseResult = fetchFromFirebase()
         if (firebaseResult.isUpdateAvailable) {
             Log.d(TAG, "Update found via Firebase Remote Config.")
+            Telemetry.log(
+                level = TelemetryStatus.SUCCESS,
+                tag = TAG,
+                message = "Firebase update available",
+                module = TelemetryModule.UPDATE,
+                metadata = mapOf(
+                    "version" to firebaseResult.latestVersion
+                )
+            )
             return@withContext firebaseResult
         }
 
@@ -54,10 +72,25 @@ object UpdateManager {
         val githubResult = fetchFromGitHub()
         if (githubResult.isUpdateAvailable) {
             Log.d(TAG, "Update found via GitHub Releases.")
+            Telemetry.log(
+                level = TelemetryStatus.SUCCESS,
+                tag = TAG,
+                message = "GitHub update available",
+                module = TelemetryModule.UPDATE,
+                metadata = mapOf(
+                    "version" to githubResult.latestVersion
+                )
+            )
             return@withContext githubResult
         }
 
         Log.d(TAG, "App is completely up to date.")
+        Telemetry.log(
+            level = TelemetryStatus.INFO,
+            tag = TAG,
+            message = "Application already up to date",
+            module = TelemetryModule.UPDATE
+        )
         return@withContext UpdateInfo(false, "", "", emptyList(), emptyList(), emptyList(), "")
     }
 
@@ -93,6 +126,15 @@ object UpdateManager {
                         val impArray = json.optJSONArray("important")
                         if (impArray != null) for (i in 0 until impArray.length()) important.add(impArray.getString(i))
                     } catch (e: Exception) {
+                        Telemetry.log(
+                            level = TelemetryStatus.ERROR,
+                            tag = TAG,
+                            message = e.message ?: "Failed to parse release_notes_json",
+                            module = TelemetryModule.UPDATE,
+                            metadata = mapOf(
+                                "exception" to e.javaClass.simpleName
+                            )
+                        )
                         Log.e(TAG, "Failed to parse release_notes_json", e)
                         features.add("Updates are available. Install to see what's new.")
                     }
@@ -177,12 +219,31 @@ object UpdateManager {
             }
             return@withContext UpdateInfo(false, "", "", emptyList(), emptyList(), emptyList(), "")
         } catch (e: Exception) {
+            Telemetry.log(
+                level = TelemetryStatus.ERROR,
+                tag = TAG,
+                message = e.message ?: "Github API fetch failed",
+                module = TelemetryModule.UPDATE,
+                metadata = mapOf(
+                    "exception" to e.javaClass.simpleName
+                )
+            )
             Log.e(TAG, "GitHub API fetch failed", e)
             return@withContext UpdateInfo(false, "", "", emptyList(), emptyList(), emptyList(), "")
         }
     }
 
     fun downloadAndInstallUpdate(context: Context, downloadUrl: String, version: String) {
+        Telemetry.log(
+            level = TelemetryStatus.INFO,
+            tag = TAG,
+            message = "Downloading update",
+            module = TelemetryModule.UPDATE,
+            metadata = mapOf(
+                "version" to version,
+                "url" to downloadUrl
+            )
+        )
         try {
             val fileName = "vtop_update_v$version.apk"
             val destinationFile = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName)
@@ -199,6 +260,15 @@ object UpdateManager {
 
             val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             val downloadId = downloadManager.enqueue(request)
+            Telemetry.log(
+                level = TelemetryStatus.SUCCESS,
+                tag = TAG,
+                message = "Download enqueued",
+                module = TelemetryModule.UPDATE,
+                metadata = mapOf(
+                    "downloadId" to downloadId
+                )
+            )
 
             Toast.makeText(context, "Downloading update in background...", Toast.LENGTH_LONG).show()
 
@@ -220,12 +290,27 @@ object UpdateManager {
             )
 
         } catch (e: Exception) {
+            Telemetry.log(
+                level = TelemetryStatus.ERROR,
+                tag = TAG,
+                message = e.message ?: "Download failed",
+                module = TelemetryModule.UPDATE,
+                metadata = mapOf(
+                    "exception" to e.javaClass.simpleName
+                )
+            )
             Log.e(TAG, "Download failed", e)
             Toast.makeText(context, "Download failed: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun installApk(context: Context, fileName: String) {
+        Telemetry.log(
+            level = TelemetryStatus.SUCCESS,
+            tag = TAG,
+            message = "Download completed",
+            module = TelemetryModule.UPDATE
+        )
         try {
             val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName)
             if (file.exists()) {
@@ -240,6 +325,15 @@ object UpdateManager {
                 Toast.makeText(context, "Update file not found. Please try again.", Toast.LENGTH_SHORT).show()
             }
         } catch (e: Exception) {
+            Telemetry.log(
+                level = TelemetryStatus.ERROR,
+                tag = TAG,
+                message = e.message ?: "Install failed",
+                module = TelemetryModule.UPDATE,
+                metadata = mapOf(
+                    "exception" to e.javaClass.simpleName
+                )
+            )
             Log.e(TAG, "Install failed", e)
             Toast.makeText(context, "Please install the APK manually from your Downloads folder.", Toast.LENGTH_LONG).show()
         }

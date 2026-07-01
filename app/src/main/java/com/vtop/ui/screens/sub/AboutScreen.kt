@@ -32,8 +32,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.navigation.NavController
-import com.composables.icons.lucide.Compass
 import com.composables.icons.lucide.Github
 import com.composables.icons.lucide.Lucide
 import com.vtop.BuildConfig
@@ -46,7 +44,12 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AboutScreen(navController: NavController) {
+fun AboutScreen(
+    onBack: () -> Unit,
+    onOpenChangelog: () -> Unit,
+    onOpenLicenses: () -> Unit,
+    onOpenLegal: (LegalDocumentType) -> Unit
+) {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val coroutineScope = rememberCoroutineScope()
@@ -60,7 +63,7 @@ fun AboutScreen(navController: NavController) {
             CenterAlignedTopAppBar(
                 title = { Text("About", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
+                    IconButton(onClick = {onBack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
@@ -119,7 +122,7 @@ fun AboutScreen(navController: NavController) {
                 CardGroup {
                     GroupedActionRow(
                         icon = Icons.AutoMirrored.Outlined.Article, title = "Release notes", subtitle = "v${BuildConfig.VERSION_NAME} · Latest changes",
-                        onClick = { navController.navigate("changelog") }
+                        onClick = { onOpenChangelog() }
                     )
                 }
             }
@@ -173,22 +176,28 @@ fun AboutScreen(navController: NavController) {
                 CardGroup {
                     GroupedActionRow(
                         icon = Icons.Outlined.PrivacyTip, title = "Privacy policy", subtitle = "How your data is handled",
-                        onClick = { navController.navigate("legal/${LegalDocumentType.PRIVACY_POLICY.name}") }
+                        onClick = { onOpenLegal(
+                            LegalDocumentType.PRIVACY_POLICY
+                        ) }
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
                     GroupedActionRow(
                         icon = Icons.Outlined.Gavel, title = "Terms of use", subtitle = "Usage terms and conditions",
-                        onClick = { navController.navigate("legal/${LegalDocumentType.TERMS_OF_USE.name}") }
+                        onClick = { onOpenLegal(
+                            LegalDocumentType.TERMS_OF_USE
+                        )}
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
                     GroupedActionRow(
                         icon = Icons.Outlined.Info, title = "Disclaimer", subtitle = "Important information",
-                        onClick = { navController.navigate("legal/${LegalDocumentType.DISCLAIMER.name}") }
+                        onClick = {onOpenLegal(
+                            LegalDocumentType.DISCLAIMER
+                        ) }
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
                     GroupedActionRow(
                         icon = Icons.Outlined.Code, title = "Open source licenses", subtitle = "Libraries and acknowledgements",
-                        onClick = { navController.navigate("licenses") }
+                        onClick = { onOpenLicenses() }
                     )
                 }
             }

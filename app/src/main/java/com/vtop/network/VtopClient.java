@@ -36,6 +36,11 @@ import okhttp3.Response;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
+import android.os.SystemClock;
+
+import com.vtop.telemetry.Telemetry;
+import com.vtop.telemetry.model.TelemetryModule;
+import com.vtop.telemetry.model.TelemetryStatus;
 
 @SuppressWarnings({"unused", "SpellCheckingInspection"})
 public class VtopClient {
@@ -739,14 +744,89 @@ public class VtopClient {
             builder.sslSocketFactory(sslContext.getSocketFactory(), (javax.net.ssl.X509TrustManager) trustAllCerts[0]);
             builder.hostnameVerifier((hostname, session) -> true);
             builder.addNetworkInterceptor(chain -> {
+
                 Request original = chain.request();
+
                 Request.Builder rb = original.newBuilder()
-                        .removeHeader("User-Agent").addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
+                        .removeHeader("User-Agent")
+                        .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
                         .addHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
-                        .addHeader("Accept-Language", "en-US,en;q=0.9").addHeader("Upgrade-Insecure-Requests", "1").addHeader("sec-ch-ua", "\"Google Chrome\";v=\"123\", \"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"123\"")
-                        .addHeader("sec-ch-ua-mobile", "?0").addHeader("sec-ch-ua-platform", "\"Windows\"").addHeader("Sec-Fetch-Dest", "document").addHeader("Sec-Fetch-Mode", "navigate").addHeader("Sec-Fetch-Site", "same-origin").addHeader("Sec-Fetch-User", "?1").removeHeader("Connection").addHeader("Connection", "keep-alive");
-                if ("XMLHttpRequest".equals(original.header("X-Requested-With"))) { rb.removeHeader("Accept"); rb.addHeader("Accept", "*/*"); rb.header("Sec-Fetch-Mode", "cors"); rb.header("Sec-Fetch-Dest", "empty"); }
-                return chain.proceed(rb.build());
+                        .addHeader("Accept-Language", "en-US,en;q=0.9")
+                        .addHeader("Upgrade-Insecure-Requests", "1")
+                        .addHeader("sec-ch-ua", "\"Google Chrome\";v=\"123\", \"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"123\"")
+                        .addHeader("sec-ch-ua-mobile", "?0")
+                        .addHeader("sec-ch-ua-platform", "\"Windows\"")
+                        .addHeader("Sec-Fetch-Dest", "document")
+                        .addHeader("Sec-Fetch-Mode", "navigate")
+                        .addHeader("Sec-Fetch-Site", "same-origin")
+                        .addHeader("Sec-Fetch-User", "?1")
+                        .removeHeader("Connection")
+                        .addHeader("Connection", "keep-alive");
+
+                if ("XMLHttpRequest".equals(original.header("X-Requested-With"))) {
+                    rb.removeHeader("Accept");
+                    rb.addHeader("Accept", "*/*");
+                    rb.header("Sec-Fetch-Mode", "cors");
+                    rb.header("Sec-Fetch-Dest", "empty");
+                }
+
+                Request request = rb.build();
+
+                long start = SystemClock.elapsedRealtime();
+
+                Telemetry.INSTANCE.log(
+                        TelemetryStatus.INFO,
+                        "HTTP",
+                        request.method() + " " + request.url().encodedPath(),
+                        TelemetryModule.NETWORK,
+                        java.util.Map.of(
+                                "method", request.method(),
+                                "url", request.url().toString()
+                        )
+                );
+
+                try {
+
+                    Response response = chain.proceed(request);
+
+                    long duration = SystemClock.elapsedRealtime() - start;
+
+                    Telemetry.INSTANCE.log(
+                            response.isSuccessful()
+                                    ? TelemetryStatus.SUCCESS
+                                    : TelemetryStatus.WARNING,
+                            "HTTP",
+                            request.method() + " " + request.url().encodedPath(),
+                            TelemetryModule.NETWORK,
+                            java.util.Map.of(
+                                    "method", request.method(),
+                                    "url", request.url().toString(),
+                                    "status", response.code(),
+                                    "durationMs", duration
+                            )
+                    );
+
+                    return response;
+
+                } catch (Exception e) {
+
+                    long duration = SystemClock.elapsedRealtime() - start;
+
+                    Telemetry.INSTANCE.log(
+                            TelemetryStatus.ERROR,
+                            "HTTP",
+                            e.getClass().getSimpleName(),
+                            TelemetryModule.NETWORK,
+                            java.util.Map.of(
+                                    "method", request.method(),
+                                    "url", request.url().toString(),
+                                    "durationMs", duration,
+                                    "exception", e.getClass().getSimpleName()
+                            )
+                    );
+
+                    throw e;
+                }
             });
             return builder;
         } catch (Exception e) { throw new RuntimeException(e); }
