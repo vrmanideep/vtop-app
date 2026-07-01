@@ -29,7 +29,7 @@ object OutingParser {
                     var leaveId = ""
                     val rowHtml = rows[i].outerHtml()
 
-                    val idMatch = Regex("[A-Z]\\d{8,15}").find(rowHtml)
+                    val idMatch = Regex("[A-Z]\\d{6,15}").find(rowHtml)
                     if (idMatch != null) {
                         leaveId = idMatch.value
                     }
