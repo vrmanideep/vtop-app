@@ -32,8 +32,8 @@ android {
         applicationId = "com.vtop"
         minSdk = 24
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1.9"
+        versionCode = 3
+        versionName = "1.1.10"
 
 
         ndk {

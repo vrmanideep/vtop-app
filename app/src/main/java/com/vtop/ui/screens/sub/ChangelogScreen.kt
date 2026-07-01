@@ -35,6 +35,24 @@ data class ReleaseLog(
 
 val releaseHistory = listOf(
     ReleaseLog(
+        version = "Version 1.1.10",
+        tag = "v1.1.10",
+        date = "01 Jul 2026",
+        features = listOf(
+            "New Telemetry System for structured application diagnostics and session-based logging.",
+            "Integrated Telemetry Viewer with filtering, session browsing, and log inspection.",
+            "Redesigned Profile navigation with native in-page transitions and Android back support.",
+
+        ),
+        fixes = listOf(
+            "Improved Profile subpage navigation consistency.",
+            "Reduced navigation latency by replacing nested NavHost usage within the Profile section.",
+            "Fixed LeaveId parse errors in general outings",
+            "General UI polish and stability improvements."
+        )
+    ),
+
+    ReleaseLog(
         version = "Version 1.1.9",
         tag = "v1.1.9",
         date = "19 Jun 2026",
