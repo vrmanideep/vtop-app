@@ -51,6 +51,7 @@ import java.util.Locale
 import java.util.zip.GZIPOutputStream
 import kotlin.math.roundToInt
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import com.vtop.utils.AnalyticsManager
 
 private val MarksPrimaryAccent = Color(0xFF0090FF)
@@ -181,31 +182,54 @@ fun Marks(
     val pagerState = rememberPagerState(pageCount = { 2 })
     val coroutineScope = rememberCoroutineScope()
 
+    // Hoist the state here so it survives tab switches
+    val groupedHistory = remember(historyData) { historyData.groupBy { it.examMonth ?: "Unknown Semester" } }
+    val expandedStates = remember(groupedHistory) {
+        androidx.compose.runtime.mutableStateMapOf<String, Boolean>().apply {
+            groupedHistory.keys.forEach { this[it] = true }
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
 
         // HorizontalPager now fills the whole screen, allowing scrolling content to run underneath everything
         HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
             when (page) {
                 0 -> CurrentSemesterMarksView(marksData, mergeMarks)
-                1 -> AcademicHistoryView(historySummary, historyData, onHistoryLoad)
+                1 -> AcademicHistoryView(historySummary, historyData, groupedHistory, expandedStates, onHistoryLoad)
             }
         }
 
-        // Floating Tabs pinned below the GlobalTopBar
-        Row(
+        // Standard Underlined Tabs (Design 2 Style) flush with the Top Bar
+        TabRow(
+            selectedTabIndex = pagerState.currentPage,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 96.dp, start = 20.dp, end = 20.dp)
-                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(50))
-                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(50))
-                .padding(4.dp)
+                .padding(top = 80.dp), // Aligns perfectly under GlobalTopBar
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+            divider = { HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)) },
+            indicator = { tabPositions ->
+                TabRowDefaults.SecondaryIndicator(
+                    modifier = Modifier.tabIndicatorOffset(tabPositions[pagerState.currentPage]),
+                    color = MaterialTheme.colorScheme.primary, // Adopts user's accent color
+                    height = 3.dp
+                )
+            }
         ) {
-            TabPill("Marks", pagerState.currentPage == 0, Modifier.weight(1f)) {
-                coroutineScope.launch { pagerState.animateScrollToPage(0) }
-            }
-            TabPill("History", pagerState.currentPage == 1, Modifier.weight(1f)) {
-                coroutineScope.launch { pagerState.animateScrollToPage(1) }
-            }
+            Tab(
+                selected = pagerState.currentPage == 0,
+                onClick = { coroutineScope.launch { pagerState.animateScrollToPage(0) } },
+                text = { Text("Marks", fontSize = 15.sp, fontWeight = if (pagerState.currentPage == 0) FontWeight.Bold else FontWeight.Medium) },
+                selectedContentColor = MaterialTheme.colorScheme.onSurface,
+                unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Tab(
+                selected = pagerState.currentPage == 1,
+                onClick = { coroutineScope.launch { pagerState.animateScrollToPage(1) } },
+                text = { Text("History", fontSize = 15.sp, fontWeight = if (pagerState.currentPage == 1) FontWeight.Bold else FontWeight.Medium) },
+                selectedContentColor = MaterialTheme.colorScheme.onSurface,
+                unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         // Floating Action Button cleanly layered on top
@@ -271,22 +295,6 @@ fun Marks(
     }
 }
 
-@Composable
-fun TabPill(text: String, isSelected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val bgColor by animateColorAsState(if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent, label = "tabBg")
-    val textColor by animateColorAsState(if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, label = "tabText")
-
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(50))
-            .background(bgColor)
-            .clickable { onClick() }
-            .padding(vertical = 10.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(text = text, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-    }
-}
 
 @Composable
 fun CurrentSemesterMarksView(marksData: List<CourseMark>, mergeMarks: Boolean) {
@@ -390,7 +398,7 @@ fun CurrentSemesterMarksView(marksData: List<CourseMark>, mergeMarks: Boolean) {
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 160.dp, bottom = 120.dp),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 130.dp, bottom = 120.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             items(uiMarks) { MarksExpandableCard(it) }
@@ -504,34 +512,18 @@ fun MarksExpandableCard(mark: UiMark) {
 fun AcademicHistoryView(
     historySummary: CGPASummary?,
     historyData: List<GradeHistoryItem>,
+    groupedHistory: Map<String, List<GradeHistoryItem>>,
+    expandedStates: MutableMap<String, Boolean>,
     onSyncClick: () -> Unit
 ) {
     if (historyData.isEmpty()) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("No Academic History Available", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(16.dp))
-                Button(onClick = onSyncClick, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(8.dp)) {
-                    Icon(Lucide.RefreshCw, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Sync History", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
+
         return
-    }
-
-    val groupedHistory = remember(historyData) { historyData.groupBy { it.examMonth ?: "Unknown Semester" } }
-
-    val expandedStates = remember(groupedHistory) {
-        mutableStateMapOf<String, Boolean>().apply {
-            groupedHistory.keys.forEach { this[it] = true }
-        }
     }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 160.dp, bottom = 120.dp),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 130.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // 1. Top Summary Stats
@@ -552,6 +544,15 @@ fun AcademicHistoryView(
                 val semGpa = calculateSemesterGPA(courses)
                 val rotation by animateFloatAsState(if (isExpanded) 180f else 0f, label = "arrow_$examMonth")
 
+                // Format "JAN-2025" to "Jan - 2025"
+                val formattedMonth = examMonth.split("-").let { parts ->
+                    if (parts.size == 2) {
+                        "${parts[0].trim().lowercase().replaceFirstChar { it.uppercase() }} - ${parts[1].trim()}"
+                    } else {
+                        examMonth.lowercase().replaceFirstChar { it.uppercase() }
+                    }
+                }
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -563,13 +564,13 @@ fun AcademicHistoryView(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
-                        Text(text = examMonth.uppercase(Locale.getDefault()), color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text(text = formattedMonth, color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                         Text(text = "${courses.size} Courses", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(horizontalAlignment = Alignment.End) {
-                            Text(text = String.format(Locale.US, "%.2f", semGpa), color = MarksPrimaryAccent, fontSize = 18.sp, fontWeight = FontWeight.Black)
+                            Text(text = String.format(Locale.US, "%.2f", semGpa), color = MaterialTheme.colorScheme.primary, fontSize = 18.sp, fontWeight = FontWeight.Black)
                             Text(text = "Semester GPA", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Medium)
                         }
 
@@ -603,7 +604,7 @@ fun HistoryStatCard(title: String, value: String, icon: androidx.compose.ui.grap
         shape = RoundedCornerShape(12.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp), horizontalAlignment = Alignment.Start) {
-            Icon(icon, contentDescription = null, tint = MarksPrimaryAccent, modifier = Modifier.size(16.dp))
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
             Spacer(Modifier.height(8.dp))
             Text(value, color = MaterialTheme.colorScheme.onSurface, fontSize = 18.sp, fontWeight = FontWeight.Black)
             Text(title, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Medium)

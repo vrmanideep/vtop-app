@@ -81,9 +81,9 @@ import com.composables.icons.lucide.*
 import com.vtop.utils.NotificationHelper
 import android.os.VibrationEffect
 import android.os.Vibrator
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import com.vtop.utils.AnalyticsManager
 
-private val OutingPrimaryAccent = Color(0xFF0090FF)
 private val OutingColorSuccess = Color(0xFF4ADE80)
 private val OutingColorWarning = Color(0xFFFBBF24)
 private val OutingColorDanger = Color(0xFFE53935)
@@ -334,7 +334,7 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
 
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 160.dp, bottom = 120.dp),
+                    contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 140.dp, bottom = 120.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     if (activeOutings.isNotEmpty()) {
@@ -399,8 +399,35 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
                 }
             }
 
-            Box(modifier = Modifier.padding(top = 96.dp)) {
-                OutingsTabSelector(pagerState = pagerState, coroutineScope = coroutineScope)
+            TabRow(
+                selectedTabIndex = pagerState.currentPage,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 80.dp),
+                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                divider = { HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)) },
+                indicator = { tabPositions ->
+                    TabRowDefaults.SecondaryIndicator(
+                        modifier = Modifier.tabIndicatorOffset(tabPositions[pagerState.currentPage]),
+                        color = MaterialTheme.colorScheme.primary,
+                        height = 3.dp
+                    )
+                }
+            ) {
+                Tab(
+                    selected = pagerState.currentPage == 0,
+                    onClick = { coroutineScope.launch { pagerState.animateScrollToPage(0) } },
+                    text = { Text("General", fontSize = 15.sp, fontWeight = if (pagerState.currentPage == 0) FontWeight.Bold else FontWeight.Medium) },
+                    selectedContentColor = MaterialTheme.colorScheme.onSurface,
+                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Tab(
+                    selected = pagerState.currentPage == 1,
+                    onClick = { coroutineScope.launch { pagerState.animateScrollToPage(1) } },
+                    text = { Text("Weekend", fontSize = 15.sp, fontWeight = if (pagerState.currentPage == 1) FontWeight.Bold else FontWeight.Medium) },
+                    selectedContentColor = MaterialTheme.colorScheme.onSurface,
+                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -424,70 +451,10 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
     viewingPdfFile?.let { InAppPdfViewer(it) { viewingPdfFile = null } }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun OutingsTabSelector(
-    pagerState: PagerState,
-    coroutineScope: CoroutineScope
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 8.dp)
-            .height(48.dp)
-            .background(
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                RoundedCornerShape(50)
-            )
-            .border(
-                1.dp,
-                MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
-                RoundedCornerShape(50)
-            )
-            .padding(4.dp)
-    ) {
-        val animatedOffset by animateFloatAsState(
-            targetValue = pagerState.currentPage.toFloat(),
-            animationSpec = spring(stiffness = androidx.compose.animation.core.Spring.StiffnessLow),
-            label = "indicatorOffset"
-        )
-
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .fillMaxWidth(0.5f)
-                .graphicsLayer {
-                    translationX = size.width * animatedOffset
-                }
-                .clip(RoundedCornerShape(50))
-                .background(MaterialTheme.colorScheme.surface)
-        )
-
-        Row(modifier = Modifier.fillMaxSize()) {
-            val colorGen by animateColorAsState(if (pagerState.currentPage == 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, label = "c1")
-            val colorWeek by animateColorAsState(if (pagerState.currentPage == 1) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, label = "c2")
-
-            Box(modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .clip(RoundedCornerShape(50))
-                .clickable { coroutineScope.launch { pagerState.animateScrollToPage(0) } }, contentAlignment = Alignment.Center) {
-                Text("General", color = colorGen, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            }
-            Box(modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .clip(RoundedCornerShape(50))
-                .clickable { coroutineScope.launch { pagerState.animateScrollToPage(1) } }, contentAlignment = Alignment.Center) {
-                Text("Weekend", color = colorWeek, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-    }
-}
-
 @Composable
 private fun ApprovalJourney(statusStr: String, type: String) {
     val s = statusStr.uppercase(Locale.getDefault())
+    val themePrimary = MaterialTheme.colorScheme.primary
 
     // Exact mapping to your requested flow
     val isSubmitted = true // Always true if the card exists
@@ -515,7 +482,7 @@ private fun ApprovalJourney(statusStr: String, type: String) {
             val dotColor = when {
                 currentStep == -1 && index <= 1 -> OutingColorDanger // Show path to rejection
                 isCompleted -> OutingColorSuccess
-                isCurrent -> OutingPrimaryAccent
+                isCurrent -> themePrimary
                 else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
             }
 
@@ -671,6 +638,7 @@ private fun ActiveCardContent(
         else -> "Pending"
     }
 
+    val themePrimary = MaterialTheme.colorScheme.primary
     val statusColor = if (isApproved) OutingColorSuccess else OutingColorWarning
     val statusBg = statusColor.copy(alpha = 0.15f)
 
@@ -744,7 +712,7 @@ private fun ActiveCardContent(
                                 .weight(progressPct)
                                 .height(3.dp)
                                 .background(
-                                    OutingPrimaryAccent,
+                                    themePrimary,
                                     RoundedCornerShape(topStart = 2.dp, bottomStart = 2.dp)
                                 ))
                         }
@@ -887,6 +855,7 @@ private fun FormDatePickerDialog(
     onDismiss: () -> Unit
 ) {
     val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialDateMillis)
+    val themePrimary = MaterialTheme.colorScheme.primary
 
     DatePickerDialog(
         onDismissRequest = onDismiss,
@@ -894,7 +863,7 @@ private fun FormDatePickerDialog(
             TextButton(onClick = {
                 datePickerState.selectedDateMillis?.let { onDateSelected(it) }
                 onDismiss()
-            }) { Text("OK", color = OutingPrimaryAccent, fontWeight = FontWeight.Bold) }
+            }) { Text("OK", color = themePrimary, fontWeight = FontWeight.Bold) }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -904,14 +873,14 @@ private fun FormDatePickerDialog(
         DatePicker(
             state = datePickerState,
             colors = DatePickerDefaults.colors(
-                titleContentColor = OutingPrimaryAccent,
+                titleContentColor = themePrimary,
                 headlineContentColor = MaterialTheme.colorScheme.onSurface,
                 weekdayContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 dayContentColor = MaterialTheme.colorScheme.onSurface,
-                selectedDayContainerColor = OutingPrimaryAccent,
+                selectedDayContainerColor = themePrimary,
                 selectedDayContentColor = Color.White,
-                todayDateBorderColor = OutingPrimaryAccent,
-                todayContentColor = OutingPrimaryAccent
+                todayDateBorderColor = themePrimary,
+                todayContentColor = themePrimary
             )
         )
     }
@@ -926,6 +895,7 @@ private fun FormTimePickerDialog(
     onDismiss: () -> Unit
 ) {
     val timePickerState = rememberTimePickerState(initialHour = initialHour, initialMinute = initialMinute, is24Hour = false)
+    val themePrimary = MaterialTheme.colorScheme.primary
 
     DatePickerDialog(
         onDismissRequest = onDismiss,
@@ -933,7 +903,7 @@ private fun FormTimePickerDialog(
             TextButton(onClick = {
                 onTimeSelected(timePickerState.hour, timePickerState.minute)
                 onDismiss()
-            }) { Text("OK", color = OutingPrimaryAccent, fontWeight = FontWeight.Bold) }
+            }) { Text("OK", color = themePrimary, fontWeight = FontWeight.Bold) }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -948,10 +918,10 @@ private fun FormTimePickerDialog(
                     clockDialColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                     clockDialSelectedContentColor = Color.White,
                     clockDialUnselectedContentColor = MaterialTheme.colorScheme.onSurface,
-                    selectorColor = OutingPrimaryAccent,
-                    timeSelectorSelectedContainerColor = OutingPrimaryAccent.copy(alpha = 0.2f),
+                    selectorColor = themePrimary,
+                    timeSelectorSelectedContainerColor = themePrimary.copy(alpha = 0.2f),
                     timeSelectorUnselectedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    timeSelectorSelectedContentColor = OutingPrimaryAccent,
+                    timeSelectorSelectedContentColor = themePrimary,
                     timeSelectorUnselectedContentColor = MaterialTheme.colorScheme.onSurface
                 )
             )
@@ -968,6 +938,7 @@ private fun OutingWizardDialog(
     onSubmitWeekend: (String, String, String, String, String) -> Unit
 ) {
     val context = LocalContext.current
+    val themePrimary = MaterialTheme.colorScheme.primary
     var currentStep by remember { mutableIntStateOf(1) }
 
     // Shared State
@@ -1051,7 +1022,7 @@ private fun OutingWizardDialog(
     val fieldColors = OutlinedTextFieldDefaults.colors(
         focusedTextColor = MaterialTheme.colorScheme.onSurface,
         unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-        focusedBorderColor = OutingPrimaryAccent,
+        focusedBorderColor = themePrimary,
         unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha=0.3f),
         focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
@@ -1062,19 +1033,19 @@ private fun OutingWizardDialog(
             IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurface) }
             Column(modifier = Modifier.padding(start = 8.dp)) {
                 Text("New request", color = MaterialTheme.colorScheme.onSurface, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Text(type.toTitleCase(), color = OutingPrimaryAccent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text(type.toTitleCase(), color = themePrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             }
         }
 
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 16.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(modifier = Modifier.size(32.dp).background(if (currentStep >= 1) OutingPrimaryAccent else MaterialTheme.colorScheme.outline, CircleShape), contentAlignment = Alignment.Center) { Text("1", color = Color.White, fontWeight = FontWeight.Bold) }
-                Text("Details", color = if (currentStep >= 1) OutingPrimaryAccent else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp), fontWeight = FontWeight.Bold)
+                Box(modifier = Modifier.size(32.dp).background(if (currentStep >= 1) themePrimary else MaterialTheme.colorScheme.outline, CircleShape), contentAlignment = Alignment.Center) { Text("1", color = Color.White, fontWeight = FontWeight.Bold) }
+                Text("Details", color = if (currentStep >= 1) themePrimary else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp), fontWeight = FontWeight.Bold)
             }
-            Box(modifier = Modifier.width(60.dp).height(2.dp).background(if (currentStep == 2) OutingPrimaryAccent else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)).offset(y = (-8).dp))
+            Box(modifier = Modifier.width(60.dp).height(2.dp).background(if (currentStep == 2) themePrimary else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)).offset(y = (-8).dp))
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(modifier = Modifier.size(32.dp).background(if (currentStep == 2) OutingPrimaryAccent else MaterialTheme.colorScheme.surfaceVariant, CircleShape), contentAlignment = Alignment.Center) { Text("2", color = if(currentStep == 2) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold) }
-                Text("Review", color = if (currentStep == 2) OutingPrimaryAccent else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp), fontWeight = FontWeight.Bold)
+                Box(modifier = Modifier.size(32.dp).background(if (currentStep == 2) themePrimary else MaterialTheme.colorScheme.surfaceVariant, CircleShape), contentAlignment = Alignment.Center) { Text("2", color = if(currentStep == 2) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold) }
+                Text("Review", color = if (currentStep == 2) themePrimary else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp), fontWeight = FontWeight.Bold)
             }
         }
 
@@ -1087,8 +1058,8 @@ private fun OutingWizardDialog(
                         items(weekendPlaceOptions) { p ->
                             val isSelected = weekendSelectedPlace == p
                             Box(modifier = Modifier
-                                .border(1.dp, if (isSelected) OutingPrimaryAccent else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(50))
-                                .background(if (isSelected) OutingPrimaryAccent else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(50))
+                                .border(1.dp, if (isSelected) themePrimary else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(50))
+                                .background(if (isSelected) themePrimary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(50))
                                 .clickable { weekendSelectedPlace = p }
                                 .padding(horizontal = 16.dp, vertical = 10.dp)) {
                                 Text(p, color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium)
@@ -1134,14 +1105,14 @@ private fun OutingWizardDialog(
                             Text("Leave", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
                             OutlinedCard(onClick = { showOutDatePicker = true }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.3f))) {
                                 Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Lucide.CalendarDays, null, tint = OutingPrimaryAccent, modifier = Modifier.size(16.dp))
+                                    Icon(Lucide.CalendarDays, null, tint = themePrimary, modifier = Modifier.size(16.dp))
                                     Text(displayDateFmt.format(Date(outDateMillis)), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium)
                                 }
                             }
                             Spacer(modifier = Modifier.height(12.dp))
                             OutlinedCard(onClick = { showOutTimePicker = true }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.3f))) {
                                 Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Lucide.Clock, null, tint = OutingPrimaryAccent, modifier = Modifier.size(16.dp))
+                                    Icon(Lucide.Clock, null, tint = themePrimary, modifier = Modifier.size(16.dp))
                                     Text(formatTimeDisplay(outHour, outMinute), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium)
                                 }
                             }
@@ -1150,14 +1121,14 @@ private fun OutingWizardDialog(
                             Text("Return", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
                             OutlinedCard(onClick = { showInDatePicker = true }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.3f))) {
                                 Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Lucide.CalendarDays, null, tint = OutingPrimaryAccent, modifier = Modifier.size(16.dp))
+                                    Icon(Lucide.CalendarDays, null, tint = themePrimary, modifier = Modifier.size(16.dp))
                                     Text(displayDateFmt.format(Date(inDateMillis)), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium)
                                 }
                             }
                             Spacer(modifier = Modifier.height(12.dp))
                             OutlinedCard(onClick = { showInTimePicker = true }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.3f))) {
                                 Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Lucide.Clock, null, tint = OutingPrimaryAccent, modifier = Modifier.size(16.dp))
+                                    Icon(Lucide.Clock, null, tint = themePrimary, modifier = Modifier.size(16.dp))
                                     Text(formatTimeDisplay(inHour, inMinute), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium)
                                 }
                             }
@@ -1173,7 +1144,7 @@ private fun OutingWizardDialog(
                     else currentStep = 2
                 }},
                 modifier = Modifier.fillMaxWidth().padding(24.dp).height(56.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = if (canProceed) OutingPrimaryAccent else MaterialTheme.colorScheme.surfaceVariant),
+                colors = ButtonDefaults.buttonColors(containerColor = if (canProceed) themePrimary else MaterialTheme.colorScheme.surfaceVariant),
                 shape = RoundedCornerShape(16.dp)
             ) { Text("Next — review >", color = if (canProceed) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, fontSize = 16.sp) }
 
@@ -1230,7 +1201,7 @@ private fun OutingWizardDialog(
                             onSubmitGeneral(generalPlace, purpose, subOutDate, subInDate, subOutTime, subInTime)
                         }
                     },
-                    modifier = Modifier.weight(1f).height(56.dp), colors = ButtonDefaults.buttonColors(containerColor = OutingPrimaryAccent), shape = RoundedCornerShape(16.dp)
+                    modifier = Modifier.weight(1f).height(56.dp), colors = ButtonDefaults.buttonColors(containerColor = themePrimary), shape = RoundedCornerShape(16.dp)
                 ) { Text("Submit", color = Color.White, fontWeight = FontWeight.Black, fontSize = 16.sp) }
             }
         }
@@ -1243,6 +1214,7 @@ private fun OutingWizardDialog(
 @Composable
 fun InAppPdfViewer(pdfFile: File, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val themePrimary = MaterialTheme.colorScheme.primary
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
@@ -1277,7 +1249,7 @@ fun InAppPdfViewer(pdfFile: File, onDismiss: () -> Unit) {
                 IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, null, tint = MaterialTheme.colorScheme.onSurface) }
                 Text("Outpass Document", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 IconButton(onClick = { savePdfToDownloads(context, pdfFile, pdfFile.name) }) {
-                    Icon(Lucide.FileDown, null, tint = OutingPrimaryAccent)
+                    Icon(Lucide.FileDown, null, tint = themePrimary)
                 }
             }
             Box(modifier = Modifier
@@ -1303,7 +1275,7 @@ fun InAppPdfViewer(pdfFile: File, onDismiss: () -> Unit) {
                             ),
                         contentScale = ContentScale.Fit
                     )
-                } ?: CircularProgressIndicator(color = OutingPrimaryAccent)
+                } ?: CircularProgressIndicator(color = themePrimary)
             }
         }
     }
