@@ -268,7 +268,7 @@ object GlobalSyncer {
                 val semInfo = Vault.getSelectedSemester(context)
                 val semId = semInfo[0] ?: ""
 
-                // --- UPDATED: Helper function for UI updates ---
+                val showOutings = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE).getBoolean("SHOW_OUTINGS", true)
                 suspend fun updateStatus(msg: String) {
                     withContext(Dispatchers.Main) { AppBridge.syncStatus.value = msg }
                 }
@@ -286,7 +286,12 @@ object GlobalSyncer {
                         "ATTENDANCE" -> { updateStatus("Syncing Attendance..."); syncAttendance(context, client, semId, authorizedId) }
                         "EXAMS" -> { updateStatus("Syncing Exams..."); syncExams(context, client, semId) }
                         "MARKS" -> { updateStatus("Syncing Marks & Grades..."); syncMarks(context, client, semId) }
-                        "OUTINGS" -> { updateStatus("Syncing Outings..."); syncOutings(context, client, authorizedId) }
+                        "OUTINGS" -> {
+                            if (showOutings) {
+                                updateStatus("Syncing Outings...")
+                                syncOutings(context, client, authorizedId)
+                            }
+                        }
                         "PROFILE" -> {
                             updateStatus("Syncing Profile...")
                             Log.d(TAG, "[SYNC STEP 7.1] Fetching Profile...")
@@ -322,8 +327,9 @@ object GlobalSyncer {
                     if (priority != "MARKS") {
                         updateStatus("Syncing Marks & Grades..."); syncMarks(context, client, semId)
                     }
-                    if (priority != "OUTINGS") {
-                        updateStatus("Syncing Outings..."); syncOutings(
+                    if (priority != "OUTINGS" && showOutings) {
+                        updateStatus("Syncing Outings...")
+                        syncOutings(
                             context,
                             client,
                             authorizedId

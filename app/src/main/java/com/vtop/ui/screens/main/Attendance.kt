@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.*
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vtop.models.AttendanceModel
 import com.vtop.utils.AnalyticsManager
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 // --- STRICT PREMIUM COLORS (Bypasses Material You Tint) ---
@@ -213,13 +215,14 @@ private fun BunkPredictorChip(bunkState: BunkState) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @SuppressLint("NewApi")
 @Composable
 fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> Unit = {}) {
     LaunchedEffect(Unit) {
         AnalyticsManager.logScreenView("Attendance_Screen")
     }
+
     var selectedCourse by remember { mutableStateOf<AttendanceModel?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -228,7 +231,7 @@ fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> U
         return
     }
 
-    // Evaluate Risk using our True Count engine, not VTOP's percentages
+    // Evaluate Risk using our True Count engine
     val atRiskCount = attendanceData.count { item ->
         val (_, total) = getRealAttendanceCounts(item)
         if (total == 0) false else {
@@ -237,39 +240,64 @@ fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> U
         }
     }
 
-    val sortedCourses = remember(attendanceData) {
-        attendanceData.sortedWith(
-            compareBy<AttendanceModel> { it.courseCode ?: "" }.thenBy {
-                val type = it.courseType?.uppercase(Locale.getDefault()) ?: ""
-                when {
-                    type.contains("TH") || type.contains("ETH") -> 0
-                    type.contains("LO") || type.contains("ELA") || type.contains("LAB") -> 1
-                    type.contains("PJT") || type.contains("EPJ") -> 2
-                    else -> 3
-                }
+    // Group courses by type
+    val groupedCourses = remember(attendanceData) {
+        val theory = mutableListOf<AttendanceModel>()
+        val lab = mutableListOf<AttendanceModel>()
+        val project = mutableListOf<AttendanceModel>()
+        val other = mutableListOf<AttendanceModel>()
+
+        attendanceData.forEach { course ->
+            val type = course.courseType?.uppercase(Locale.getDefault()) ?: ""
+            when {
+                type.contains("TH") || type.contains("ETH") -> theory.add(course)
+                type.contains("LO") || type.contains("ELA") || type.contains("LAB") -> lab.add(course)
+                type.contains("PJT") || type.contains("EPJ") -> project.add(course)
+                else -> other.add(course)
             }
-        )
+        }
+
+        // Only keep categories that actually have courses
+        val map = mutableMapOf<String, List<AttendanceModel>>()
+        if (theory.isNotEmpty()) map["Theory"] = theory.sortedBy { it.courseCode }
+        if (lab.isNotEmpty()) map["Lab"] = lab.sortedBy { it.courseCode }
+        if (project.isNotEmpty()) map["Project"] = project.sortedBy { it.courseCode }
+        if (other.isNotEmpty()) map["Other"] = other.sortedBy { it.courseCode }
+        map
     }
 
+    val categories = groupedCourses.keys.toList()
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { categories.size })
+    val coroutineScope = rememberCoroutineScope()
+
+    // ── Single Scrollable Column containing Headers, TabRow, and Pager ──
+    // This ensures everything scrolls together.
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
             start = 20.dp,
             end = 20.dp,
-            top = 96.dp,
-            bottom = 120.dp
-        ),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            top = 96.dp, // Padding for GlobalTopBar
+            bottom = 120.dp // Padding for BottomNav/Dock
+        )
     ) {
+        // 1. Header Cards (Bunk Simulator & Risk)
         item {
-            Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max).padding(bottom = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 Card(
                     modifier = Modifier.weight(1f).fillMaxHeight().clickable { onLaunchSimulator() },
                     colors = CardDefaults.cardColors(containerColor = premiumSurfaceColor()),
                     border = BorderStroke(1.dp, premiumBorderColor()),
                     shape = RoundedCornerShape(16.dp)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp).fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column(
+                        modifier = Modifier.padding(16.dp).fillMaxSize(),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
                         Icon(Icons.Default.DateRange, contentDescription = "Simulator", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
                         Spacer(Modifier.height(8.dp))
                         Text(text = "Bunk Simulator", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
@@ -281,7 +309,11 @@ fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> U
                     border = BorderStroke(1.dp, if (atRiskCount > 0) MaterialTheme.colorScheme.error.copy(alpha = 0.3f) else premiumBorderColor()),
                     shape = RoundedCornerShape(16.dp)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp).fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column(
+                        modifier = Modifier.padding(16.dp).fillMaxSize(),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
                         Text(text = atRiskCount.toString(), color = if (atRiskCount > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface, fontSize = 32.sp, fontWeight = FontWeight.Black)
                         Spacer(Modifier.height(8.dp))
                         Text(text = "Courses at Risk", color = if (atRiskCount > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
@@ -289,8 +321,66 @@ fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> U
                 }
             }
         }
-        item { Text(text = "Detailed Breakdown", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
-        items(sortedCourses) { course -> AttendanceCard(item = course, onClick = { selectedCourse = course }) }
+
+        // 2. TabRow (No pills, standard underline)
+        item {
+            TabRow(
+                selectedTabIndex = pagerState.currentPage,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                containerColor = Color.Transparent, // Inherit background
+                divider = { HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)) },
+                indicator = { tabPositions ->
+                    TabRowDefaults.SecondaryIndicator(
+                        modifier = Modifier.tabIndicatorOffset(tabPositions[pagerState.currentPage]),
+                        color = MaterialTheme.colorScheme.primary,
+                        height = 3.dp
+                    )
+                }
+            ) {
+                categories.forEachIndexed { index, title ->
+                    val isSelected = pagerState.currentPage == index
+                    Tab(
+                        selected = isSelected,
+                        onClick = { coroutineScope.launch { pagerState.animateScrollToPage(index) } },
+                        text = {
+                            Text(
+                                text = title,
+                                fontSize = 15.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        },
+                        selectedContentColor = MaterialTheme.colorScheme.onSurface,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        // 3. Pager containing the lists
+        // Note: HorizontalPager inside LazyColumn requires a fixed height or weight.
+        // We calculate an approximate height based on the longest list so it doesn't clip.
+        item {
+            val maxListSize = groupedCourses.values.maxOfOrNull { it.size } ?: 1
+            // Approx 120dp per card + 16dp spacing
+            val pagerHeight = (maxListSize * 136).dp
+
+            androidx.compose.foundation.pager.HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxWidth().height(pagerHeight)
+            ) { page ->
+                val currentCategory = categories[page]
+                val courses = groupedCourses[currentCategory] ?: emptyList()
+
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    courses.forEach { course ->
+                        AttendanceCard(item = course, onClick = { selectedCourse = course })
+                    }
+                }
+            }
+        }
     }
 
     if (selectedCourse != null) {
@@ -300,7 +390,6 @@ fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> U
         }
     }
 }
-
 @Composable
 fun AttendanceBottomSheetContent(course: AttendanceModel, onSimulateClick: () -> Unit, onBack: () -> Unit) {
     val cType = course.courseType ?: ""

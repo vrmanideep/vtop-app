@@ -45,7 +45,6 @@ interface AuthActionCallback {
 
 enum class AuthState { FORM, LOADING_SEMESTERS, SELECT_SEMESTER, DOWNLOADING_DATA, OTP }
 enum class DockPosition { TOP, BOTTOM, LEFT, RIGHT }
-// REMOVED AMOLED enum
 enum class AppThemeMode { SYSTEM, LIGHT, DARK }
 
 // --- DARK THEME (Base) ---
@@ -104,7 +103,12 @@ fun AppTheme(
     val baseColorScheme = when {
         useDynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            // Explicitly override the dynamic error color with our vibrant red
+            if (darkTheme) {
+                dynamicDarkColorScheme(context).copy(error = VtopRed)
+            } else {
+                dynamicLightColorScheme(context).copy(error = VtopRed)
+            }
         }
         darkTheme -> DarkColors.copy(primary = customAccent)
         else -> LightColors.copy(primary = customAccent)
@@ -123,10 +127,6 @@ fun AppTheme(
         }
     }
 
-    MaterialTheme(
-        colorScheme = finalColorScheme,
-        content = content
-    )
     MaterialTheme(
         colorScheme = finalColorScheme,
         content = content

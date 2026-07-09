@@ -193,4 +193,6 @@ class TelemetryViewModel(
             refreshSessions()
         }
     }
+
+    fun deleteSession(session: com.vtop.telemetry.viewer.TelemetrySessionInfo) {}
 }

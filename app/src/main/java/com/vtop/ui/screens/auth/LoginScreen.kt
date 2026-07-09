@@ -32,6 +32,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vtop.ui.core.LoginBridge
@@ -112,16 +113,35 @@ fun LoginScreen(savedReg: String?, savedPass: String?, callback: AuthActionCallb
 
         val otpResolver = AppBridge.currentOtpResolver.value
         if (otpResolver != null) {
-            OtpForm(
-                onVerify = { otp ->
-                    otpResolver.submit(otp)
-                    AppBridge.currentOtpResolver.value = null
-                },
-                onCancel = {
-                    otpResolver.cancel()
-                    AppBridge.currentOtpResolver.value = null
-                }
-            )
+
+            // Check if we should prompt for Google Sign-In while they wait for the OTP
+            var showGooglePrompt by remember {
+                mutableStateOf(com.vtop.utils.Vault.getGoogleEmail(context).isEmpty() && !com.vtop.utils.Vault.hasPromptedGoogleSignIn(context))
+            }
+
+            if (showGooglePrompt) {
+                GoogleSignInDialog(
+                    onDismiss = {
+                        com.vtop.utils.Vault.setHasPromptedGoogleSignIn(context, true)
+                        showGooglePrompt = false
+                    },
+                    onSuccess = {
+                        showGooglePrompt = false
+                    }
+                )
+            } else {
+                // Only show the OTP form AFTER the dialog is dismissed or completed
+                OtpForm(
+                    onVerify = { otp ->
+                        otpResolver.submit(otp)
+                        AppBridge.currentOtpResolver.value = null
+                    },
+                    onCancel = {
+                        otpResolver.cancel()
+                        AppBridge.currentOtpResolver.value = null
+                    }
+                )
+            }
         }
     }
 }
@@ -148,75 +168,78 @@ private fun LoginFormView(savedReg: String?, savedPass: String?, isLoading: Bool
         modifier = Modifier.fillMaxWidth(0.85f),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // Logo Header
         Box(
             modifier = Modifier
                 .size(64.dp)
-                .background(MaterialTheme.colorScheme.surface, CircleShape)
-                .border(2.dp, AppColors.glassBorder, CircleShape),
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), CircleShape)
+                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Text("V", color = MaterialTheme.colorScheme.primary, fontSize = 28.sp, fontWeight = FontWeight.Black)
+            Text("V", color = MaterialTheme.colorScheme.primary, fontSize = 28.sp, fontWeight = FontWeight.Medium)
         }
         Spacer(Modifier.height(16.dp))
-        Text(text = "VTOP", color = MaterialTheme.colorScheme.onBackground, fontSize = 32.sp, fontWeight = FontWeight.Black, letterSpacing = 4.sp)
-        Text(text = "VIT-AP STUDENT PORTAL", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+        Text(text = "VTOP", color = MaterialTheme.colorScheme.onBackground, fontSize = 26.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        Spacer(Modifier.height(4.dp))
+        Text(text = "VIT-AP student portal", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
 
         Spacer(Modifier.height(40.dp))
 
-        val colors = OutlinedTextFieldDefaults.colors(
+        val inputColors = OutlinedTextFieldDefaults.colors(
             focusedTextColor = MaterialTheme.colorScheme.onBackground,
             unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
             focusedBorderColor = MaterialTheme.colorScheme.primary,
-            unfocusedBorderColor = AppColors.glassBorder,
-            focusedContainerColor = MaterialTheme.colorScheme.surface,
-            unfocusedContainerColor = MaterialTheme.colorScheme.surface
+            unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
         )
 
-        OutlinedTextField(
-            value = regNo,
-            onValueChange = { regNo = it.uppercase() },
-            label = { Text("Username", fontSize = 12.sp) },
-            singleLine = true,
-            enabled = !isLoading,
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Text,
-                imeAction = ImeAction.Next,
-                autoCorrectEnabled = false
-            ),
-            modifier = Modifier.fillMaxWidth(),
-            colors = colors,
-            shape = RoundedCornerShape(12.dp)
-        )
+        // Username Field
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text("Username", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp, start = 2.dp))
+            OutlinedTextField(
+                value = regNo,
+                onValueChange = { regNo = it.uppercase() },
+                singleLine = true,
+                enabled = !isLoading,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Next, autoCorrectEnabled = false),
+                modifier = Modifier.fillMaxWidth(),
+                colors = inputColors,
+                shape = RoundedCornerShape(10.dp)
+            )
+        }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(16.dp))
 
-        OutlinedTextField(
-            value = password,
-            onValueChange = { password = it },
-            label = { Text("Password", fontSize = 12.sp) },
-            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-            enabled = !isLoading,
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Text,
-                imeAction = ImeAction.Done,
-                autoCorrect = false
-            ),
-            trailingIcon = {
-                Text(
-                    text = if (passwordVisible) "HIDE" else "SHOW",
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.clickable(enabled = !isLoading) { passwordVisible = !passwordVisible }.padding(8.dp),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            modifier = Modifier.fillMaxWidth(),
-            colors = colors,
-            shape = RoundedCornerShape(12.dp)
-        )
+        // Password Field
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text("Password", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp, start = 2.dp))
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                enabled = !isLoading,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Done, autoCorrectEnabled = false),
+                trailingIcon = {
+                    Text(
+                        text = if (passwordVisible) "Hide" else "Show",
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .clickable(enabled = !isLoading) { passwordVisible = !passwordVisible }
+                            .padding(8.dp),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = inputColors,
+                shape = RoundedCornerShape(10.dp)
+            )
+        }
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(32.dp))
 
+        // Primary Log In Button
         Button(
             onClick = {
                 LoginBridge.cachedRegNo = regNo
@@ -224,39 +247,31 @@ private fun LoginFormView(savedReg: String?, savedPass: String?, isLoading: Bool
                 callback.onLoginSubmit(regNo, password)
             },
             enabled = !isLoading && regNo.isNotBlank() && password.isNotBlank(),
-            modifier = Modifier.fillMaxWidth().height(50.dp),
+            modifier = Modifier.fillMaxWidth().height(52.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
-                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                disabledContentColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f)
             ),
-            shape = RoundedCornerShape(12.dp)
+            shape = RoundedCornerShape(10.dp)
         ) {
-            Text(
-                text = if (isLoading) "LOGGING IN..." else "LOGIN",
-                fontWeight = FontWeight.Black,
-                letterSpacing = 1.sp
-            )
-        }
-
-        if (isLoading) {
-            Spacer(Modifier.height(16.dp))
-            LinearProgressIndicator(
-                modifier = Modifier.fillMaxWidth(0.5f).height(4.dp).clip(CircleShape),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.surfaceVariant
-            )
+            if (isLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    strokeWidth = 2.dp
+                )
+            } else {
+                Text(text = "Log in", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
         }
     }
 }
-
 @Composable
 private fun SemesterPickerView(semesters: List<Map<String, String>>, isDownloading: Boolean, callback: AuthActionCallback) {
     val context = LocalContext.current
 
-    // THE FIX: The old Ghost function has been entirely ripped out.
-    // The UI now explicitly trusts the "isCurrent" tag generated by the timeline engine below.
     val currentSemIndex = remember(semesters) {
         semesters.indexOfFirst { it["isCurrent"] == "true" }.coerceAtLeast(0)
     }
@@ -275,20 +290,7 @@ private fun SemesterPickerView(semesters: List<Map<String, String>>, isDownloadi
         )
 
         if (isDownloading) {
-            var showGoogleDialog by remember { mutableStateOf(!com.vtop.utils.Vault.hasPromptedGoogleSignIn(context) && com.vtop.utils.Vault.getGoogleEmail(context).isEmpty()) }
-
-            if (showGoogleDialog) {
-                GoogleSignInDialog(
-                    onDismiss = {
-                        com.vtop.utils.Vault.setHasPromptedGoogleSignIn(context, true)
-                        showGoogleDialog = false
-                    },
-                    onSuccess = {
-                        showGoogleDialog = false
-                    }
-                )
-            }
-
+            // Wait state logic if any applies during download
             CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -306,7 +308,6 @@ private fun SemesterPickerView(semesters: List<Map<String, String>>, isDownloadi
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = opacity)),
                         border = BorderStroke(1.dp, AppColors.glassBorder.copy(alpha = opacity)),
                         modifier = Modifier.fillMaxWidth().clickable {
-                            // MANUALLY TRIGGERING IS MANDATORY. It won't auto-login on minimize.
                             callback.onSemesterSelect(semId, semName)
                         }
                     ) {
@@ -451,8 +452,6 @@ private fun loadSemestersFromCache(context: Context): List<Map<String, String>> 
                 }
             }
 
-            // THE OVERLAP FIX: Add exactly 23 hours, 59 mins, 59 secs to the true end date.
-            // This ensures the semester dies at 23:59:59 on its final exam date.
             if (trueEndMs != Long.MAX_VALUE) {
                 trueEndMs += (23L * 3600 + 59 * 60 + 59) * 1000
             }

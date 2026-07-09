@@ -52,25 +52,16 @@ object Telemetry {
 
             if (initialized) return
 
-            session = TelemetrySession.newSession()
+            // Only initialize the session and file if the user has enabled it
+            if (isEnabled()) {
+                session = TelemetrySession.newSession()
 
-            val dir = File(
-                appContext.filesDir,
-                "telemetry"
-            )
+                val dir = File(appContext.filesDir, "telemetry")
+                if (!dir.exists()) dir.mkdirs()
 
-            if (!dir.exists()) {
-                dir.mkdirs()
+                sessionFile = File(dir, "${session.id}.jsonl")
+                TelemetryWriter.init(sessionFile)
             }
-
-            sessionFile = File(
-                dir,
-                "${session.id}.jsonl"
-            )
-
-            TelemetryWriter.init(sessionFile)
-
-            initialized = true
         }
     }
 

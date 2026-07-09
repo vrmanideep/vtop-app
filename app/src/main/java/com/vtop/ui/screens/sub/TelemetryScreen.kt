@@ -45,7 +45,7 @@ private val TextMuted = Color(0xFF8C909F)
 
 private val LogInfo = Color(0xFF3B82F6)
 private val LogWarn = Color(0xFFF59E0B)
-private val LogError = Color(0xFFEF4444)
+private val LogError = Color(0xE6E74B4B)
 private val LogSuccess = Color(0xFF10B981)
 private val LogDebug = Color(0xFF94A3B8)
 
@@ -124,7 +124,9 @@ fun TelemetryScreen(
                                         vm.openSession(session)
                                         scope.launch { drawerState.close() }
                                     },
-                                    onDelete = { /* Hook to viewmodel delete specific session if available */ }
+                                    onDelete = {
+                                        vm.deleteSession(session)
+                                    }
                                 )
                                 HorizontalDivider(color = OutlineDark)
                             }

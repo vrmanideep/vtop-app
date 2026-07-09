@@ -774,16 +774,18 @@ public class VtopClient {
 
                 long start = SystemClock.elapsedRealtime();
 
-                Telemetry.INSTANCE.log(
-                        TelemetryStatus.INFO,
-                        "HTTP",
-                        request.method() + " " + request.url().encodedPath(),
-                        TelemetryModule.NETWORK,
-                        java.util.Map.of(
-                                "method", request.method(),
-                                "url", request.url().toString()
-                        )
-                );
+                if (Telemetry.INSTANCE.isEnabled()) {
+                    Telemetry.INSTANCE.log(
+                            TelemetryStatus.INFO,
+                            "HTTP",
+                            request.method() + " " + request.url().encodedPath(),
+                            TelemetryModule.NETWORK,
+                            java.util.Map.of(
+                                    "method", request.method(),
+                                    "url", request.url().toString()
+                            )
+                    );
+                }
 
                 try {
 
@@ -791,20 +793,22 @@ public class VtopClient {
 
                     long duration = SystemClock.elapsedRealtime() - start;
 
-                    Telemetry.INSTANCE.log(
-                            response.isSuccessful()
-                                    ? TelemetryStatus.SUCCESS
-                                    : TelemetryStatus.WARNING,
-                            "HTTP",
-                            request.method() + " " + request.url().encodedPath(),
-                            TelemetryModule.NETWORK,
-                            java.util.Map.of(
-                                    "method", request.method(),
-                                    "url", request.url().toString(),
-                                    "status", response.code(),
-                                    "durationMs", duration
-                            )
-                    );
+                    if (Telemetry.INSTANCE.isEnabled()) {
+                        Telemetry.INSTANCE.log(
+                                response.isSuccessful()
+                                        ? TelemetryStatus.SUCCESS
+                                        : TelemetryStatus.WARNING,
+                                "HTTP",
+                                request.method() + " " + request.url().encodedPath(),
+                                TelemetryModule.NETWORK,
+                                java.util.Map.of(
+                                        "method", request.method(),
+                                        "url", request.url().toString(),
+                                        "status", response.code(),
+                                        "durationMs", duration
+                                )
+                        );
+                    }
 
                     return response;
 
@@ -812,18 +816,20 @@ public class VtopClient {
 
                     long duration = SystemClock.elapsedRealtime() - start;
 
-                    Telemetry.INSTANCE.log(
-                            TelemetryStatus.ERROR,
-                            "HTTP",
-                            e.getClass().getSimpleName(),
-                            TelemetryModule.NETWORK,
-                            java.util.Map.of(
-                                    "method", request.method(),
-                                    "url", request.url().toString(),
-                                    "durationMs", duration,
-                                    "exception", e.getClass().getSimpleName()
-                            )
-                    );
+                    if (Telemetry.INSTANCE.isEnabled()) {
+                        Telemetry.INSTANCE.log(
+                                TelemetryStatus.ERROR,
+                                "HTTP",
+                                e.getClass().getSimpleName(),
+                                TelemetryModule.NETWORK,
+                                java.util.Map.of(
+                                        "method", request.method(),
+                                        "url", request.url().toString(),
+                                        "durationMs", duration,
+                                        "exception", e.getClass().getSimpleName()
+                                )
+                        );
+                    }
 
                     throw e;
                 }
