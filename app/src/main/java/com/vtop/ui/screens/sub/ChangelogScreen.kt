@@ -35,6 +35,25 @@ data class ReleaseLog(
 
 val releaseHistory = listOf(
     ReleaseLog(
+        version = "Version 1.1.11",
+        tag = "v1.1.11",
+        date = "16 Jul 2026",
+        features = listOf(
+            "Improved Faculty Directory with searchable VIT-AP faculty information.",
+            "Improved VTOP Portal shortcut within the Profile section.",
+            "Migrated Academic Calendar and Faculty data to the new storage architecture."
+        ),
+        fixes = listOf(
+            "Fixed Profile navigation and Android back behavior across nested pages.",
+            "Removed duplicate top bars from Profile child screens.",
+            "Fixed Portal launch stability and navigation issues.",
+            "Improved timetable export reliability and rendering.",
+            "Resolved multiple legacy storage references after the architecture migration.",
+            "General bug fixes, performance improvements and UI polish."
+        )
+    ),
+
+    ReleaseLog(
         version = "Version 1.1.10",
         tag = "v1.1.10",
         date = "01 Jul 2026",
