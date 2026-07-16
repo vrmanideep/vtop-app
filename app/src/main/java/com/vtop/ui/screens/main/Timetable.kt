@@ -278,9 +278,10 @@ fun Timetable(
 
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = todayIndex)
 
+    // FIX: Removed the + 1 offset since the NextClassCard is no longer item 0 in the list
     LaunchedEffect(todayIndex) {
         if (todayIndex >= 0) {
-            listState.scrollToItem(todayIndex + 1)
+            listState.scrollToItem(todayIndex)
         }
     }
 
@@ -345,10 +346,10 @@ fun Timetable(
     var selectedCourse by remember { mutableStateOf<ProcessedCourse?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    val showJumpToToday by remember { derivedStateOf { abs(listState.firstVisibleItemIndex - (todayIndex + 1)) > 3 } }
+    // FIX: Removed the + 1 offset here as well
+    val showJumpToToday by remember { derivedStateOf { abs(listState.firstVisibleItemIndex - todayIndex) > 3 } }
     var currentTimeStr by remember { mutableStateOf(SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())) }
 
-    // THE FIX: Normalized String list for exact chronological lookup of exams
     val sortedExams = remember(examsData) {
         val formats = listOf("dd-MMM-yyyy", "yyyy-MM-dd", "dd/MM/yyyy", "dd-MM-yyyy", "MMM dd, yyyy")
         val standardSdf = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
@@ -379,15 +380,11 @@ fun Timetable(
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = 96.dp, bottom = 120.dp),
+            // Adjusted padding slightly to guarantee clearance
+            contentPadding = PaddingValues(top = 210.dp, bottom = 120.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item {
-                NextClassCard(timetable, allReminders, sortedExams, normalizedHolidays, currentTimeStr)
-            }
-
-
             itemsIndexed(timelineDates) { index, dateCal ->
                 val dateStr = sdfDateKey.format(dateCal.time)
                 val dayName = sdfDayFull.format(dateCal.time)
@@ -455,12 +452,32 @@ fun Timetable(
             }
         }
 
+        // --- PINNED TILE OVERLAY ---
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 80.dp) // Sit directly below the standard global TopBar
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.background) // Masks the scrolling items underneath cleanly
+                .padding(top = 16.dp, bottom = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            NextClassCard(
+                timetable = timetable,
+                allReminders = allReminders,
+                sortedExams = sortedExams,
+                normalizedHolidays = normalizedHolidays,
+                currentTimeStr = currentTimeStr
+            )
+        }
+
         AnimatedVisibility(
             visible = showJumpToToday, enter = fadeIn() + slideInVertically { it }, exit = fadeOut() + slideOutVertically { it },
             modifier = Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = 100.dp)
         ) {
             Button(
-                onClick = { coroutineScope.launch { listState.animateScrollToItem(todayIndex + 1) } },
+                // FIX: Removed the + 1 offset here too
+                onClick = { coroutineScope.launch { listState.animateScrollToItem(todayIndex) } },
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onSurface),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), shape = RoundedCornerShape(20.dp), elevation = ButtonDefaults.buttonElevation(8.dp)
             ) {
@@ -628,8 +645,13 @@ fun NextClassCard(
                     } else if (event is ProcessedCourse) {
                         val activeReminder = allReminders.find { it.classId == event.classId }
                         Text(event.mergedSlot.clean(), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = themeOnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (activeReminder != null) Text(activeReminder.type.uppercase(), fontSize = 10.sp, fontWeight = FontWeight.Black, color = ColorDanger, modifier = Modifier.padding(top = 4.dp))
-                        else Text(event.venue.clean(), fontSize = 12.sp, color = themeOnSurfaceVariant)
+
+                        // FIX: Always render the venue beneath the slot
+                        Text(event.venue.clean(), fontSize = 12.sp, color = themeOnSurfaceVariant)
+
+                        if (activeReminder != null) {
+                            Text(activeReminder.type.uppercase(), fontSize = 10.sp, fontWeight = FontWeight.Black, color = ColorDanger, modifier = Modifier.padding(top = 4.dp))
+                        }
                     }
                 }
             }
@@ -828,18 +850,25 @@ fun ClassTile(course: ProcessedCourse, status: TimeStatus, reminderType: String?
     val themePrimary = MaterialTheme.colorScheme.primary
 
     Card(
-        modifier = Modifier.widthIn(min = 85.dp).wrapContentWidth().heightIn(min = 110.dp).clickable { onClick() },
+        modifier = Modifier.widthIn(min = 90.dp).wrapContentWidth().heightIn(min = 110.dp).clickable { onClick() },
         shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = getPremiumSurfaceColor()),
         border = when (status) { TimeStatus.ONGOING -> BorderStroke(1.5.dp, themePrimary); TimeStatus.NEXT -> BorderStroke(1.dp, themePrimary.copy(alpha = 0.5f)); else -> BorderStroke(1.dp, getPremiumBorderColor()) }
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.padding(12.dp).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
                 Text(course.courseCode.clean(), fontSize = 11.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
+
                 val pillColor = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF0A0A0A) else Color(0xFFF5F5F5)
                 Box(modifier = Modifier.padding(top = 4.dp).background(pillColor, RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 3.dp)) {
                     Text(course.mergedTimeSlot.split("-").firstOrNull()?.trim() ?: "", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                 }
+
                 Spacer(modifier = Modifier.weight(1f).heightIn(min = 8.dp))
+
+                // --- Venue text restored here ---
+                Text(course.venue.clean(), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(modifier = Modifier.height(2.dp))
+
                 Text(course.mergedSlot.clean(), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }

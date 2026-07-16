@@ -1,6 +1,8 @@
 package com.vtop.ui.screens.sub
 
 import android.content.Intent
+import android.util.Log
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,11 +27,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.activity.compose.BackHandler
+import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vtop.telemetry.viewer.TelemetryViewModel
 import com.vtop.telemetry.viewer.TelemetrySessionInfo
 import com.vtop.telemetry.model.TelemetryEvent
 import kotlinx.coroutines.launch
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -175,16 +179,33 @@ fun TelemetryScreen(
 
                             // Share Button
                             IconButton(onClick = {
-                                if (events.isNotEmpty()) {
-                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "text/plain"
-                                        val logText = events.joinToString("\n") { event ->
-                                            "${formatTimestampOnly(event.timestamp)} [${event.level.name}] ${event.module.name}: ${event.message}"
+                                selectedSession?.let { session ->
+                                    try {
+                                        val logFile = File(context.filesDir, "telemetry/${session.sessionId}.jsonl")
+                                        if (logFile.exists()) {
+                                            val authority = "${context.packageName}.provider"
+                                            Log.d("TELEMETRY", "Path = ${logFile.absolutePath}")
+                                            Log.d("TELEMETRY", "Exists = ${logFile.exists()}")
+                                            Log.d("TELEMETRY", "Length = ${logFile.length()}")
+                                            val uri = FileProvider.getUriForFile(
+                                                context,
+                                                authority,
+                                                logFile
+                                            )
+                                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                                type = "*/*" // Use application/json or octet-stream
+                                                putExtra(Intent.EXTRA_STREAM, uri)
+                                                putExtra(Intent.EXTRA_SUBJECT, "Telemetry File: ${session.sessionId}.jsonl")
+                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            }
+                                            context.startActivity(Intent.createChooser(shareIntent, "Share Telemetry File"))
+                                        } else {
+                                            Toast.makeText(context, "Log file not found.", Toast.LENGTH_SHORT).show()
                                         }
-                                        putExtra(Intent.EXTRA_TEXT, logText)
-                                        putExtra(Intent.EXTRA_SUBJECT, "Telemetry Log: ${selectedSession?.sessionId}")
+                                    } catch (e: Exception) {
+                                        e.printStackTrace()
+                                        Toast.makeText(context, "Error sharing file. Ensure FileProvider is setup.", Toast.LENGTH_SHORT).show()
                                     }
-                                    context.startActivity(Intent.createChooser(shareIntent, "Share Logs"))
                                 }
                             }, modifier = Modifier.size(32.dp)) {
                                 Icon(Icons.Default.Share, "Share", tint = TextMuted, modifier = Modifier.size(18.dp))

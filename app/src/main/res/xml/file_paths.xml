@@ -14,8 +14,8 @@
         path="/" />
 
     <files-path
-        name="debug_logs"
-        path="logs/" />
+        name="telemetry_logs"
+        path="telemetry/" />
 
     <external-files-path
         name="external_files"
@@ -24,5 +24,7 @@
     <external-path
         name="external_downloads"
         path="Download/" />
+
+
 
 </paths>

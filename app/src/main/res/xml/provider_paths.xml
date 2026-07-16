@@ -6,6 +6,10 @@
         path="Download/" />
 
     <files-path
+        name="telemetry_logs"
+        path="telemetry/" />
+
+    <files-path
         name="internal_files"
         path="." />
 

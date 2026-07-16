@@ -244,15 +244,11 @@ object TTExport {
                 #timeTableStyle td,
                 #timeTableStyle th {
 
-                    width: 96px !important;
+                    width: 4.3% !important;
 
-                    min-width: 96px !important;
+                    font-size: 11px !important;
 
-                    max-width: 96px !important;
-
-                    font-size: 14px !important;
-
-                    padding: 6px !important;
+                    padding: 3px !important;
 
                     line-height: 1.25 !important;
 
