@@ -3,6 +3,7 @@ package com.vtop.ui.screens.sub
 import android.content.Context
 import android.content.Intent
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -18,7 +19,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Email
@@ -29,9 +31,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -46,10 +46,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
-import com.vtop.models.FacultyModel
+import com.vtop.models.FacultyEntity
+import com.vtop.network.FacultyScraper
 import com.vtop.utils.AnalyticsManager
+import com.vtop.utils.FacultyStorage
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 // Helper to extract "SAS" from "School of Advanced Sciences (SAS)"
@@ -60,27 +61,29 @@ fun getShortDept(dept: String?): String {
     return match?.groupValues?.get(1)?.trim() ?: dept.trim()
 }
 
-fun loadFaculty(context: Context): List<FacultyModel> {
-    return try {
-        val json = com.vtop.utils.OtaManager.getFacultyJson(context)
-        Gson().fromJson(json, object : TypeToken<List<FacultyModel>>() {}.type) ?: emptyList()
-    } catch (e: Exception) {
-        e.printStackTrace()
-        emptyList()
-    }
-}
-
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FacultyScreen(
-    facultyList: List<FacultyModel>,
     onBack: () -> Unit = {}
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var facultyList by remember { mutableStateOf(emptyList<FacultyEntity>()) }
+    var refreshing by remember { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
         AnalyticsManager.logScreenView("Faculty_Screen")
+        facultyList = FacultyStorage.loadFaculty(context)
     }
+
+    BackHandler {
+        onBack()
+    }
+
     var searchQuery by remember { mutableStateOf("") }
     var expandedId by remember { mutableStateOf<Int?>(null) }
-    var expandedFacultyImage by remember { mutableStateOf<FacultyModel?>(null) }
+    var expandedFacultyImage by remember { mutableStateOf<FacultyEntity?>(null) }
     var selectedSchool by remember { mutableStateOf("All") }
 
     // Dynamically extract short department names
@@ -104,68 +107,128 @@ fun FacultyScreen(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp),
-            placeholder = { Text("Search name, dept, or research...") },
-            leadingIcon = { Icon(Icons.Default.Search, null) },
-            shape = RoundedCornerShape(12.dp),
-            singleLine = true
-        )
-
-        // FILTER CHIPS
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Faculty") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    if (refreshing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .padding(end = 16.dp)
+                                .size(24.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        IconButton(onClick = {
+                            scope.launch {
+                                refreshing = true
+                                try {
+                                    val freshData = FacultyScraper.download()
+                                    FacultyStorage.saveFaculty(context, freshData)
+                                    facultyList = FacultyStorage.loadFaculty(context)
+                                    Toast.makeText(context, "Faculty data updated successfully", Toast.LENGTH_SHORT).show()
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                    Toast.makeText(context, "Failed to update: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                                } finally {
+                                    refreshing = false
+                                }
+                            }
+                        }) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                        }
+                    }
+                }
+            )
+        }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
         ) {
-            items(schools) { school ->
-                val isSelected = selectedSchool == school
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                        .border(1.dp, if (isSelected) Color.Transparent else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(20.dp))
-                        .clickable { selectedSchool = school }
-                        .padding(horizontal = 16.dp, vertical = 6.dp)
-                ) {
-                    Text(
-                        text = school,
-                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 12.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                    )
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
+                placeholder = { Text("Search name, dept, or research...") },
+                leadingIcon = { Icon(Icons.Default.Search, null) },
+                shape = RoundedCornerShape(12.dp),
+                singleLine = true
+            )
+
+            // FILTER CHIPS
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp)
+            ) {
+                items(schools) { school ->
+                    val isSelected = selectedSchool == school
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .border(1.dp, if (isSelected) Color.Transparent else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(20.dp))
+                            .clickable { selectedSchool = school }
+                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = school,
+                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        )
+                    }
                 }
             }
-        }
 
-        if (facultyList.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize().weight(1f), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "No faculty data found.\nEnsure data is synced.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-            }
-        } else if (filteredList.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize().weight(1f), contentAlignment = Alignment.Center) {
-                Text("No matches found.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        } else {
-            LazyColumn(
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.weight(1f)
-            ) {
-                items(filteredList, key = { it.id }) { faculty ->
-                    FacultyCard(
-                        faculty = faculty,
-                        isExpanded = expandedId == faculty.id,
-                        onClick = { expandedId = if (expandedId == faculty.id) null else faculty.id },
-                        onImageClick = { expandedFacultyImage = it }
+            if (facultyList.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "No faculty data found.\nTap refresh to download.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
                     )
+                }
+            } else if (filteredList.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("No matches found.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                LazyColumn(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    items(filteredList, key = { it.id }) { faculty ->
+                        FacultyCard(
+                            faculty = faculty,
+                            isExpanded = expandedId == faculty.id,
+                            onClick = { expandedId = if (expandedId == faculty.id) null else faculty.id },
+                            onImageClick = { expandedFacultyImage = it }
+                        )
+                    }
                 }
             }
         }
@@ -237,7 +300,9 @@ fun FacultyScreen(
                                 imageVector = Icons.Outlined.Person,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-                                modifier = Modifier.fillMaxSize().padding(32.dp)
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(32.dp)
                             )
                         } else {
                             AsyncImage(
@@ -283,12 +348,15 @@ fun FacultyScreen(
 }
 
 @Composable
-fun FacultyCard(faculty: FacultyModel, isExpanded: Boolean, onClick: () -> Unit, onImageClick: (FacultyModel) -> Unit) {
+fun FacultyCard(faculty: FacultyEntity, isExpanded: Boolean, onClick: () -> Unit, onImageClick: (FacultyEntity) -> Unit) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
 
     Card(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() }.animateContentSize(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .animateContentSize(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -408,13 +476,16 @@ fun FacultyCard(faculty: FacultyModel, isExpanded: Boolean, onClick: () -> Unit,
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f).clickable(enabled = safeEmail != "N/A") {
-                            try {
-                                context.startActivity(Intent(Intent.ACTION_SENDTO, android.net.Uri.parse("mailto:$safeEmail")))
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "No email app found", Toast.LENGTH_SHORT).show()
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable(enabled = safeEmail != "N/A") {
+                                try {
+                                    context.startActivity(Intent(Intent.ACTION_SENDTO, android.net.Uri.parse("mailto:$safeEmail")))
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "No email app found", Toast.LENGTH_SHORT).show()
+                                }
                             }
-                        }.padding(vertical = 4.dp)
+                            .padding(vertical = 4.dp)
                     ) {
                         Icon(Icons.Outlined.Email, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(8.dp))

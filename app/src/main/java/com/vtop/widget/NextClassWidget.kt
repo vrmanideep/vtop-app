@@ -136,44 +136,32 @@ class NextClassWidget : GlanceAppWidget() {
             val cal = Calendar.getInstance()
             val eventTimes = mutableListOf<Long>()
 
-            // 1. Add Midnight for the next day's rollover
             val midnightCal = Calendar.getInstance().apply {
                 add(Calendar.DAY_OF_YEAR, 1)
                 set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0)
             }
             eventTimes.add(midnightCal.timeInMillis)
 
-            // 2. HOLIDAYS & BLOCKED DATES
             val bunkCache = CalendarSync.parseBunkCache(context)
-            val holidaysMap = mutableMapOf<String, String>()
-            try {
-                val jsonString = context.assets.open("academic_calendar.json").bufferedReader().use { it.readText() }
-                val jsonObject = org.json.JSONObject(jsonString)
-                val semesters = jsonObject.keys()
-                while (semesters.hasNext()) {
-                    val semObj = jsonObject.getJSONObject(semesters.next())
-                    if (semObj.has("holidays")) {
-                        val hObj = semObj.getJSONObject("holidays")
-                        val hKeys = hObj.keys()
-                        while (hKeys.hasNext()) {
-                            val dateStr = hKeys.next()
-                            holidaysMap[dateStr] = hObj.getString(dateStr)
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
+            val semId = Vault.getSelectedSemester(context)[0]
+
+            val calendarEvents = Vault.getAcademicCalendar(context, semId)
+
+            val holidaysMap = calendarEvents.associate {
+                it.date to it.particulars
+            }
 
             val todayHoliday = run {
                 val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).format(cal.time)
-                if (holidaysMap.containsKey(dateStr)) {
-                    holidaysMap[dateStr]
-                } else {
-                    val match = bunkCache.blockedDates.entries.find { it.key.get(Calendar.DAY_OF_YEAR) == cal.get(Calendar.DAY_OF_YEAR) && it.key.get(Calendar.YEAR) == cal.get(Calendar.YEAR) }
+
+                holidaysMap[dateStr] ?: run {
+                    val match = bunkCache.blockedDates.entries.find {
+                        it.key.get(Calendar.DAY_OF_YEAR) == cal.get(Calendar.DAY_OF_YEAR) &&
+                                it.key.get(Calendar.YEAR) == cal.get(Calendar.YEAR)
+                    }
                     match?.value
                 }
             }
-
-            // --- SEMESTER TRANSITION ALIGNED WITH VTOP SYNC WORKER ---
             var semesterEnded = SemesterTransitionEngine.checkIfLastFatIsOver(exams)
             if (!semesterEnded && bunkCache.lastInstructionalDay.isNotEmpty() && exams.isEmpty()) {
                 try {
@@ -188,7 +176,7 @@ class NextClassWidget : GlanceAppWidget() {
             var finalExam: ExamScheduleModel? = null
             var finalCourse: ProcessedCourse? = null
 
-            // 3. EXAM EVALUATION (WITH TARGETED RELEASE TIME OVERRIDE)
+            // 3. EXAM EVALUATION
             val todayExams = exams.filter { isDateMatching(it.examDate, cal) }
             val validExams = mutableListOf<Pair<ExamScheduleModel, Pair<Long, Long>>>()
             for (exam in todayExams) {
@@ -196,22 +184,22 @@ class NextClassWidget : GlanceAppWidget() {
                 val parsed = parseTimeRangeToMillis(timeStr, isExam = true)
                 if (parsed != null) {
                     validExams.add(Pair(exam, parsed))
-                    eventTimes.add(parsed.first) // Alarm at Start
-                    eventTimes.add(parsed.second) // Alarm at End
+                    eventTimes.add(parsed.first)
+                    eventTimes.add(parsed.second)
 
                     val examStr = exam.toString().uppercase()
                     val releaseCal = Calendar.getInstance().apply { timeInMillis = parsed.first }
                     if (examStr.contains("CAT2")) {
                         releaseCal.set(Calendar.HOUR_OF_DAY, 12)
                         releaseCal.set(Calendar.MINUTE, 1)
-                    } else { // FAT, CAT1, and fallback
+                    } else {
                         releaseCal.set(Calendar.HOUR_OF_DAY, 7)
                         releaseCal.set(Calendar.MINUTE, 1)
                     }
                     releaseCal.set(Calendar.SECOND, 0)
                     releaseCal.set(Calendar.MILLISECOND, 0)
 
-                    eventTimes.add(releaseCal.timeInMillis) // Alarm at Release Time
+                    eventTimes.add(releaseCal.timeInMillis)
                 }
             }
 
@@ -226,7 +214,6 @@ class NextClassWidget : GlanceAppWidget() {
             if (candidateExamIndex != -1) {
                 finalExam = validExams[candidateExamIndex].first
 
-                // THE TARGETED TIME OVERRIDE FOR EXAMS
                 if (candidateExamIndex + 1 < validExams.size) {
                     val nextExamPair = validExams[candidateExamIndex + 1]
                     val nextStartMs = nextExamPair.second.first
@@ -249,8 +236,7 @@ class NextClassWidget : GlanceAppWidget() {
                 }
             }
 
-            // 4. CLASS EVALUATION (WITH 35 MIN OVERRIDE)
-            // THE FIX: Only evaluate timetable classes if there are NO EXAMS scheduled for today at all.
+            // 4. CLASS EVALUATION
             if (todayExams.isEmpty() && todayHoliday == null) {
                 val todayStr = SimpleDateFormat("EEEE", Locale.getDefault()).format(cal.time)
                 val todayCourses = processAndMergeCourses(timetable?.scheduleMap?.get(todayStr) ?: emptyList(), mergeLabs)
@@ -277,7 +263,6 @@ class NextClassWidget : GlanceAppWidget() {
                 if (candidateIndex != -1) {
                     finalCourse = validCourses[candidateIndex].first
 
-                    // THE 35-MIN OVERRIDE FOR CLASSES
                     if (candidateIndex + 1 < validCourses.size) {
                         val nextCoursePair = validCourses[candidateIndex + 1]
                         val nextStartMs = nextCoursePair.second.first
@@ -298,29 +283,39 @@ class NextClassWidget : GlanceAppWidget() {
                     component = ComponentName(context.packageName, "com.vtop.ui.MainActivity")
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                 }
-                val widgetBg = ColorProvider(day = Color(0xFFF4F4F5), night = Color(0xFF141414))
 
+                // High contrast colors to verify the border
+                val widgetBg = ColorProvider(day = Color(0xFFF4F4F5), night = Color(0xFF141414))
+                val borderColor = ColorProvider(day = Color(0xFF000000), night = Color(0x131414))
+
+                // OUTER BOX (The Border)
                 Box(
                     modifier = GlanceModifier
                         .fillMaxSize()
-                        .background(widgetBg)
+                        .background(borderColor) // The border color
                         .cornerRadius(24.dp)
-                        .clickable(actionStartActivity(launchIntent))
-                        .padding(16.dp)
+                        .padding(2.dp) // Thickness of the border
                 ) {
-                    when {
-                        semesterEnded -> EmptyWidgetContent("Semester Completed")
-                        finalExam != null -> ExamWidgetContent(context, finalExam!!)
-                        finalCourse != null -> {
-                            val activeReminder = reminders.find { it.classId == finalCourse!!.classId }
-                            ClassWidgetContent(context, finalCourse!!, activeReminder)
+                    // INNER BOX (The Content)
+                    Box(
+                        modifier = GlanceModifier
+                            .fillMaxSize()
+                            .background(widgetBg)
+                            .cornerRadius(22.dp) // Radius must be smaller than outer to fit
+                            .clickable(actionStartActivity(launchIntent))
+                            .padding(14.dp) // Content padding
+                    ) {
+                        when {
+                            semesterEnded -> EmptyWidgetContent("Semester Completed")
+                            finalExam != null -> ExamWidgetContent(context, finalExam!!)
+                            finalCourse != null -> {
+                                val activeReminder = reminders.find { it.classId == finalCourse!!.classId }
+                                ClassWidgetContent(context, finalCourse!!, activeReminder)
+                            }
+                            todayHoliday != null && !todayHoliday.lowercase(Locale.getDefault()).contains("exam") -> HolidayWidgetContent(todayHoliday)
+                            todayExams.isNotEmpty() -> EmptyWidgetContent("No more exams today")
+                            else -> EmptyWidgetContent("No more classes today")
                         }
-                        todayHoliday != null && !todayHoliday.lowercase(Locale.getDefault()).contains("exam") -> HolidayWidgetContent(todayHoliday)
-
-                        // If there are exams today but they are all in the past, show this instead of falling back to classes.
-                        todayExams.isNotEmpty() -> EmptyWidgetContent("No more exams today")
-
-                        else -> EmptyWidgetContent("No more classes today")
                     }
                 }
             }
@@ -351,7 +346,6 @@ class NextClassWidget : GlanceAppWidget() {
     private fun ExamWidgetContent(context: Context, exam: ExamScheduleModel) {
         val textPrimary = ColorProvider(day = Color(0xFF18181B), night = Color(0xFFFFFFFF))
         val textSecondary = ColorProvider(day = Color(0xFF71717A), night = Color(0xFFA1A1AA))
-        val cardBg = ColorProvider(day = Color(0xFFFFFFFF), night = Color(0xFF1E1E1E))
 
         val timeStr = exam.examTime.toSafeString().trim().ifEmpty { exam.reportingTime.toSafeString().trim() }
         val parsedTimes = parseTimeRangeToMillis(timeStr, isExam = true)
@@ -363,36 +357,35 @@ class NextClassWidget : GlanceAppWidget() {
         val cleanSeat = exam.seatNumber.toSafeString().trim()
         val seatDisplay = if (cleanLoc.isNotEmpty() && cleanSeat.isNotEmpty()) "$cleanLoc - $cleanSeat" else cleanLoc.ifEmpty { cleanSeat }
 
-        Column(modifier = GlanceModifier.fillMaxSize()) {
-            Column(
-                modifier = GlanceModifier.fillMaxSize().background(cardBg).cornerRadius(16.dp).padding(12.dp)
-            ) {
-                Spacer(GlanceModifier.defaultWeight())
-
+        Column(
+            modifier = GlanceModifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = GlanceModifier.fillMaxWidth()) {
                 if (isOngoing) {
                     Text("Ongoing Exam", style = TextStyle(color = ColorProvider(day = Color(0xFF4ADE80), night = Color(0xFF4ADE80)), fontSize = 12.sp, fontWeight = FontWeight.Bold))
-                    Text(text = "Ends at ${formatDisplayTime(context, timeStr, getEnd = true)}", style = TextStyle(color = textPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold))
+                    Text(text = "Ends at ${formatDisplayTime(context, timeStr, getEnd = true)}", style = TextStyle(color = textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold))
                 } else {
                     Text("Upcoming Exam", style = TextStyle(color = ColorProvider(day = Color(0xFFF97316), night = Color(0xFFF97316)), fontSize = 12.sp, fontWeight = FontWeight.Bold))
-                    Text(text = "Starts at ${formatDisplayTime(context, timeStr)}", style = TextStyle(color = textPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold))
+                    Text(text = "Starts at ${formatDisplayTime(context, timeStr)}", style = TextStyle(color = textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold))
                 }
+            }
 
-                Spacer(modifier = GlanceModifier.defaultWeight())
+            Spacer(modifier = GlanceModifier.defaultWeight())
 
+            Column(modifier = GlanceModifier.fillMaxWidth()) {
                 Text(text = exam.courseCode.toSafeString(), style = TextStyle(color = textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold))
                 Text(text = exam.courseTitle.toSafeString(), style = TextStyle(color = textSecondary, fontSize = 12.sp), maxLines = 1)
+            }
 
-                Spacer(modifier = GlanceModifier.defaultWeight())
+            Spacer(modifier = GlanceModifier.defaultWeight())
 
-                Column(modifier = GlanceModifier.fillMaxWidth()) {
-                    Text(text = "Venue: ${exam.venue.toSafeString()}", style = TextStyle(color = textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold))
-                    if (seatDisplay.isNotEmpty()) {
-                        Spacer(modifier = GlanceModifier.height(2.dp))
-                        Text(text = "Seat: $seatDisplay", style = TextStyle(color = ColorProvider(day = Color(0xFFF97316), night = Color(0xFFF97316)), fontSize = 12.sp, fontWeight = FontWeight.Bold))
-                    }
+            Column(modifier = GlanceModifier.fillMaxWidth()) {
+                Text(text = "Venue: ${exam.venue.toSafeString()}", style = TextStyle(color = textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold))
+                if (seatDisplay.isNotEmpty()) {
+                    Spacer(modifier = GlanceModifier.height(2.dp))
+                    Text(text = "Seat: $seatDisplay", style = TextStyle(color = ColorProvider(day = Color(0xFFF97316), night = Color(0xFFF97316)), fontSize = 12.sp, fontWeight = FontWeight.Bold))
                 }
-
-                Spacer(modifier = GlanceModifier.defaultWeight())
             }
         }
     }
@@ -401,7 +394,6 @@ class NextClassWidget : GlanceAppWidget() {
     private fun ClassWidgetContent(context: Context, course: ProcessedCourse, reminder: CourseReminder?) {
         val textPrimary = ColorProvider(day = Color(0xFF18181B), night = Color(0xFFFFFFFF))
         val textSecondary = ColorProvider(day = Color(0xFF71717A), night = Color(0xFFA1A1AA))
-        val cardBg = ColorProvider(day = Color(0xFFFFFFFF), night = Color(0xFF1E1E1E))
 
         val remBg = when {
             reminder == null -> ColorProvider(day = Color.Transparent, night = Color.Transparent)
@@ -430,32 +422,33 @@ class NextClassWidget : GlanceAppWidget() {
         val now = System.currentTimeMillis()
         val isOngoing = parsedTimes != null && now >= parsedTimes.first && now < parsedTimes.second
 
-        Column(modifier = GlanceModifier.fillMaxSize()) {
-            Column(
-                modifier = GlanceModifier.fillMaxSize().background(cardBg).cornerRadius(16.dp).padding(12.dp)
-            ) {
-                Spacer(GlanceModifier.defaultWeight())
-
+        Column(
+            modifier = GlanceModifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = GlanceModifier.fillMaxWidth()) {
                 if (isOngoing) {
                     Text("Ongoing Class", style = TextStyle(color = ColorProvider(day = Color(0xFF4ADE80), night = Color(0xFF4ADE80)), fontSize = 12.sp, fontWeight = FontWeight.Bold))
-                    Text(text = "Ends at ${formatDisplayTime(context, course.mergedTimeSlot, getEnd = true)}", style = TextStyle(color = textPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold))
+                    Text(text = "Ends at ${formatDisplayTime(context, course.mergedTimeSlot, getEnd = true)}", style = TextStyle(color = textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold))
                 } else {
                     Text("Upcoming Class", style = TextStyle(color = ColorProvider(day = Color(0xFFF87171), night = Color(0xFFF87171)), fontSize = 12.sp, fontWeight = FontWeight.Bold))
-                    Text(text = "Starts at ${formatDisplayTime(context, course.mergedTimeSlot)}", style = TextStyle(color = textPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold))
+                    Text(text = "Starts at ${formatDisplayTime(context, course.mergedTimeSlot)}", style = TextStyle(color = textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold))
                 }
+            }
 
-                Spacer(modifier = GlanceModifier.defaultWeight())
+            Spacer(modifier = GlanceModifier.defaultWeight())
 
+            Column(modifier = GlanceModifier.fillMaxWidth()) {
                 Text(text = course.courseCode.toSafeString(), style = TextStyle(color = textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold))
                 Text(text = course.courseName.toSafeString(), style = TextStyle(color = textSecondary, fontSize = 12.sp), maxLines = 1)
+            }
 
-                Spacer(modifier = GlanceModifier.defaultWeight())
+            Spacer(modifier = GlanceModifier.defaultWeight())
 
-                Column(modifier = GlanceModifier.fillMaxWidth()) {
-                    Text(text = "Venue: ${course.venue.toSafeString()}", style = TextStyle(color = textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold))
-                    Spacer(modifier = GlanceModifier.height(2.dp))
-                    Text(text = "Slot: ${course.mergedSlot.toSafeString()}", style = TextStyle(color = textSecondary, fontSize = 12.sp, fontWeight = FontWeight.Bold))
-                }
+            Column(modifier = GlanceModifier.fillMaxWidth()) {
+                Text(text = "Venue: ${course.venue.toSafeString()}", style = TextStyle(color = textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold))
+                Spacer(modifier = GlanceModifier.height(2.dp))
+                Text(text = "Slot: ${course.mergedSlot.toSafeString()}", style = TextStyle(color = textSecondary, fontSize = 12.sp, fontWeight = FontWeight.Bold))
 
                 if (reminder != null) {
                     Spacer(modifier = GlanceModifier.height(6.dp))
@@ -465,8 +458,6 @@ class NextClassWidget : GlanceAppWidget() {
                         modifier = GlanceModifier.background(remBg).cornerRadius(4.dp).padding(4.dp)
                     )
                 }
-
-                Spacer(GlanceModifier.defaultWeight())
             }
         }
     }

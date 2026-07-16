@@ -43,7 +43,6 @@ import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
 
-// Internal UI Model
 data class TimelineEvent(
     val startDate: Date,
     val endDate: Date,

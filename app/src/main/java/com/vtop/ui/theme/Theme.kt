@@ -47,7 +47,6 @@ enum class AuthState { FORM, LOADING_SEMESTERS, SELECT_SEMESTER, DOWNLOADING_DAT
 enum class DockPosition { TOP, BOTTOM, LEFT, RIGHT }
 enum class AppThemeMode { SYSTEM, LIGHT, DARK }
 
-// --- DARK THEME (Base) ---
 private val DarkColors = darkColorScheme(
     background = VtopBlack,
     surface = VtopBlack,
@@ -59,7 +58,7 @@ private val DarkColors = darkColorScheme(
     error = VtopRed
 )
 
-// --- LIGHT THEME (Base) ---
+
 private val LightColors = lightColorScheme(
     background = Color(0xFFF3F4F6),
     surface = VtopWhite,

@@ -33,7 +33,6 @@ object AppShortcuts {
             .setIntent(outingsIntent)
             .build()
 
-        // Push shortcuts to the OS
         ShortcutManagerCompat.setDynamicShortcuts(context, listOf(simulatorShortcut, outingsShortcut))
     }
 }

@@ -114,38 +114,36 @@ object GlobalSyncer {
 
                                     override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
                                         syncScope.launch(Dispatchers.IO) {
+                                            // Capture the exact moment VTOP demanded the OTP
+                                            val otpRequestedTime = System.currentTimeMillis()
+                                            Log.d(TAG, "VTOP requested OTP. Timestamp marked at: $otpRequestedTime")
+
                                             val savedEmail = Vault.getGoogleEmail(context)
 
                                             if (savedEmail.isNotBlank()) {
-                                                // UPDATED: Show Gmail Interception Status
                                                 withContext(Dispatchers.Main) {
-                                                    AppBridge.syncStatus.value =
-                                                        "Fetching OTP from Gmail..."
+                                                    AppBridge.syncStatus.value = "Fetching OTP from Gmail..."
                                                 }
                                                 val extractedOtp =
                                                     GmailOtpExtractor.getLatestVtopOtp(
                                                         context,
-                                                        savedEmail
+                                                        savedEmail,
+                                                        otpRequestedTime // <-- PASSED DOWN HERE
                                                     )
                                                 if (extractedOtp != null) {
-                                                    Log.d(
-                                                        TAG,
-                                                        "Silently intercepted OTP: $extractedOtp"
-                                                    )
-                                                    // UPDATED: Show Verification Phase
+                                                    Log.d(TAG, "Silently intercepted OTP: $extractedOtp")
                                                     withContext(Dispatchers.Main) {
-                                                        AppBridge.syncStatus.value =
-                                                            "Verifying OTP..."
+                                                        AppBridge.syncStatus.value = "Verifying OTP..."
                                                     }
                                                     resolver.submit(extractedOtp)
                                                     return@launch
+                                                } else {
+                                                    Log.w(TAG, "Failed to intercept OTP automatically. Falling back to manual entry.")
                                                 }
                                             }
 
-                                            // UPDATED: Fallback manual OTP wait state
                                             withContext(Dispatchers.Main) {
-                                                AppBridge.syncStatus.value =
-                                                    "Awaiting manual OTP..."
+                                                AppBridge.syncStatus.value = "Awaiting manual OTP..."
                                             }
 
                                             if (AppBridge.isAppInForeground) {
@@ -153,13 +151,11 @@ object GlobalSyncer {
                                                     AppBridge.currentOtpResolver.value = resolver
                                                 }
                                             } else {
-                                                val deferredOtp =
-                                                    kotlinx.coroutines.CompletableDeferred<String?>()
+                                                val deferredOtp = kotlinx.coroutines.CompletableDeferred<String?>()
                                                 AppBridge.pendingOtpDeferred = deferredOtp
                                                 NotificationHelper.showOtpNotification(context)
 
-                                                val userOtp =
-                                                    withTimeoutOrNull(180_000L) { deferredOtp.await() }
+                                                val userOtp = withTimeoutOrNull(180_000L) { deferredOtp.await() }
 
                                                 if (userOtp != null) resolver.submit(userOtp)
                                                 else {

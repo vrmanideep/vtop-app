@@ -242,7 +242,7 @@ fun BunkSimulatorTab(
     var hasRun by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    val datePickerState = rememberDatePickerState()
+    var pickerVersion by remember { mutableIntStateOf(0) }
 
     fun getClassesForDate(date: LocalDate): Int {
         val dayName = date.dayOfWeek.name
@@ -489,23 +489,113 @@ fun BunkSimulatorTab(
     }
 
     if (showDatePicker) {
-        DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    datePickerState.selectedDateMillis?.let { millis ->
-                        val selected = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
-                        selectedDates = selectedDates + selected
-                        hasRun = false
-                    }
+
+        key(pickerVersion) {
+
+            val datePickerState = rememberDatePickerState()
+
+            DatePickerDialog(
+                onDismissRequest = {
                     showDatePicker = false
-                }) { Text("Add Date", fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDatePicker = false }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            },
-            colors = DatePickerDefaults.colors(containerColor = MaterialTheme.colorScheme.surface)
-        ) { DatePicker(state = datePickerState) }
+                },
+
+                confirmButton = {
+
+                    Row {
+
+                        TextButton(
+                            onClick = {
+
+                                datePickerState.selectedDateMillis?.let { millis ->
+
+                                    val selected = Instant
+                                        .ofEpochMilli(millis)
+                                        .atZone(ZoneId.systemDefault())
+                                        .toLocalDate()
+
+                                    selectedDates += selected
+                                    hasRun = false
+
+                                    // recreate picker
+                                    pickerVersion++
+                                }
+                            }
+                        ) {
+                            Text("Add")
+                        }
+
+                        TextButton(
+                            onClick = {
+                                showDatePicker = false
+                            }
+                        ) {
+                            Text("Done")
+                        }
+                    }
+                },
+
+                dismissButton = {
+
+                    TextButton(
+                        onClick = {
+                            showDatePicker = false
+                        }
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            ) {
+
+                Column {
+
+                    DatePicker(
+                        state = datePickerState
+                    )
+
+                    if (selectedDates.isNotEmpty()) {
+
+                        Spacer(Modifier.height(8.dp))
+
+                        Row(
+                            modifier = Modifier
+                                .horizontalScroll(rememberScrollState())
+                                .padding(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+
+                            selectedDates.sorted().forEach { date ->
+
+                                AssistChip(
+                                    onClick = {
+                                        selectedDates -= date
+                                        hasRun = false
+                                    },
+                                    label = {
+                                        Text(
+                                            date.format(
+                                                DateTimeFormatter.ofPattern(
+                                                    "dd MMM",
+                                                    Locale.ENGLISH
+                                                )
+                                            )
+                                        )
+                                    },
+                                    trailingIcon = {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            null,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.height(12.dp))
+                    }
+                }
+            }
+        }
     }
 
     if (errorMessage != null) {

@@ -139,8 +139,6 @@ class MainActivity : ComponentActivity() {
 
         NotificationHelper.createNotificationChannel(this)
 
-        lifecycleScope.launch(Dispatchers.IO) { OtaManager.checkForOtaUpdates(this@MainActivity) }
-
         if (intent?.getBooleanExtra("SHOW_UPDATE", false) == true || intent?.action == "SHOW_UPDATE") {
             updateTriggerFlow.value = true
         }

@@ -29,8 +29,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,6 +49,8 @@ import com.google.gson.Gson
 import com.vtop.models.*
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
+import java.time.YearMonth
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.zip.GZIPOutputStream
 import kotlin.math.roundToInt
@@ -163,6 +167,21 @@ private fun calculateSemesterGPA(courses: List<GradeHistoryItem>): Double {
         }
     }
     return if (totalCredits > 0) totalPoints / totalCredits else 0.0
+}
+
+private fun parseExamMonth(month: String): YearMonth {
+    return try {
+        // Handle varying cases from VTOP correctly (e.g. "JAN-2025" -> "Jan-2025")
+        val cleanMonth = month.trim().split("-").let {
+            if (it.size == 2) {
+                it[0].lowercase().replaceFirstChar { c -> c.uppercase() } + "-" + it[1]
+            } else month
+        }
+        val formatter = DateTimeFormatter.ofPattern("MMM-yyyy", Locale.ENGLISH)
+        YearMonth.parse(cleanMonth, formatter)
+    } catch (e: Exception) {
+        YearMonth.of(1900, 1)
+    }
 }
 
 @Composable
@@ -517,8 +536,36 @@ fun AcademicHistoryView(
     onSyncClick: () -> Unit
 ) {
     if (historyData.isEmpty()) {
-
         return
+    }
+
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+
+    // Precalculate original GPAs mapping BEFORE filtering so that the GPA does not drop
+    // when you search for specific courses.
+    val originalGpas = remember(groupedHistory) {
+        groupedHistory.mapValues { calculateSemesterGPA(it.value) }
+    }
+
+    val filteredHistory = remember(historyData, searchQuery) {
+        historyData.filter { item ->
+            val q = searchQuery.trim().lowercase()
+
+            q.isBlank() ||
+                    item.courseCode.orEmpty().lowercase().contains(q) ||
+                    item.courseTitle.orEmpty().lowercase().contains(q) ||
+                    item.courseType.orEmpty().lowercase().contains(q) ||
+                    item.grade.orEmpty().lowercase().contains(q) ||
+                    item.credits.orEmpty().lowercase().contains(q) ||
+                    item.examMonth.orEmpty().lowercase().contains(q) ||
+                    item.courseDistribution.orEmpty().lowercase().contains(q)
+        }
+    }
+
+    val sortedAndGroupedHistory = remember(filteredHistory) {
+        filteredHistory
+            .sortedBy { parseExamMonth(it.examMonth ?: "Jan-1900") }
+            .groupBy { it.examMonth ?: "Unknown Semester" }
     }
 
     LazyColumn(
@@ -526,7 +573,7 @@ fun AcademicHistoryView(
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 130.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // 1. Top Summary Stats
+        // 1. Top Summary Stats (Preserves total unfiltered scope using groupedHistory)
         item {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 HistoryStatCard("CGPA", historySummary?.cgpa ?: "--", Lucide.Award, Modifier.weight(1f))
@@ -536,12 +583,26 @@ fun AcademicHistoryView(
             Spacer(modifier = Modifier.height(8.dp))
         }
 
-        // 2. Grouped Semesters with Expandable Logic
-        groupedHistory.forEach { (examMonth, courses) ->
+        // 2. Search Bar
+        item {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Search course, grade, type...") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+        }
+
+        // 3. Chronologically Grouped Semesters
+        sortedAndGroupedHistory.forEach { (examMonth, courses) ->
             val isExpanded = expandedStates[examMonth] ?: true
 
             item {
-                val semGpa = calculateSemesterGPA(courses)
+                val semGpa = originalGpas[examMonth] ?: 0.0
                 val rotation by animateFloatAsState(if (isExpanded) 180f else 0f, label = "arrow_$examMonth")
 
                 // Format "JAN-2025" to "Jan - 2025"
@@ -565,7 +626,7 @@ fun AcademicHistoryView(
                 ) {
                     Column {
                         Text(text = formattedMonth, color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        Text(text = "${courses.size} Courses", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        Text(text = "${courses.size} Course${if (courses.size > 1) "s" else ""}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {

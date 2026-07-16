@@ -7,7 +7,6 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
-import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,7 +23,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -32,7 +30,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vtop.ui.core.LoginBridge
@@ -40,9 +37,6 @@ import com.vtop.ui.core.AppBridge
 import com.vtop.ui.core.OtpForm
 import com.vtop.ui.theme.*
 import kotlinx.coroutines.delay
-import org.json.JSONObject
-import java.text.SimpleDateFormat
-import java.util.Locale
 
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
@@ -396,103 +390,30 @@ fun GoogleSignInDialog(onDismiss: () -> Unit, onSuccess: (String) -> Unit) {
         textContentColor = MaterialTheme.colorScheme.onSurfaceVariant
     )
 }
-
-// --------------------------------------------------------------------------------------
-// THE SMART TIMELINE ENGINE
-// --------------------------------------------------------------------------------------
-
 private fun loadSemestersFromCache(context: Context): List<Map<String, String>> {
-    val sems = mutableListOf<Map<String, String>>()
-    val semObjects = mutableListOf<Triple<String, String, LongRange>>()
-    val now = System.currentTimeMillis()
-    val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
 
-    val registeredSemesters = com.vtop.utils.Vault.getSemesterOptions(context)
-    val registeredIds = registeredSemesters.map { it.id }
+    val semesters = com.vtop.utils.Vault
+        .getCalendarSemesterOptions(context)
 
-    try {
-        val jsonStr = try {
-            com.vtop.utils.OtaManager.getCalendarJson(context)
-        } catch (e: Exception) {
-            context.assets.open("academic_calendar.json").bufferedReader().use { it.readText() }
-        }
-
-        val root = JSONObject(jsonStr)
-        val keys = root.keys()
-
-        while (keys.hasNext()) {
-            val key = keys.next()
-            if (key == "blocked_dates" || key == "semester") continue
-
-            val semBlock = root.optJSONObject(key) ?: continue
-            val id = semBlock.optString("id", key)
-
-            val startStr = semBlock.optString("start_date", "")
-            val endStr = semBlock.optString("last_instructional_day", "")
-
-            val startMs = try { sdf.parse(startStr.replace(" ", ""))?.time ?: 0L } catch (e: Exception) { 0L }
-            var endMs = try { sdf.parse(endStr.replace(" ", ""))?.time ?: Long.MAX_VALUE } catch (e: Exception) { Long.MAX_VALUE }
-
-            var trueEndMs = endMs
-            val examsObj = semBlock.optJSONObject("exams")
-            if (examsObj != null && trueEndMs != Long.MAX_VALUE) {
-                val examKeys = examsObj.keys()
-                while (examKeys.hasNext()) {
-                    val examType = examKeys.next()
-                    val datesArray = examsObj.optJSONArray(examType)
-                    if (datesArray != null) {
-                        for (i in 0 until datesArray.length()) {
-                            val dateStr = datesArray.optString(i, "")
-                            val examMs = try { sdf.parse(dateStr.replace(" ", ""))?.time ?: 0L } catch (e: Exception) { 0L }
-                            if (examMs > trueEndMs && examMs != 0L) {
-                                trueEndMs = examMs
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (trueEndMs != Long.MAX_VALUE) {
-                trueEndMs += (23L * 3600 + 59 * 60 + 59) * 1000
-            }
-
-            semObjects.add(Triple(id, key, startMs..trueEndMs))
-        }
-    } catch (e: Exception) {
-        e.printStackTrace()
+    if (semesters.isEmpty()) {
+        return listOf(
+            mapOf(
+                "id" to "DEFAULT",
+                "name" to "Default Semester",
+                "isCurrent" to "true"
+            )
+        )
     }
 
-    if (semObjects.isEmpty()) {
-        return listOf(mapOf("id" to "DEFAULT", "name" to "Default Semester", "isCurrent" to "true"))
+    val selected = com.vtop.utils.Vault
+        .getSelectedSemester(context)
+        .firstOrNull()
+
+    return semesters.map {
+        mapOf(
+            "id" to it.id,
+            "name" to it.name,
+            "isCurrent" to (it.id == selected).toString()
+        )
     }
-
-    var currentSemId: String? = null
-
-    val activeSessions = semObjects.filter { now in it.third }
-    if (activeSessions.isNotEmpty()) {
-        currentSemId = activeSessions.minWithOrNull(compareBy<Triple<String, String, LongRange>> { it.third.first }
-            .thenByDescending { registeredIds.indexOf(it.first).takeIf { idx -> idx != -1 } ?: -1 }
-        )?.first
-    }
-
-    if (currentSemId == null) {
-        val futureSessions = semObjects.filter { it.third.first > now }
-        if (futureSessions.isNotEmpty()) {
-            currentSemId = futureSessions.minWithOrNull(compareBy<Triple<String, String, LongRange>> { it.third.first }
-                .thenByDescending { registeredIds.indexOf(it.first).takeIf { idx -> idx != -1 } ?: -1 }
-            )?.first
-        }
-    }
-
-    if (currentSemId == null) {
-        currentSemId = semObjects.maxByOrNull { it.third.last }?.first
-    }
-
-    semObjects.forEach { (id, name, _) ->
-        val isCurrent = if (id == currentSemId) "true" else "false"
-        sems.add(mapOf("id" to id, "name" to name, "isCurrent" to isCurrent))
-    }
-
-    sems.sortByDescending { it["isCurrent"] == "true" }
-    return sems
 }

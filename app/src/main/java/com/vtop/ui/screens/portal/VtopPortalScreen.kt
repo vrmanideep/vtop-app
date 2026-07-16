@@ -175,6 +175,8 @@ fun VtopPortalScreen(
                                 ) {
 
                                     scope.launch(Dispatchers.IO) {
+                                        // Capture the exact moment the WebView forced a login
+                                        val otpRequestedTime = System.currentTimeMillis()
 
                                         val googleEmail =
                                             Vault.getGoogleEmail(context)
@@ -204,7 +206,8 @@ fun VtopPortalScreen(
                                                     GmailOtpExtractor
                                                         .getLatestVtopOtp(
                                                             context,
-                                                            googleEmail
+                                                            googleEmail,
+                                                            otpRequestedTime // <-- Pass the timestamp here
                                                         )
 
                                             } catch (e: Exception) {

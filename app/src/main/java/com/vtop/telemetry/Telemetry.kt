@@ -40,33 +40,42 @@ object Telemetry {
         prefs.edit()
             .putBoolean("ENABLED", enabled)
             .apply()
+
+        // Start session immediately if turned on during runtime
+        if (enabled && !initialized) {
+            startSession()
+        }
     }
 
     fun init(context: Context) {
-
         appContext = context.applicationContext
 
         if (initialized) return
 
-        synchronized(this) {
+        // Start session at boot only if enabled
+        if (isEnabled()) {
+            startSession()
+        }
+    }
 
+    // Extracted session initialization logic
+    private fun startSession() {
+        synchronized(this) {
             if (initialized) return
 
-            // Only initialize the session and file if the user has enabled it
-            if (isEnabled()) {
-                session = TelemetrySession.newSession()
+            session = TelemetrySession.newSession()
 
-                val dir = File(appContext.filesDir, "telemetry")
-                if (!dir.exists()) dir.mkdirs()
+            val dir = File(appContext.filesDir, "telemetry")
+            if (!dir.exists()) dir.mkdirs()
 
-                sessionFile = File(dir, "${session.id}.jsonl")
-                TelemetryWriter.init(sessionFile)
-            }
+            sessionFile = File(dir, "${session.id}.jsonl")
+            TelemetryWriter.init(sessionFile)
+
+            initialized = true
         }
     }
 
     fun submit(event: TelemetryEvent) {
-
         if (!initialized || !isEnabled())
             return
 
@@ -80,7 +89,6 @@ object Telemetry {
         module: TelemetryModule = TelemetryModule.UNKNOWN,
         metadata: Map<String, Any?> = emptyMap()
     ) {
-
         if (!initialized || !isEnabled())
             return
 
@@ -101,7 +109,6 @@ object Telemetry {
     }
 
     fun receive(raw: RawLogEntry) {
-
         if (!initialized || !isEnabled())
             return
 
@@ -118,7 +125,6 @@ object Telemetry {
     }
 
     fun flush() {
-
         if (!initialized || !isEnabled())
             return
 
@@ -126,7 +132,6 @@ object Telemetry {
     }
 
     fun shutdown() {
-
         if (!initialized)
             return
 

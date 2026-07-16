@@ -198,47 +198,10 @@ fun MainScreen(
             Box(modifier = Modifier.fillMaxSize().padding(tabPadding)) {
                 when (currentTab) {
                     "HOME" -> {
-                        val holidaysMap = remember {
-                            try {
-                                val json = try {
-                                    com.vtop.utils.OtaManager.getCalendarJson(context)
-                                } catch (e: Exception) {
-                                    context.assets.open("academic_calendar.json").bufferedReader().use { it.readText() }
-                                }
-
-                                val root = org.json.JSONObject(json)
-                                val selectedSemInfo = Vault.getSelectedSemester(context)
-                                val selectedSemId = selectedSemInfo[0] ?: ""
-                                val selectedSemName = selectedSemInfo[1] ?: ""
-                                var matchedSemester: org.json.JSONObject? = null
-
-                                root.keys().forEach { key ->
-                                    if (key != "blocked_dates" && key != "semester") {
-                                        val obj = root.optJSONObject(key)
-                                        val id = obj?.optString("id", key) ?: key
-                                        if (id == selectedSemId || key == selectedSemId || key == selectedSemName) {
-                                            matchedSemester = obj
-                                        }
-                                    }
-                                }
-
-                                val holidaysObj = matchedSemester?.optJSONObject("holidays")
-                                buildMap<String, String> {
-                                    holidaysObj?.keys()?.forEach { date ->
-                                        put(date, holidaysObj.optString(date))
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                Log.d("HOLIDAY_ERR", e.message ?: "unknown")
-                                emptyMap()
-                            }
-                        }
-
                         Timetable(
                             timetable = timetable,
                             attendanceData = attendanceData,
-                            examsData = examsData,
-                            holidays = holidaysMap
+                            examsData = examsData
                         )
                     }
                     "ATTENDANCE" -> {

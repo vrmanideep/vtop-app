@@ -87,13 +87,18 @@ class VtopSyncWorker(
                 try {
                     loginSuccess = client.autoLogin(context, object : VtopClient.LoginListener {
                         override fun onStatusUpdate(message: String) {}
-
                         override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
                             CoroutineScope(Dispatchers.IO).launch {
+                                // Capture the exact moment the background worker hit the OTP wall
+                                val otpRequestedTime = System.currentTimeMillis()
                                 val savedEmail = Vault.getGoogleEmail(context)
 
                                 if (savedEmail.isNotBlank()) {
-                                    val extractedOtp = GmailOtpExtractor.getLatestVtopOtp(context, savedEmail)
+                                    val extractedOtp = GmailOtpExtractor.getLatestVtopOtp(
+                                        context,
+                                        savedEmail,
+                                        otpRequestedTime // <-- Pass the timestamp here
+                                    )
                                     if (extractedOtp != null) {
                                         resolver.submit(extractedOtp)
                                         return@launch

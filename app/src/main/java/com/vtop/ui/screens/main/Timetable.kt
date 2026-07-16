@@ -91,14 +91,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.vtop.models.AttendanceModel
-import com.vtop.models.CourseSession
-import com.vtop.models.ExamScheduleModel
-import com.vtop.models.TimetableModel
+import com.vtop.models.*
 import com.vtop.ui.core.CourseReminder
 import com.vtop.ui.core.ReminderManager
-import com.vtop.utils.AnalyticsManager
-import com.vtop.utils.Vault
+import com.vtop.utils.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -108,8 +104,7 @@ import java.util.Locale
 import java.util.TimeZone
 import kotlin.math.abs
 
-val ColorDanger = Color(0xFFF87171)
-private var cachedFacultyArray: org.json.JSONArray? = null
+val ColorDanger = Color(0xFFC91818)
 
 @Composable
 fun getPremiumSurfaceColor(): Color = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF141414) else Color(0xFFFFFFFF)
@@ -171,7 +166,8 @@ data class ProcessedCourse(
     val originalSession: CourseSession,
     val mergedTimeSlot: String,
     val mergedSlot: String
-) {
+)
+{
     val courseCode: String? get() = originalSession.courseCode
     val courseName: String? get() = originalSession.courseName
     val courseType: String? get() = originalSession.courseType
@@ -301,8 +297,8 @@ fun Timetable(
             val title = event.particulars ?: ""
 
             val isHoliday = title.contains("Holiday", true) ||
-                    title.contains("no instructional", true) ||
-                    title.contains("non instructional", true) ||
+                    title.contains("No instructional", true) ||
+                    title.contains("Non instructional", true) ||
                     title.contains("VITOPIA", true)
 
             if (isHoliday) {
@@ -328,6 +324,7 @@ fun Timetable(
                             var cleanTitle = title.replace(" - General (Semester)", "")
                                 .replace(" - Combined", "")
                                 .replace(" (Holiday)", "", ignoreCase = true)
+                                .replace("(No Instructional day)", "", ignoreCase = true)
                                 .replace("\n", " ")
                                 .replace(Regex("\\s+"), " ")
                                 .trim()
@@ -1050,14 +1047,9 @@ fun ExpandableFacultyRow(facultyName: String) {
 
     LaunchedEffect(isExpanded) {
         if (isExpanded && !isLoaded) {
-            try {
-                val jsonArray = cachedFacultyArray ?: run {
-                    val parsed = org.json.JSONArray(com.vtop.utils.OtaManager.getFacultyJson(context))
-                    cachedFacultyArray = parsed
-                    parsed
-                }
+            try {val facultyList = FacultyStorage.loadFaculty(context)
 
-                var bestMatchObj: org.json.JSONObject? = null
+                var bestMatch: FacultyEntity? = null
                 var bestDistance = Int.MAX_VALUE
 
                 fun clean(s: String): String = s.replace(Regex("[^a-zA-Z]"), "").lowercase().removePrefix("dr").removePrefix("prof").removePrefix("mr").removePrefix("mrs")
@@ -1079,15 +1071,23 @@ fun ExpandableFacultyRow(facultyName: String) {
                 val srcClean = clean(facultyName)
                 val srcSorted = sortClean(facultyName)
 
-                for (i in 0 until jsonArray.length()) {
-                    val obj = jsonArray.getJSONObject(i)
-                    val targetName = obj.optString("name", "")
+                for (faculty in facultyList) {
+
+                    val targetName = faculty.name
+
                     val tgtClean = clean(targetName)
                     val tgtSorted = sortClean(targetName)
 
                     if (tgtClean.isEmpty()) continue
-                    if (srcClean.contains(tgtClean) || tgtClean.contains(srcClean) || srcSorted.contains(tgtSorted) || tgtSorted.contains(srcSorted) || targetName.contains(facultyName, ignoreCase = true)) {
-                        bestMatchObj = obj
+
+                    if (
+                        srcClean.contains(tgtClean) ||
+                        tgtClean.contains(srcClean) ||
+                        srcSorted.contains(tgtSorted) ||
+                        tgtSorted.contains(srcSorted) ||
+                        targetName.contains(facultyName, ignoreCase = true)
+                    ) {
+                        bestMatch = faculty
                         bestDistance = 0
                         break
                     }
@@ -1097,15 +1097,22 @@ fun ExpandableFacultyRow(facultyName: String) {
                     val dist = minOf(dist1, dist2)
 
                     val maxAllowed = maxOf(1, srcClean.length / 3)
+
                     if (dist <= maxAllowed && dist < bestDistance) {
                         bestDistance = dist
-                        bestMatchObj = obj
+                        bestMatch = faculty
                     }
                 }
 
-                if (bestMatchObj != null) {
-                    cabin = bestMatchObj.optString("office", "Not Provided").replace(";", "-")
-                    email = bestMatchObj.optString("email", "Not Provided")
+                if (bestMatch != null) {
+                    cabin = bestMatch.office
+                        ?.takeIf { it.isNotBlank() }
+                        ?.replace(";", "-")
+                        ?: "Not Provided"
+
+                    email = bestMatch.email
+                        ?.takeIf { it.isNotBlank() }
+                        ?: "Not Provided"
                 } else {
                     cabin = "Not found"
                     email = "N/A"

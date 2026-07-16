@@ -19,15 +19,16 @@ object GmailOtpExtractor {
 
     private const val TAG = "GMAIL_EXTRACTOR"
 
-    suspend fun getLatestVtopOtp(context: Context, emailAddress: String): String? = withContext(Dispatchers.IO) {
+    suspend fun getLatestVtopOtp(context: Context, emailAddress: String, otpRequestedTime: Long): String? = withContext(Dispatchers.IO) {
         try {
             val account = Account(emailAddress, "com.google")
             val scope = "oauth2:https://www.googleapis.com/auth/gmail.readonly"
             val accessToken = GoogleAuthUtil.getToken(context, account, scope)
 
-            // We only care about emails received at most 20 seconds before this function was called.
-            // This prevents picking up old, unread OTPs from previous failed login attempts.
-            val validTimestampThreshold = System.currentTimeMillis() - 20_000
+            // We only care about emails received slightly before or after VTOP requested it.
+            // 5-second buffer accounts for minor clock drift between the device and Google's servers.
+            val validTimestampThreshold = otpRequestedTime - 5_000
+            Log.d(TAG, "OTP Requested Time: $otpRequestedTime | Acceptable Threshold: > $validTimestampThreshold")
 
             // Increased to 10 attempts, 3 seconds apart (30 seconds total max wait)
             for (attempt in 1..10) {
@@ -66,11 +67,13 @@ object GmailOtpExtractor {
                                 val internalDateStr = msgJson.optString("internalDate", "0")
                                 val internalDate = internalDateStr.toLongOrNull() ?: 0L
 
+                                Log.d(TAG, "Found email with internalDate: $internalDate")
+
                                 // TIMESTMAP VALIDATION CHECK
                                 if (internalDate < validTimestampThreshold) {
-                                    Log.d(TAG, "Found an OTP email, but it is too old. Waiting for the new one to arrive...")
-                                    // It skips the extraction below and falls through to the delay() at the end of the loop
+                                    Log.d(TAG, "Email rejected: Too old (Diff: ${validTimestampThreshold - internalDate}ms). Waiting for new arrival...")
                                 } else {
+                                    Log.d(TAG, "Email accepted: Timestamp is valid!")
                                     val payload = msgJson.getJSONObject("payload")
                                     val base64Body = extractBodySafely(payload)
 
@@ -84,16 +87,28 @@ object GmailOtpExtractor {
                                         if (matcher.find()) {
                                             val otp = matcher.group(0)
                                             Log.d(TAG, "Successfully extracted fresh OTP: $otp")
-                                            return@withContext otp // Exit loop and return
+                                            return@withContext otp
+                                        } else {
+                                            Log.e(TAG, "Regex failed to find a 6-digit OTP in the email body.")
                                         }
+                                    } else {
+                                        Log.e(TAG, "Failed to safely extract base64 body from email payload.")
                                     }
                                 }
+                            } else {
+                                Log.e(TAG, "Failed to fetch message details. HTTP Code: ${msgConn.responseCode}")
                             }
+                        } else {
+                            Log.d(TAG, "Search query returned 0 messages.")
                         }
+                    } else {
+                        Log.d(TAG, "JSON response does not contain 'messages' array.")
                     }
+                } else {
+                    Log.e(TAG, "Failed to search inbox. HTTP Code: ${searchConn.responseCode}")
                 }
 
-                // If we reach here, the new email hasn't arrived yet. Wait 3 seconds.
+                // Wait 3 seconds before next attempt
                 if (attempt < 10) delay(3000)
             }
 

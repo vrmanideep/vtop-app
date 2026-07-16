@@ -118,7 +118,6 @@ import com.vtop.ui.screens.sub.*
 import androidx.compose.ui.platform.LocalContext
 import com.vtop.ui.core.AppBridge
 import com.vtop.ui.screens.portal.VtopPortalScreen
-import com.vtop.ui.screens.sub.loadFaculty
 
 private fun formatReminderDate(dateStr: String): String {
     return try {
@@ -218,10 +217,6 @@ fun Profile(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val sharedPrefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
-    val facultyList = remember {
-        loadFaculty(context)
-    }
-
     var showCalendarSheet by remember { mutableStateOf(false) }
     var availableCalendars by remember { mutableStateOf<List<CalendarInfo>>(emptyList()) }
 
@@ -1178,7 +1173,6 @@ fun Profile(
 
         ProfilePage.FACULTY -> {
             FacultyScreen(
-                facultyList = facultyList,
                 onBack = {
                     currentPage = ProfilePage.MAIN
                 }
