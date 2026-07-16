@@ -17,38 +17,25 @@ object FacultyStorage {
         return File(context.filesDir, FILE_NAME)
     }
 
-    /**
-     * Copies the bundled assets/faculty.json into the app's internal
-     * storage if it doesn't already exist.
-     *
-     * Call this before loading faculty data.
-     */
-    fun ensureFacultyExists(context: Context) {
-        val file = facultyFile(context)
 
-        if (file.exists()) return
-
-        context.assets.open(FILE_NAME).use { input ->
-            file.outputStream().use { output ->
-                input.copyTo(output)
-            }
-        }
-    }
 
     /**
      * Reads the working faculty.json from internal storage.
      */
     fun loadFaculty(context: Context): List<FacultyEntity> {
-        ensureFacultyExists(context)
-
         return try {
-            val json = facultyFile(context).readText(Charsets.UTF_8)
-
+            val file = facultyFile(context)
+            if (!file.exists()) {
+                return emptyList()
+            }
+            val json = file.readText(Charsets.UTF_8)
+            if (json.isBlank()) {
+                return emptyList()
+            }
             Gson().fromJson(
                 json,
                 object : TypeToken<List<FacultyEntity>>() {}.type
             ) ?: emptyList()
-
         } catch (e: Exception) {
             e.printStackTrace()
             emptyList()
