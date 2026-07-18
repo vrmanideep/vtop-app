@@ -1,6 +1,7 @@
 package com.vtop.ui.screens.portal
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.graphics.Bitmap
 import android.net.http.SslError
 import android.os.Message
@@ -77,21 +78,25 @@ fun VtopPortalScreen(
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var sessionError by remember { mutableStateOf<String?>(null) }
 
-    // =========================================================
-    // DESKTOP MODE
-    // =========================================================
+    val portalPreferences = remember {
+        context.getSharedPreferences(
+            "vtop_portal_preferences",
+            Context.MODE_PRIVATE
+        )
+    }
 
     var desktopMode by remember {
-        mutableStateOf(true)
+        mutableStateOf(
+            portalPreferences.getBoolean(
+                "desktop_mode",
+                true
+            )
+        )
     }
 
     var expandedMenu by remember {
         mutableStateOf(false)
     }
-
-    // =========================================================
-    // APPLY DESKTOP MODE
-    // =========================================================
 
     fun applyDesktopMode(webView: WebView?) {
 
@@ -394,7 +399,7 @@ fun VtopPortalScreen(
                                     expandedMenu = false
 
                                     desktopMode = !desktopMode
-
+                                    portalPreferences.edit().putBoolean("desktop_mode", desktopMode).apply()
                                     applyDesktopMode(webViewRef)
 
                                     Toast.makeText(
@@ -470,6 +475,15 @@ fun VtopPortalScreen(
                                 ViewGroup.LayoutParams.MATCH_PARENT
                             )
 
+                        overScrollMode = WebView.OVER_SCROLL_ALWAYS
+                        isVerticalScrollBarEnabled = true
+                        isHorizontalScrollBarEnabled = true
+
+                        setOnTouchListener { view, _ ->
+                            view.parent?.requestDisallowInterceptTouchEvent(true)
+                            false
+                        }
+
                         settings.apply {
 
                             javaScriptEnabled = true
@@ -486,32 +500,19 @@ fun VtopPortalScreen(
                             displayZoomControls = false
                             setSupportZoom(true)
 
-                            // =====================================
-                            // INITIAL DESKTOP/MOBILE MODE
-                            // =====================================
-
                             if (desktopMode) {
-
                                 userAgentString = DESKTOP_UA
-
                                 useWideViewPort = true
                                 loadWithOverviewMode = true
-
-                                layoutAlgorithm =
-                                    WebSettings.LayoutAlgorithm.TEXT_AUTOSIZING
-
+                                layoutAlgorithm = WebSettings.LayoutAlgorithm.TEXT_AUTOSIZING
                             } else {
-
                                 userAgentString = MOBILE_UA
-
                                 useWideViewPort = false
                                 loadWithOverviewMode = false
-
-                                layoutAlgorithm =
-                                    WebSettings.LayoutAlgorithm.NORMAL
+                                layoutAlgorithm = WebSettings.LayoutAlgorithm.NORMAL
                             }
                         }
-
+                        setInitialScale(if (desktopMode) 1 else 100)
                         webChromeClient = object : WebChromeClient() {
 
                             override fun onCreateWindow(
@@ -705,6 +706,28 @@ fun VtopPortalScreen(
                             ) {
 
                                 isLoading = false
+                                view.evaluateJavascript(
+                                    """
+                                    (function() {
+                                        document.documentElement.style.overflowY = 'auto';
+                                        document.body.style.overflowY = 'auto';
+                                        document.documentElement.style.height = 'auto';
+                                        document.body.style.height = 'auto';
+                                
+                                        var scrollContainers = document.querySelectorAll(
+                                            '.content-wrapper, .main-sidebar, .sidebar, .sidebar-menu'
+                                        );
+                                
+                                        scrollContainers.forEach(function(element) {
+                                            element.style.overflowY = 'auto';
+                                            element.style.maxHeight = 'none';
+                                            element.style.height = 'auto';
+                                            element.style.webkitOverflowScrolling = 'touch';
+                                        });
+                                    })();
+                                    """.trimIndent(),
+                                    null
+                                )
 
                                 // =====================================
                                 // AUTO NAVIGATION
