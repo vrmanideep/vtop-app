@@ -340,7 +340,12 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
                     if (activeOutings.isNotEmpty()) {
                         item { Text("ACTIVE PASSES", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp, modifier = Modifier.padding(top = 8.dp)) }
 
-                        items(activeOutings, key = { it.id }) { outing ->
+                        items(
+                            items = activeOutings,
+                            key = { outing ->
+                                "${outing.type}_${outing.id}_${outing.fromDate}_${outing.fromTime}"
+                            }
+                        ) { outing ->
                             ActiveOutingCard(
                                 outing = outing,
                                 isFetching = fetchingPdfIds.contains(outing.id),
@@ -378,7 +383,12 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
                     if (pastOutings.isNotEmpty()) {
                         item { Text("HISTORY", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp, modifier = Modifier.padding(top = 16.dp)) }
 
-                        items(pastOutings, key = { it.id }) { outing ->
+                        items(
+                            items = pastOutings,
+                            key = { outing ->
+                                "${outing.type}_${outing.id}_${outing.fromDate}_${outing.fromTime}"
+                            }
+                        ) { outing ->
                             HistoryOutingCard(outing)
                         }
                     }
