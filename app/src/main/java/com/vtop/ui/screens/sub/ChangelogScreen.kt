@@ -35,6 +35,21 @@ data class ReleaseLog(
 
 val releaseHistory = listOf(
     ReleaseLog(
+        version = "Version 1.1.12",
+        tag = "v1.1.12",
+        date = "18 Jul 2026",
+        features = listOf(
+            "Added persistent display mode preferences for the VTOP Portal."
+        ),
+        fixes = listOf(
+            "Fixed app crashing on fresh install due to absence of faculty.json",
+            "Fixed app crashing on Weekend Outing tab",
+            "Fixed VTOP Portal desktop mode not being restored correctly after reopening.",
+            "Improved WebView desktop and mobile mode initialization."
+        )
+    ),
+
+    ReleaseLog(
         version = "Version 1.1.11",
         tag = "v1.1.11",
         date = "16 Jul 2026",

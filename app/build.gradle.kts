@@ -8,7 +8,6 @@ plugins {
     id("com.google.firebase.crashlytics")
 }
 
-// Explicitly defining the type as java.io.File fixes the "inferred from platform call" warning
 val keystorePropertiesFile: java.io.File = rootProject.file("local.properties")
 val keystoreProperties = Properties()
 if (keystorePropertiesFile.exists()) {
@@ -19,7 +18,7 @@ android {
     namespace = "com.vtop"
     compileSdk = 36
 
-    // 1. Define the signing configuration
+
     signingConfigs {
         create("release") {
             storeFile = file(keystoreProperties.getProperty("KEYSTORE_PATH") ?: "")
@@ -32,8 +31,8 @@ android {
         applicationId = "com.vtop"
         minSdk = 24
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.1.11"
+        versionCode = 5
+        versionName = "1.1.12"
 
 
         ndk {
@@ -48,7 +47,6 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = false
-            // 2. Link the release build to the signing config defined above
             signingConfig = signingConfigs.getByName("release")
 
             proguardFiles(
@@ -58,7 +56,6 @@ android {
         }
 
         debug {
-            // Optional: Use release signing for debug to test Google Login while developing
             signingConfig = signingConfigs.getByName("release")
         }
     }
