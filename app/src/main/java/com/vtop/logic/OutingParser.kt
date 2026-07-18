@@ -52,105 +52,52 @@ object OutingParser {
 
     fun parseWeekend(html: String): List<OutingModel> {
         val records = mutableListOf<OutingModel>()
+
         try {
             val doc = Jsoup.parse(html)
             val table = doc.selectFirst("table#BookingRequests") ?: return records
-
             val rows = table.select("tr")
-            Log.d(
-                "WKND_OUTING_ROWS",
-                "total rows = ${rows.size}"
-            )
+
             for (i in 1 until rows.size) {
                 val cells = rows[i].select("td")
-                Log.d(
-                    "WKND_OUTING_CELLS",
-                    "row=$i cells=${cells.size}"
-                )
+                if (cells.size < 14) continue
 
-                Log.d(
-                    "WKND_ROW",
-                    rows[i].text()
-                )
+                val place = cells[4].text().trim()
+                val purpose = cells[5].text().trim()
+                val timeStr = cells[6].text().trim()
+                val dateStr = cells[9].text().trim().split(" ").firstOrNull() ?: ""
+                var leaveId = cells[10].text().trim()
+                var status = cells[12].text().trim()
 
-                // Weekend table has 14 columns (Indices 0 through 13)
-                if (cells.size >= 11) {
-
-                    val place =
-                        cells[4].text().trim()
-
-                    val purpose =
-                        cells[5].text().trim()
-
-                    val timeStr =
-                        cells[6].text().trim()
-
-                    val dateStr =
-                        cells[7].text()
-                            .trim()
-                            .split(" ")
-                            .firstOrNull()
-                            ?: ""
-
-                    var status =
-                        cells[9].text().trim()
-
-                    var leaveId =
-                        cells[1].text().trim()
-
-                    if (
-                        status.contains(
-                            "Accepted",
-                            ignoreCase = true
-                        )
-                    ) {
-                        status = "Approved"
-                    }
-
-                    val canDownload =
-                        cells[10]
-                            .text()
-                            .contains(
-                                "Download",
-                                ignoreCase = true
-                            )
-
-                    if (leaveId.isBlank()) {
-
-                        leaveId =
-                            "WKND_${System.currentTimeMillis()}_$i"
-                    }
-
-                    val fromTime =
-                        timeStr
-                            .substringBefore("-")
-                            .trim()
-
-                    val toTime =
-                        timeStr
-                            .substringAfter("-")
-                            .trim()
-
-                    records.add(
-
-                        OutingModel(
-                            id = leaveId,
-                            type = "WEEKEND",
-                            place = place,
-                            purpose = purpose,
-                            fromDate = dateStr,
-                            fromTime = fromTime,
-                            toDate = dateStr,
-                            toTime = toTime,
-                            status = status,
-                            canDownload = canDownload
-                        )
-                    )
+                if (status.contains("Accepted", ignoreCase = true)) {
+                    status = "Approved"
                 }
+
+                val canDownload = cells[13].text().contains("Download", ignoreCase = true)
+                if (leaveId.isBlank()) leaveId = "WKND_${System.currentTimeMillis()}_$i"
+
+                val fromTime = timeStr.substringBefore("-").trim()
+                val toTime = timeStr.substringAfter("-").trim()
+
+                records.add(
+                    OutingModel(
+                        id = leaveId,
+                        type = "WEEKEND",
+                        place = place,
+                        purpose = purpose,
+                        fromDate = dateStr,
+                        fromTime = fromTime,
+                        toDate = dateStr,
+                        toTime = toTime,
+                        status = status,
+                        canDownload = canDownload
+                    )
+                )
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("WKND_OUTING_PARSE", "Failed to parse weekend outings", e)
         }
+
         return records
     }
 

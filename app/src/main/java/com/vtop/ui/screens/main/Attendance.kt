@@ -475,27 +475,21 @@ fun AttendanceDetailCore(course: AttendanceModel, onSimulateClick: (() -> Unit)?
 
         if (onSimulateClick != null) {
             Spacer(Modifier.height(24.dp))
-            Button(
-                onClick = onSimulateClick, modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary), shape = RoundedCornerShape(12.dp)
-            ) { Text("Open Simulator", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold) }
-        }
-
-        if (!course.history.isNullOrEmpty()) {
-            Spacer(Modifier.height(24.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha=0.1f))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
             Spacer(Modifier.height(16.dp))
 
             var showHistory by remember { mutableStateOf(false) }
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { showHistory = !showHistory }.padding(vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("Full History", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                    Icon(imageVector = if (showHistory) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = "Toggle History", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Icon(if (showHistory) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, "Toggle History", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                AnimatedVisibility(visible = showHistory) {
+
+                AnimatedVisibility(showHistory) {
                     Column {
                         Spacer(Modifier.height(8.dp))
                         DetailedAttendanceHistoryView(course)
