@@ -35,6 +35,14 @@ data class ReleaseLog(
 
 val releaseHistory = listOf(
     ReleaseLog(
+        version = "Version 1.1.13",
+        tag = "v1.1.13",
+        date = "20 Jul 2026",
+        fixes = listOf(
+            "Fixed Weekend Outings not appearing in the app"
+        )
+    ),
+    ReleaseLog(
         version = "Version 1.1.12",
         tag = "v1.1.12",
         date = "18 Jul 2026",
