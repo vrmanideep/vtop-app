@@ -52,30 +52,38 @@ object OutingParser {
 
     fun parseWeekend(html: String): List<OutingModel> {
         val records = mutableListOf<OutingModel>()
-
         try {
             val doc = Jsoup.parse(html)
             val table = doc.selectFirst("table#BookingRequests") ?: return records
-            val rows = table.select("tr")
+            val rows = table.select("tbody > tr")
 
-            for (i in 1 until rows.size) {
-                val cells = rows[i].select("td")
-                if (cells.size < 14) continue
+            Log.d("WKND_OUTING_ROWS", "total rows = ${rows.size}")
+
+            rows.forEachIndexed { index, row ->
+                val cells = row.select("td")
+                //Log.d("WKND_OUTING_CELLS", "row=$index cells=${cells.size}")
+
+                if (cells.size < 11) return@forEachIndexed
 
                 val place = cells[4].text().trim()
                 val purpose = cells[5].text().trim()
                 val timeStr = cells[6].text().trim()
-                val dateStr = cells[9].text().trim().split(" ").firstOrNull() ?: ""
-                var leaveId = cells[10].text().trim()
-                var status = cells[12].text().trim()
+                val dateStr = cells[7].text().trim().split(" ").firstOrNull() ?: ""
+                var status = cells[9].text().trim()
 
                 if (status.contains("Accepted", ignoreCase = true)) {
                     status = "Approved"
                 }
 
-                val canDownload = cells[13].text().contains("Download", ignoreCase = true)
-                if (leaveId.isBlank()) leaveId = "WKND_${System.currentTimeMillis()}_$i"
+                val downloadLink = cells[10].selectFirst("a[data-leave-url]")
+                val downloadUrl = downloadLink?.attr("data-leave-url").orEmpty()
+                val leaveId = Regex("/([^/]+)$")
+                    .find(downloadUrl)
+                    ?.groupValues
+                    ?.get(1)
+                    ?: "WKND_${System.currentTimeMillis()}_$index"
 
+                val canDownload = downloadLink != null
                 val fromTime = timeStr.substringBefore("-").trim()
                 val toTime = timeStr.substringAfter("-").trim()
 

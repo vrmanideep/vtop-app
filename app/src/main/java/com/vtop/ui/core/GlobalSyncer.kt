@@ -437,20 +437,39 @@ object GlobalSyncer {
         }
     }
 
-    private suspend fun syncOutings(context: Context, client: VtopClient, authorizedId: String) {
-        TelemetryTracer.trace(
-            "Outings",
-            TelemetryModule.SYNC
-        ) {
+    private suspend fun syncOutings(
+        context: Context,
+        client: VtopClient,
+        authorizedId: String
+    ) {
+        TelemetryTracer.trace("Outings", TelemetryModule.SYNC) {
+            Log.d("WKND_DEBUG", "syncOutings started: authorizedId=$authorizedId")
+
             val genHtml = client.fetchGeneralOutingRawHtml(authorizedId, null)
-            val weekHtml = client.fetchWeekendOutingRawHtml(
-                authorizedId,
-                null
+            Log.d("WKND_DEBUG", "General HTML length=${genHtml?.length ?: -1}")
+
+            Log.d("WKND_DEBUG", "Calling fetchWeekendOutingRawHtml...")
+            val weekHtml = client.fetchWeekendOutingRawHtml(authorizedId, null)
+            Log.d("WKND_DEBUG", "Weekend HTML length=${weekHtml?.length ?: -1}")
+            Log.d("WKND_DEBUG", "Weekend HTML preview=${weekHtml?.take(500)}")
+
+            val generalOutings = OutingParser.parseGeneral(genHtml ?: "")
+            Log.d("WKND_DEBUG", "General parsed=${generalOutings.size}")
+
+            Log.d("WKND_DEBUG", "Calling parseWeekend...")
+            val weekendOutings = OutingParser.parseWeekend(weekHtml ?: "")
+            Log.d("WKND_DEBUG", "Weekend parsed=${weekendOutings.size}")
+
+            val allOutings = generalOutings + weekendOutings
+            Log.d(
+                "WKND_DEBUG",
+                "Final outings=${allOutings.size}, general=${generalOutings.size}, weekend=${weekendOutings.size}"
             )
-            val allOutings =
-                OutingParser.parseGeneral(genHtml ?: "") + OutingParser.parseWeekend(weekHtml ?: "")
+
             Vault.saveOutings(context, allOutings)
-            withContext(Dispatchers.Main) { AppBridge.outingsState.value = allOutings }
+            withContext(Dispatchers.Main) {
+                AppBridge.outingsState.value = allOutings
+            }
         }
     }
     private suspend fun syncCalendar(
@@ -468,8 +487,6 @@ object GlobalSyncer {
                     TAG,
                     "========== CALENDAR SYNC START =========="
                 )
-
-                // --- NEW: Fetch and cache the dedicated Calendar Semester list ---
                 Log.d(TAG, "Fetching dedicated calendar semester list...")
                 val calSemesters = client.fetchCalendarSemesters()
                 if (calSemesters.isNotEmpty()) {
