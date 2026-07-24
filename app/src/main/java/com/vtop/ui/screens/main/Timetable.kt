@@ -4,6 +4,7 @@ package com.vtop.ui.screens.main
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.util.Log
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
@@ -92,6 +93,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vtop.models.*
+import com.vtop.network.FacultyScraper
 import com.vtop.ui.core.CourseReminder
 import com.vtop.ui.core.ReminderManager
 import com.vtop.utils.*
@@ -1064,7 +1066,6 @@ fun DetailRow(label: String, value: String) {
         Text(text = value, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium, textAlign = TextAlign.End, modifier = Modifier.weight(1f).padding(start = 16.dp))
     }
 }
-
 @Composable
 fun ExpandableFacultyRow(facultyName: String) {
     var isExpanded by remember { mutableStateOf(false) }
@@ -1076,7 +1077,31 @@ fun ExpandableFacultyRow(facultyName: String) {
 
     LaunchedEffect(isExpanded) {
         if (isExpanded && !isLoaded) {
-            try {val facultyList = FacultyStorage.loadFaculty(context)
+            cabin = "Loading..."
+            email = "Loading..."
+
+            try {
+                if (!FacultyStorage.hasFaculty(context)) {
+                    Log.d("FACULTY_FETCH", "faculty.json missing — downloading")
+
+                    val downloaded = FacultyScraper.download()
+                    Log.d("FACULTY_FETCH", "Downloaded ${downloaded.size} faculty")
+
+                    if (downloaded.isNotEmpty()) {
+                        FacultyStorage.saveFaculty(context, downloaded)
+                        Log.d("FACULTY_FETCH", "faculty.json saved")
+                    }
+                } else {
+                    Log.d("FACULTY_FETCH", "faculty.json exists — using cache")
+                }
+
+                val facultyList = FacultyStorage.loadFaculty(context)
+
+                if (facultyList.isEmpty()) {
+                    cabin = "Unable to load"
+                    email = "Unable to load"
+                    return@LaunchedEffect
+                }
 
                 var bestMatch: FacultyEntity? = null
                 var bestDistance = Int.MAX_VALUE
@@ -1148,8 +1173,9 @@ fun ExpandableFacultyRow(facultyName: String) {
                 }
                 isLoaded = true
             } catch (e: Exception) {
-                cabin = "Error loading"
-                email = "Error"
+                cabin = "Unable to load"
+                email = "Unable to load"
+                isLoaded = false
             }
         }
     }
