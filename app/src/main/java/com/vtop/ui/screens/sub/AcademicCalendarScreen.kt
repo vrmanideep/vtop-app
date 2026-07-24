@@ -48,6 +48,15 @@ data class TimelineEvent(
     val endDate: Date,
     val displayStartDate: String,
     val displayEndDate: String,
+    val startDay: String,
+    val endDay: String,
+    val title: String,
+    val category: String
+)
+
+data class ParsedCalendarDay(
+    val date: Date,
+    val day: String,
     val title: String,
     val category: String
 )
@@ -288,12 +297,19 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                 cleanTitle.contains("Holiday", true) || cleanTitle.contains("no instructional", true) || cleanTitle.contains("non instructional", true) || cleanTitle.contains("VITOPIA", true) -> "Holiday"
                 else -> "Event"
             }
-            Triple(dateObj, cleanTitle, category)
-        }.sortedBy { it.first.time }
+            ParsedCalendarDay(
+                date = dateObj,
+                day = event.day.trim(),
+                title = cleanTitle,
+                category = category
+            )
+        }.sortedBy { it.date.time }
 
         val groupedEvents = mutableListOf<TimelineEvent>()
         var currentStart: Date? = null
         var currentEnd: Date? = null
+        var currentStartDay = ""
+        var currentEndDay = ""
         var currentTitle = ""
         var currentCategory = ""
 
@@ -304,25 +320,38 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
             set(Calendar.MILLISECOND, 0)
         }.time
 
-        for ((date, title, category) in validDays) {
+        for (item in validDays) {
+            val date = item.date
+            val day = item.day
+            val title = item.title
+            val category = item.category
+
             val isConsecutive = currentEnd != null && (date.time - currentEnd.time) <= 350_000_000L
             val crossesTodayBoundary = currentEnd != null && currentEnd.before(todayMidnight) && !date.before(todayMidnight)
 
             if (currentTitle == title && isConsecutive && !crossesTodayBoundary) {
                 currentEnd = date
+                currentEndDay = day
             } else {
                 if (currentStart != null) {
                     val finalEnd = currentEnd ?: currentStart
                     groupedEvents.add(
                         TimelineEvent(
-                            startDate = currentStart, endDate = finalEnd,
-                            displayStartDate = sdfDisplay.format(currentStart), displayEndDate = sdfDisplay.format(finalEnd),
-                            title = currentTitle, category = currentCategory
+                            startDate = currentStart,
+                            endDate = finalEnd,
+                            displayStartDate = sdfDisplay.format(currentStart),
+                            displayEndDate = sdfDisplay.format(finalEnd),
+                            startDay = currentStartDay,
+                            endDay = currentEndDay,
+                            title = currentTitle,
+                            category = currentCategory
                         )
                     )
                 }
                 currentStart = date
                 currentEnd = date
+                currentStartDay = day
+                currentEndDay = day
                 currentTitle = title
                 currentCategory = category
             }
@@ -332,9 +361,14 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
             val finalEnd = currentEnd ?: currentStart
             groupedEvents.add(
                 TimelineEvent(
-                    startDate = currentStart, endDate = finalEnd,
-                    displayStartDate = sdfDisplay.format(currentStart), displayEndDate = sdfDisplay.format(finalEnd),
-                    title = currentTitle, category = currentCategory
+                    startDate = currentStart,
+                    endDate = finalEnd,
+                    displayStartDate = sdfDisplay.format(currentStart),
+                    displayEndDate = sdfDisplay.format(finalEnd),
+                    startDay = currentStartDay,
+                    endDay = currentEndDay,
+                    title = currentTitle,
+                    category = currentCategory
                 )
             )
         }
@@ -761,6 +795,7 @@ fun TodayDividerMarker(modifier: Modifier = Modifier) {
     }
 }
 
+@SuppressLint("SimpleDateFormat")
 @Composable
 fun TimelineEventRow(event: TimelineEvent, isLast: Boolean) {
     val indicatorColor = when {
@@ -769,15 +804,48 @@ fun TimelineEventRow(event: TimelineEvent, isLast: Boolean) {
         else -> Color(0xFF4ADE80)
     }
 
+    val sdfDay = remember { SimpleDateFormat("EEE", Locale.ENGLISH) }
+
     Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
         Column(
             modifier = Modifier.width(80.dp).padding(end = 12.dp, top = 2.dp),
             horizontalAlignment = Alignment.End
         ) {
-            Text(text = event.displayStartDate.take(6), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+            Text(
+                text = event.displayStartDate.take(6),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+
+            Text(
+                text = sdfDay.format(event.startDate).uppercase(Locale.getDefault()),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+
             if (event.displayStartDate != event.displayEndDate) {
-                Text(text = "to", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 1.dp))
-                Text(text = event.displayEndDate.take(6), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                Text(
+                    text = "to",
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 2.dp)
+                )
+
+                Text(
+                    text = event.displayEndDate.take(6),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                Text(
+                    text = sdfDay.format(event.endDate).uppercase(Locale.getDefault()),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
         }
 
