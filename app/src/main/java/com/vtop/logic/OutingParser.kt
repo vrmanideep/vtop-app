@@ -61,32 +61,87 @@ object OutingParser {
 
             rows.forEachIndexed { index, row ->
                 val cells = row.select("td")
-                //Log.d("WKND_OUTING_CELLS", "row=$index cells=${cells.size}")
+                Log.d("WKND_OUTING_CELLS", "row=$index cells=${cells.size}")
 
                 if (cells.size < 11) return@forEachIndexed
 
-                val place = cells[4].text().trim()
-                val purpose = cells[5].text().trim()
-                val timeStr = cells[6].text().trim()
-                val dateStr = cells[7].text().trim().split(" ").firstOrNull() ?: ""
-                var status = cells[9].text().trim()
+                // Step 1 — Detect table format
+                val isWeekendFormat = cells.size >= 14
+
+                // Step 2 — Compute indices instead of hardcoding them
+                val contactIndex: Int
+                val parentContactIndex: Int
+                val dateIndex: Int
+                val bookingIdIndex: Int
+                val statusIndex: Int
+                val downloadIndex: Int
+
+                if (isWeekendFormat) {
+                    contactIndex = 7
+                    parentContactIndex = 8
+                    dateIndex = 9
+                    bookingIdIndex = 10
+                    statusIndex = 12
+                    downloadIndex = 13
+                } else {
+                    contactIndex = -1
+                    parentContactIndex = -1
+                    dateIndex = 7
+                    bookingIdIndex = -1
+                    statusIndex = 9
+                    downloadIndex = 10
+                }
+
+                fun text(idx: Int): String {
+                    return if (idx in 0 until cells.size) cells[idx].text().trim() else ""
+                }
+
+                val place = text(4)
+                val purpose = text(5)
+                val timeStr = text(6)
+
+                // Step 3 — Contact numbers
+                val contactNumber = if (isWeekendFormat) text(contactIndex) else ""
+                val parentContactNumber = if (isWeekendFormat) text(parentContactIndex) else ""
+
+                // Step 4 — Date
+                val dateStr = text(dateIndex).split(" ").firstOrNull() ?: ""
+
+                // Step 5 — Status
+                var status = text(statusIndex)
+
+                // Step 6 & 7 — Booking ID & Download link
+                var bookingId = ""
+                val downloadLink = cells[downloadIndex].selectFirst("a[data-leave-url]")
+
+                if (isWeekendFormat) {
+                    val bookingIdText = text(bookingIdIndex)
+                    if (bookingIdText.isNotBlank()) {
+                        bookingId = bookingIdText
+                    } else if (downloadLink != null) {
+                        val dataUrl = downloadLink.attr("data-leave-url")
+                        bookingId = dataUrl.split("/").lastOrNull() ?: ""
+                    }
+                } else {
+                    if (downloadLink != null) {
+                        val dataUrl = downloadLink.attr("data-leave-url")
+                        bookingId = dataUrl.split("/").lastOrNull() ?: ""
+                    }
+                }
+
+                // Step 8 — canDownload
+                val canDownload = bookingId.isNotBlank() && status.equals("Outing Request Accepted", ignoreCase = true)
 
                 if (status.contains("Accepted", ignoreCase = true)) {
                     status = "Approved"
                 }
 
-                val downloadLink = cells[10].selectFirst("a[data-leave-url]")
-                val downloadUrl = downloadLink?.attr("data-leave-url").orEmpty()
-                val leaveId = Regex("/([^/]+)$")
-                    .find(downloadUrl)
-                    ?.groupValues
-                    ?.get(1)
-                    ?: "WKND_${System.currentTimeMillis()}_$index"
+                val leaveId = if (bookingId.isNotBlank()) bookingId else "WKND_${System.currentTimeMillis()}_$index"
 
-                val canDownload = downloadLink != null
                 val fromTime = timeStr.substringBefore("-").trim()
                 val toTime = timeStr.substringAfter("-").trim()
 
+                // Step 9 & 10 — Record construction (Preserving existing model definition)
                 records.add(
                     OutingModel(
                         id = leaveId,
