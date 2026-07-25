@@ -123,8 +123,8 @@ private fun calculateLiveProgress(outD: String, outT: String, inD: String, inT: 
 
         if (isWeekend) {
             val parts = outT.split("-")
-            val t1 = parts.getOrNull(0)?.trim() ?: return Triple("Valid Pass", 0f, false)
-            val t2 = parts.getOrNull(1)?.trim() ?: return Triple("Valid Pass", 0f, false)
+            val t1 = parts.getOrNull(0)?.trim() ?: return Triple("", 0f, false)
+            val t2 = parts.getOrNull(1)?.trim() ?: return Triple("", 0f, false)
             leaveStr = "$outD $t1"
             returnStr = "$outD $t2"
         } else {
@@ -164,7 +164,7 @@ private fun calculateLiveProgress(outD: String, outT: String, inD: String, inT: 
             return Triple(text, pct, true)
         }
     } catch (_: Exception) {}
-    return Triple("Valid Pass", 0f, false)
+    return Triple("", 0f, false)
 }
 
 private fun sharePdf(context: Context, sourceFile: File, leaveId: String) {
@@ -457,7 +457,6 @@ private fun ApprovalJourney(statusStr: String, type: String) {
     val s = statusStr.uppercase(Locale.getDefault())
     val themePrimary = MaterialTheme.colorScheme.primary
 
-    // Exact mapping to your requested flow
     val isSubmitted = true // Always true if the card exists
     val isMentorApproved = !s.contains("MENTOR") && (s.contains("WARDEN") || s.contains("ACCEPT") || s.contains("APPROVE"))
     val isWardenApproved = s.contains("ACCEPT") || s.contains("APPROVE") || s.contains("ISSUED")
@@ -465,7 +464,6 @@ private fun ApprovalJourney(statusStr: String, type: String) {
 
     val steps = listOf("Submitted", "Mentor Approval", "Warden Approval", "Pass Available")
 
-    // Determine which step is currently active
     val currentStep = when {
         isRejected -> -1 // Journey stopped
         isWardenApproved -> 3
@@ -474,7 +472,7 @@ private fun ApprovalJourney(statusStr: String, type: String) {
     }
 
     Column(modifier = Modifier.padding(vertical = 4.dp)) {
-        Text("Approval journey", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
+        Text("Approval journey", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
 
         steps.forEachIndexed { index, title ->
             val isCompleted = index < currentStep
@@ -503,7 +501,6 @@ private fun ApprovalJourney(statusStr: String, type: String) {
                 Column(modifier = Modifier.padding(start = 12.dp, bottom = if (index == steps.lastIndex) 0.dp else 24.dp).offset(y = (-2).dp)) {
                     Text(title, color = if (index <= currentStep || currentStep == -1) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
 
-                    // Show specific status subtitle only for the active step
                     if (isCurrent) {
                         Text(statusStr.toTitleCase(), color = dotColor, fontSize = 11.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 2.dp))
                     }
@@ -681,7 +678,7 @@ private fun ActiveCardContent(
             Text(outing.place, color = MaterialTheme.colorScheme.onSurface, fontSize = 20.sp, fontWeight = FontWeight.Black)
             Text(outing.purpose, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             val outT = if (outing.type.uppercase(Locale.getDefault()) == "WEEKEND") outing.fromTime.substringBefore("-").trim() else outing.fromTime.replace("-", "").trim()
             val inT = if (outing.type.uppercase(Locale.getDefault()) == "WEEKEND") outing.fromTime.substringAfter("-").trim() else outing.toTime.replace("-", "").trim()
@@ -690,7 +687,6 @@ private fun ActiveCardContent(
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(formatDate(outing.fromDate, true), color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(2.dp))
                     Text(outT, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                 }
 
@@ -704,7 +700,6 @@ private fun ActiveCardContent(
 
                 Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
                     Text(formatDate(inD, true), color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(2.dp))
                     Text(inT, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                 }
             }
@@ -713,9 +708,7 @@ private fun ActiveCardContent(
                 val (durationText, progressPct, isOngoing) = calculateLiveProgress(outing.fromDate, outing.fromTime, outing.toDate, outing.toTime, currentMillis, outing.type.uppercase(Locale.getDefault()) == "WEEKEND")
 
                 if (isOngoing) {
-                    Row(Modifier
-                        .fillMaxWidth()
-                        .padding(top = 16.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(top = 16.dp)) {
                         if (progressPct > 0f) {
                             Box(Modifier
                                 .weight(progressPct)
@@ -735,11 +728,10 @@ private fun ActiveCardContent(
                     }
                 }
 
-                val topPadding = if (isOngoing) 8.dp else 16.dp
-                if (durationText != "Completed" || isOngoing) {
-                    Text(durationText, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier
-                        .align(Alignment.End)
-                        .padding(top = topPadding))
+                val showDuration = durationText.isNotBlank() && (durationText != "Completed" || isOngoing)
+                if (showDuration) {
+                    val topPadding = if (isOngoing) 8.dp else 16.dp
+                    Text(durationText, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier.align(Alignment.End).padding(top = topPadding))
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))

@@ -35,6 +35,22 @@ data class ReleaseLog(
 
 val releaseHistory = listOf(
     ReleaseLog(
+        version = "Version 1.1.14",
+        tag = "v1.1.14",
+        date = "25 Jul 2026",
+        features = listOf(
+            "Added Bunk Simulator with exam-aware attendance projections.",
+            "Added multi-day bunk simulation with per-class Attend/Bunk controls.",
+            "Added optimized attendance syncing with cached attendance reuse and periodic verification.",
+            "Added automatic faculty data fetching when faculty information is unavailable locally."
+        ),
+        fixes = listOf(
+            "Removed stale pending outing requests incorrectly preventing new outing requests.",
+            "Improved Outing cards with clearer leave date and time information."
+        )
+    ),
+
+    ReleaseLog(
         version = "Version 1.1.13",
         tag = "v1.1.13",
         date = "20 Jul 2026",
