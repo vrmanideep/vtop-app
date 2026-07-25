@@ -22,6 +22,8 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
@@ -53,6 +55,17 @@ import kotlin.math.roundToInt
 
 // --- UI Data Models ---
 
+data class BunkOccurrence(
+    val date: LocalDate,
+    val courseCode: String,
+    val courseType: String,
+    val slot: String,
+    val weight: Int
+) {
+    val key: String
+        get() = "$date|$courseCode|$courseType|$slot"
+}
+
 data class CourseTypeBunkUiModel(
     val displayType: String,
     val currentAttended: Int,
@@ -60,6 +73,7 @@ data class CourseTypeBunkUiModel(
     val currentPct: Float,
     val remainingClasses: Int,
     val plannedBunks: Int,
+    val selectedOccurrences: List<BunkOccurrence>,
     val projectedAttended: Int,
     val projectedTotal: Int,
     val projectedPct: Float,
@@ -362,15 +376,15 @@ fun BunkSimulatorTab(
     val examName = examTarget?.name ?: "END OF SEMESTER"
 
     var selectedDates by remember { mutableStateOf<Set<LocalDate>>(emptySet()) }
-    var appliedDates by remember { mutableStateOf<Set<LocalDate>>(emptySet()) }
+    var attendanceOverrides by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     var showDatePicker by remember { mutableStateOf(false) }
-    var pickerVersion by remember { mutableIntStateOf(0) }
 
     val today = LocalDate.now()
 
     // --- Core Calculation Pipeline (Derived State) ---
-    val groupedCourses = remember(appliedDates, timetable, attendanceData, calculationEndDate, calCtx) {
+    // Now depends directly on `selectedDates` instead of `appliedDates`
+    val groupedCourses = remember(selectedDates, attendanceOverrides, timetable, attendanceData, calculationEndDate, calCtx) {
         val courseMap = mutableMapOf<String, MutableList<AttendanceModel>>()
         attendanceData.forEach { att ->
             val code = att.courseCode ?: return@forEach
@@ -408,6 +422,7 @@ fun BunkSimulatorTab(
 
                 var remaining = 0
                 var plannedBunks = 0
+                val selectedOccurrences = mutableListOf<BunkOccurrence>()
 
                 var curr = projectionStartDate
                 while (!curr.isAfter(calculationEndDate)) {
@@ -423,13 +438,31 @@ fun BunkSimulatorTab(
                                 "BUNK_PROJECT",
                                 "course=$code type=${att.courseType} " +
                                         "date=$curr weight=$weight " +
-                                        "selected=${appliedDates.contains(curr)}"
+                                        "selected=${selectedDates.contains(curr)}"
                             )
 
                             remaining += weight
 
-                            if (appliedDates.contains(curr)) {
-                                plannedBunks += weight
+                            if (selectedDates.contains(curr)) {
+                                matchingClasses.forEach { session ->
+                                    val sessionWeight = getSlotWeight(session.slot)
+
+                                    if (sessionWeight > 0) {
+                                        val occurrence = BunkOccurrence(
+                                            date = curr,
+                                            courseCode = code,
+                                            courseType = att.courseType ?: "",
+                                            slot = session.slot ?: "",
+                                            weight = sessionWeight
+                                        )
+
+                                        selectedOccurrences += occurrence
+
+                                        if (occurrence.key !in attendanceOverrides) {
+                                            plannedBunks += sessionWeight
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -451,6 +484,7 @@ fun BunkSimulatorTab(
                     currentPct = currentPct,
                     remainingClasses = remaining,
                     plannedBunks = plannedBunks,
+                    selectedOccurrences = selectedOccurrences,
                     projectedAttended = projectedAttended,
                     projectedTotal = projectedTotal,
                     projectedPct = projectedPct,
@@ -595,7 +629,16 @@ fun BunkSimulatorTab(
 
                             FilterChip(
                                 selected = isSelected,
-                                onClick = { selectedDates = if (isSelected) selectedDates - date else selectedDates + date },
+                                onClick = {
+                                    if (isSelected) {
+                                        selectedDates = selectedDates - date
+                                        attendanceOverrides = attendanceOverrides.filterNot { key ->
+                                            key.startsWith("$date|")
+                                        }.toSet()
+                                    } else {
+                                        selectedDates = selectedDates + date
+                                    }
+                                },
                                 label = { Text(chipLabel, fontWeight = FontWeight.Bold) },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = MaterialTheme.colorScheme.primary,
@@ -627,7 +670,12 @@ fun BunkSimulatorTab(
                                         .clip(RoundedCornerShape(8.dp))
                                         .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
                                         .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                                        .clickable { selectedDates = selectedDates - date }
+                                        .clickable {
+                                            selectedDates = selectedDates - date
+                                            attendanceOverrides = attendanceOverrides.filterNot { key ->
+                                                key.startsWith("$date|")
+                                            }.toSet()
+                                        }
                                         .padding(horizontal = 10.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -640,29 +688,13 @@ fun BunkSimulatorTab(
                             TextButton(
                                 onClick = {
                                     selectedDates = emptySet()
-                                    appliedDates = emptySet()
+                                    attendanceOverrides = emptySet()
                                 },
                                 contentPadding = PaddingValues(0.dp)
                             ) {
                                 Text("Clear all", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
                             }
                         }
-                    }
-
-                    Button(
-                        onClick = { appliedDates = selectedDates },
-                        enabled = selectedDates != appliedDates,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 8.dp)
-                            .height(52.dp),
-                        shape = RoundedCornerShape(14.dp)
-                    ) {
-                        Text(
-                            if (selectedDates.isEmpty()) "Calculate attendance"
-                            else "Calculate with selected dates",
-                            fontWeight = FontWeight.Bold
-                        )
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -684,7 +716,16 @@ fun BunkSimulatorTab(
                 Box(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
                     CourseBunkCard(
                         course = course,
-                        examName = examName
+                        examName = examName,
+                        calculationDateStr = calculationEndDate.format(dateFormatter),
+                        attendanceOverrides = attendanceOverrides,
+                        onAttendanceOverrideChange = { occurrence, attend ->
+                            attendanceOverrides = if (attend) {
+                                attendanceOverrides + occurrence.key
+                            } else {
+                                attendanceOverrides - occurrence.key
+                            }
+                        }
                     )
                 }
             }
@@ -696,6 +737,10 @@ fun BunkSimulatorTab(
             initialSelectedDates = selectedDates,
             onDismissRequest = { showDatePicker = false },
             onDatesSelected = { newDates ->
+                val validDateStrings = newDates.map { it.toString() }.toSet()
+                attendanceOverrides = attendanceOverrides.filter { key ->
+                    key.substringBefore("|") in validDateStrings
+                }.toSet()
                 selectedDates = newDates
                 showDatePicker = false
             }
@@ -706,7 +751,13 @@ fun BunkSimulatorTab(
 // --- Course Card Composable ---
 
 @Composable
-fun CourseBunkCard(course: CourseBunkUiModel, examName: String) {
+fun CourseBunkCard(
+    course: CourseBunkUiModel,
+    examName: String,
+    calculationDateStr: String,
+    attendanceOverrides: Set<String>,
+    onAttendanceOverrideChange: (BunkOccurrence, Boolean) -> Unit
+) {
     var selectedTab by rememberSaveable { mutableStateOf(if (course.theory != null) "Theory" else "Lab") }
 
     val activeComponent = if (selectedTab == "Theory") course.theory else course.lab
@@ -720,6 +771,8 @@ fun CourseBunkCard(course: CourseBunkUiModel, examName: String) {
         isDanger -> MaterialTheme.colorScheme.error
         else -> Color(0xFF10B981)
     }
+
+    var bunksExpanded by rememberSaveable { mutableStateOf(false) }
 
     Card(
         modifier = Modifier.fillMaxWidth().animateContentSize(),
@@ -814,17 +867,69 @@ fun CourseBunkCard(course: CourseBunkUiModel, examName: String) {
 
                 Spacer(Modifier.height(16.dp))
 
-                if (activeComponent.plannedBunks > 0) {
+                if (activeComponent.selectedOccurrences.isNotEmpty()) {
                     val classStr = if (activeComponent.plannedBunks == 1) "class" else "classes"
-                    Text(
-                        text = buildAnnotatedString {
-                            withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary)) {
-                                append("Bunking ${activeComponent.plannedBunks}")
+
+                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable { bunksExpanded = !bunksExpanded }.padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = buildAnnotatedString {
+                                    withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary)) {
+                                        append("Bunking ${activeComponent.plannedBunks}")
+                                    }
+                                    append(" $classStr")
+                                },
+                                fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Icon(
+                                imageVector = if (bunksExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                contentDescription = "Expand",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        if (bunksExpanded) {
+                            Spacer(Modifier.height(8.dp))
+                            activeComponent.selectedOccurrences.forEach { occurrence ->
+                                val isAttending = occurrence.key in attendanceOverrides
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp, horizontal = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        val dFormatter = DateTimeFormatter.ofPattern("dd MMM · EEEE", Locale.ENGLISH)
+                                        Text(occurrence.date.format(dFormatter), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
+                                        val slotStr = if (occurrence.weight == 1) occurrence.slot else "${occurrence.slot} · ${occurrence.weight} classes"
+                                        Text(slotStr, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+
+                                    Button(
+                                        onClick = { onAttendanceOverrideChange(occurrence, !isAttending) },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (isAttending) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                                            contentColor = if (isAttending) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
+                                        modifier = Modifier.height(32.dp),
+                                        shape = RoundedCornerShape(8.dp),
+                                        elevation = null
+                                    ) {
+                                        Text(
+                                            text = if (isAttending) "Bunk" else "Attend",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
                             }
-                            append(" $classStr")
-                        },
-                        fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(vertical = 2.dp)
-                    )
+                            Spacer(Modifier.height(4.dp))
+                        }
+                    }
 
                     if (isDanger) {
                         val overBy = floor((0.75 * activeComponent.projectedTotal) - activeComponent.projectedAttended).toInt().coerceAtLeast(1)

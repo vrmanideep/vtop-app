@@ -9,6 +9,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.floor
 import android.util.Log
+
 data class ExamTarget(
     val name: String,
     val startDate: LocalDate,
@@ -33,8 +34,6 @@ data class ExamAttendanceProjection(
 )
 
 object ExamAttendanceProjector {
-
-
 
     @SuppressLint("NewApi")
     fun findNextExam(
@@ -114,8 +113,6 @@ object ExamAttendanceProjector {
         today: LocalDate = LocalDate.now()
     ): List<ExamAttendanceProjection> {
         val target = findNextExam(calendarEvents, today) ?: return emptyList()
-
-
 
         return projectToTarget(
             target = target,
@@ -422,6 +419,7 @@ object ExamAttendanceProjector {
 
         return null
     }
+
     @SuppressLint("NewApi")
     private fun parseCalendarDate(value: String): LocalDate? {
         val parts = value.trim().uppercase(Locale.ENGLISH).split("-")
