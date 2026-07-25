@@ -51,8 +51,6 @@ object GlobalSyncer {
         return null
     }
 
-    // ... inside GlobalSyncer.kt ...
-
     suspend fun performSync(context: Context, priorityTab: String? = null, forceNewSession: Boolean = false) {
         if (isSyncing.value) {
             Log.w(TAG, "performSync ignored: already syncing")
@@ -63,9 +61,7 @@ object GlobalSyncer {
             try {
                 withContext(Dispatchers.Main) {
                     isSyncing.value = true
-                    // UPDATED: Standardized casing
                     AppBridge.syncStatus.value = "Logging in..."
-
                 }
 
                 val creds = Vault.getCredentials(context)
@@ -79,8 +75,7 @@ object GlobalSyncer {
                 )
 
                 AppBridge.activeClient = client
-
-                android.util.Log.d(
+                Log.d(
                     "TT_EXPORT",
                     "AppBridge.activeClient assigned"
                 )
@@ -272,14 +267,20 @@ object GlobalSyncer {
                 val priority = priorityTab?.uppercase()
                 Log.d(TAG, "[SYNC STEP 7] Executing Priority Fetch for: $priority using ID: $authorizedId")
 
-                // --- UPDATED: Live UI updates during Priority Fetch ---
+                // --- Live UI updates during Priority Fetch ---
                 TelemetryTracer.trace(
                     "Priority Fetch",
                     TelemetryModule.SYNC
                 ) {
                     when (priority) {
                         "HOME" -> { updateStatus("Syncing Timetable..."); syncTimetable(context, client, semId) }
-                        "ATTENDANCE" -> { updateStatus("Syncing Attendance..."); syncAttendance(context, client, semId, authorizedId) }
+                        "ATTENDANCE" -> { updateStatus("Syncing Attendance..."); syncAttendance(
+                            context,
+                            client,
+                            semId,
+                            authorizedId,
+                            forceFullVerification = forceNewSession
+                        ) }
                         "EXAMS" -> { updateStatus("Syncing Exams..."); syncExams(context, client, semId) }
                         "MARKS" -> { updateStatus("Syncing Marks & Grades..."); syncMarks(context, client, semId) }
                         "OUTINGS" -> {
@@ -301,7 +302,7 @@ object GlobalSyncer {
 
                 Log.d(TAG, "[SYNC STEP 8] Priority fetch complete. Fetching remaining data in background...")
 
-                // --- UPDATED: Live UI updates during Background Fetches ---
+                // --- Live UI updates during Background Fetches ---
                 TelemetryTracer.trace(
                     "Background Sync",
                     TelemetryModule.SYNC
@@ -310,11 +311,13 @@ object GlobalSyncer {
                         updateStatus("Syncing Timetable..."); syncTimetable(context, client, semId)
                     }
                     if (priority != "ATTENDANCE") {
-                        updateStatus("Syncing Attendance..."); syncAttendance(
+                        updateStatus("Syncing Attendance...");
+                        syncAttendance(
                             context,
                             client,
                             semId,
-                            authorizedId
+                            authorizedId,
+                            forceFullVerification = forceNewSession
                         )
                     }
                     if (priority != "EXAMS") {
@@ -373,22 +376,147 @@ object GlobalSyncer {
         }
     }
 
-    private suspend fun syncAttendance(context: Context, client: VtopClient, semId: String, authorizedId: String) {
-        TelemetryTracer.trace(
-            "Attendance",
-            TelemetryModule.SYNC
-            ) {
+    private suspend fun syncAttendance(
+        context: Context,
+        client: VtopClient,
+        semId: String,
+        authorizedId: String,
+        forceFullVerification: Boolean = false
+    ) {
+        TelemetryTracer.trace("Attendance", TelemetryModule.SYNC) {
             val html = client.fetchAttendanceRawHtml(semId, null)
-            val data = AttendanceParser.parseSummary(html)
-            for (course in data) {
-                val cId = course.courseId ?: continue
-                val cType = course.courseType ?: continue
-                val detailHtml =
-                    client.fetchAttendanceDetailRawHtml(semId, cId, cType, authorizedId, null)
-                AttendanceParser.parseDetailAndUpdate(detailHtml, course)
+            val summary = AttendanceParser.parseSummary(html)
+            val cached = Vault.getAttendance(context).orEmpty()
+            val prefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
+            val verifyKey = "ATTENDANCE_FULL_VERIFY_$semId"
+            val lastVerify = prefs.getLong(verifyKey, 0L)
+            val now = System.currentTimeMillis()
+            val verificationDue = now - lastVerify >= 24L * 60L * 60L * 1000L
+
+            val cachedMap = cached.associateBy {
+                "${it.courseId}|${it.courseType}"
             }
-            Vault.saveAttendance(context, data)
-            withContext(Dispatchers.Main) { AppBridge.attendanceState.value = data }
+
+            val performedFullVerification = forceFullVerification || verificationDue
+
+            var verificationSuccessful = true
+            var fetched = 0
+            var reused = 0
+
+            for (course in summary) {
+                val key = "${course.courseId}|${course.courseType}"
+                val old = cachedMap[key]
+                val summaryChanged = old == null ||
+                        old.attendedClasses != course.attendedClasses ||
+                        old.totalClasses != course.totalClasses ||
+                        old.attendancePercentage != course.attendancePercentage
+
+                val cachedTotal = old?.totalClasses?.toIntOrNull() ?: 0
+
+                val historyMissing = old == null ||
+                        (cachedTotal > 0 && old.history.isNullOrEmpty())
+
+                val shouldFetchDetail =
+                    forceFullVerification ||
+                            verificationDue ||
+                            summaryChanged ||
+                            historyMissing
+
+                if (shouldFetchDetail) {
+                    val cId = course.courseId
+                    val cType = course.courseType
+
+                    if (cId.isNullOrBlank() || cType.isNullOrBlank()) {
+                        if (performedFullVerification) {
+                            verificationSuccessful = false
+                        }
+
+                        Log.w(
+                            "ATT_OPT",
+                            "Cannot fetch detail for ${course.courseCode}: " +
+                                    "courseId=$cId courseType=$cType"
+                        )
+
+                        if (old != null) {
+                            course.history = ArrayList(old.history)
+
+                            if (!old.classId.isNullOrBlank()) {
+                                course.classId = old.classId
+                            }
+                        }
+
+                        continue
+                    }
+
+                    val detailHtml = client.fetchAttendanceDetailRawHtml(
+                        semId, cId, cType, authorizedId, null
+                    )
+
+                    if (!detailHtml.isNullOrBlank()) {
+                        AttendanceParser.parseDetailAndUpdate(detailHtml, course)
+                        fetched++
+
+                        Log.d(
+                            "ATT_OPT",
+                            "FETCH ${course.courseCode} $cType " +
+                                    "changed=$summaryChanged " +
+                                    "missing=$historyMissing " +
+                                    "verify=$verificationDue " +
+                                    "force=$forceFullVerification"
+                        )
+                    } else {
+                        if (old != null) {
+                            course.history = ArrayList(old.history)
+
+                            if (!old.classId.isNullOrBlank()) {
+                                course.classId = old.classId
+                            }
+                        }
+
+                        if (forceFullVerification || verificationDue) {
+                            verificationSuccessful = false
+                        }
+
+                        Log.w(
+                            "ATT_OPT",
+                            "DETAIL FAILED ${course.courseCode} $cType - preserved cache"
+                        )
+                    }
+                } else {
+                    course.history = ArrayList(old!!.history)
+
+                    if (!old.classId.isNullOrBlank()) {
+                        course.classId = old.classId
+                    }
+
+                    reused++
+
+                    Log.d(
+                        "ATT_OPT",
+                        "CACHE ${course.courseCode} ${course.courseType}"
+                    )
+                }
+            }
+
+            Vault.saveAttendance(context, summary)
+
+            withContext(Dispatchers.Main) {
+                AppBridge.attendanceState.value = summary
+            }
+
+            if (performedFullVerification && verificationSuccessful) {
+                prefs.edit().putLong(verifyKey, now).apply()
+            }
+
+            Log.i(
+                "ATT_OPT",
+                "Attendance sync complete: " +
+                        "total=${summary.size}, " +
+                        "detailFetched=$fetched, " +
+                        "cacheReused=$reused, " +
+                        "fullVerification=$performedFullVerification, " +
+                        "verificationSuccessful=$verificationSuccessful"
+            )
         }
     }
 
@@ -396,7 +524,7 @@ object GlobalSyncer {
         TelemetryTracer.trace(
             "Exam Schedule",
             TelemetryModule.SYNC
-            ) {
+        ) {
             val html = client.fetchExamScheduleRawHtml(semId, null)
             val data = ExamScheduleParser.parse(html)
             Vault.saveExamSchedule(context, data)
@@ -600,7 +728,7 @@ object GlobalSyncer {
                     e
                 )
             }
-            }
+        }
     }
 
 }
