@@ -87,6 +87,7 @@ import com.vtop.utils.AnalyticsManager
 private val OutingColorSuccess = Color(0xFF4ADE80)
 private val OutingColorWarning = Color(0xFFFBBF24)
 private val OutingColorDanger = Color(0xFFE53935)
+private const val PENDING_BLOCK_DAYS = 5
 
 private fun String.toTitleCase(): String {
     return this.lowercase(Locale.getDefault()).split(" ").joinToString(" ") { word ->
@@ -264,21 +265,11 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
     var viewingPdfFile by remember { mutableStateOf<File?>(null) }
     var fetchingPdfIds by remember { mutableStateOf(setOf<String>()) }
 
-    val hasPendingPass = outingsData.any {
-        val s = it.status.uppercase(Locale.getDefault())
-        s.contains("PENDING") || s.contains("WAITING") || s.contains("FORWARD")
-    }
-
     Scaffold(
         containerColor = Color.Transparent,
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = {
-                    if (hasPendingPass) {
-                        Toast.makeText(context, "Please wait for your current request to be processed.", Toast.LENGTH_LONG).show()
-                        return@ExtendedFloatingActionButton
-                    }
-
                     isFetchingForm = true
                     val isGeneral = pagerState.currentPage == 0
                     if (isGeneral) {
@@ -295,8 +286,8 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
                         }
                     }
                 },
-                containerColor = if (hasPendingPass) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primary,
-                contentColor = if (hasPendingPass) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onPrimary,
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.padding(bottom = 70.dp)
             ) {
@@ -690,33 +681,41 @@ private fun ActiveCardContent(
             Text(outing.place, color = MaterialTheme.colorScheme.onSurface, fontSize = 20.sp, fontWeight = FontWeight.Black)
             Text(outing.purpose, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            if (isApproved) {
-                val outT = if (outing.type.uppercase(Locale.getDefault()) == "WEEKEND") outing.fromTime.substringBefore("-").trim() else outing.fromTime.replace("-", "").trim()
-                val inT = if (outing.type.uppercase(Locale.getDefault()) == "WEEKEND") outing.fromTime.substringAfter("-").trim() else outing.toTime.replace("-", "").trim()
-                val inD = if (outing.type.uppercase(Locale.getDefault()) == "WEEKEND") outing.fromDate else outing.toDate
+            val outT = if (outing.type.uppercase(Locale.getDefault()) == "WEEKEND") outing.fromTime.substringBefore("-").trim() else outing.fromTime.replace("-", "").trim()
+            val inT = if (outing.type.uppercase(Locale.getDefault()) == "WEEKEND") outing.fromTime.substringAfter("-").trim() else outing.toTime.replace("-", "").trim()
+            val inD = if (outing.type.uppercase(Locale.getDefault()) == "WEEKEND") outing.fromDate else outing.toDate
 
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Leave", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text("${formatDate(outing.fromDate)} · $outT", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    }
-                    Text("→", color = MaterialTheme.colorScheme.outline, fontSize = 16.sp, modifier = Modifier.padding(horizontal = 8.dp))
-                    Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                        Text("Return", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text("${formatDate(inD)} · $inT", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    }
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(formatDate(outing.fromDate, true), color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(outT, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                 }
 
+                Text(
+                    text = "to",
+                    color = MaterialTheme.colorScheme.outline,
+                    fontSize = 13.sp,
+                    fontStyle = FontStyle.Italic,
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                )
+
+                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                    Text(formatDate(inD, true), color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(inT, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+
+            if (isApproved) {
                 val (durationText, progressPct, isOngoing) = calculateLiveProgress(outing.fromDate, outing.fromTime, outing.toDate, outing.toTime, currentMillis, outing.type.uppercase(Locale.getDefault()) == "WEEKEND")
 
                 if (isOngoing) {
                     Row(Modifier
                         .fillMaxWidth()
-                        .padding(top = 12.dp)) {
+                        .padding(top = 16.dp)) {
                         if (progressPct > 0f) {
                             Box(Modifier
                                 .weight(progressPct)
@@ -736,14 +735,14 @@ private fun ActiveCardContent(
                     }
                 }
 
-                val topPadding = if (isOngoing) 6.dp else 12.dp
+                val topPadding = if (isOngoing) 8.dp else 16.dp
                 if (durationText != "Completed" || isOngoing) {
                     Text(durationText, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier
                         .align(Alignment.End)
                         .padding(top = topPadding))
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -811,8 +810,9 @@ private fun ActiveCardContent(
                     }
                 }
             } else {
-                ApprovalJourney(outing.status, outing.type)
                 Spacer(modifier = Modifier.height(16.dp))
+                ApprovalJourney(outing.status, outing.type)
+                Spacer(modifier = Modifier.height(12.dp))
                 Text("← swipe left to cancel", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontStyle = FontStyle.Italic)
             }
         }
