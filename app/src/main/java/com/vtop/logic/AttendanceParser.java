@@ -92,18 +92,21 @@ public class AttendanceParser {
         return dataList;
     }
 
-    public static void parseDetailAndUpdate(String html, AttendanceModel course) {
-        if (html == null || html.isEmpty()) return;
+    public static boolean parseDetailAndUpdate(String html, AttendanceModel course) {
+        if (html == null || html.trim().isEmpty()) {
+            return false;
+        }
 
         try {
             org.jsoup.nodes.Document doc = org.jsoup.Jsoup.parse(html);
+            String parsedClassId = null;
 
             // 1. Get Class ID from the top summary table
             org.jsoup.nodes.Element courseTable = doc.getElementById("StudentCourseDetailDataTable");
             if (courseTable != null) {
                 org.jsoup.select.Elements tds = courseTable.select("tbody tr td");
                 if (tds.size() > 2) {
-                    course.classId = tds.get(2).text().split(" - ")[0].trim();
+                    parsedClassId = tds.get(2).text().split(" - ")[0].trim();
                 }
             }
 
@@ -125,15 +128,14 @@ public class AttendanceParser {
             }
 
             if (historyTable == null) {
-                android.util.Log.e("VTOP_DEBUG", "History table absolutely NOT FOUND for " + course.courseCode);
-                return;
+                Log.w("ATT_OPT", "DETAIL INVALID " + course.courseCode + " " + course.courseType + " - history table not found");
+                return false;
             }
 
             // 3. Select ONLY the rows inside the <tbody> to skip the <thead>
             org.jsoup.select.Elements rows = historyTable.select("tbody tr");
 
-            if (course.history == null) course.history = new java.util.ArrayList<>();
-            else course.history.clear();
+            List<AttendanceModel.AttendanceHistory> parsedHistory = new ArrayList<>();
 
             // 4. Parse the data
             for (org.jsoup.nodes.Element row : rows) {
@@ -179,13 +181,22 @@ public class AttendanceParser {
 
                 String displayDate = dayOfWeek.isEmpty() ? shortDate : (dayOfWeek + ", " + shortDate);
 
-                course.history.add(new AttendanceModel.AttendanceHistory(displayDate, slot, status, exactTime));
+                parsedHistory.add(new AttendanceModel.AttendanceHistory(displayDate, slot, status, exactTime));
             }
 
-            android.util.Log.d("VTOP_DEBUG", "SUCCESS: Parsed " + course.history.size() + " records for " + course.courseCode);
+            // 5. Commit phase
+            if (parsedClassId != null && !parsedClassId.trim().isEmpty()) {
+                course.classId = parsedClassId;
+            }
+
+            course.history = new ArrayList<>(parsedHistory);
+
+            Log.d("ATT_OPT", "DETAIL PARSED " + course.courseCode + " " + course.courseType + " rows=" + course.history.size());
+            return true;
 
         } catch (Exception e) {
-            android.util.Log.e("VTOP_DEBUG", "Detail Parse Crash for " + course.courseCode, e);
+            Log.e("ATT_OPT", "DETAIL PARSE FAILED " + course.courseCode + " " + course.courseType, e);
+            return false;
         }
     }
 }

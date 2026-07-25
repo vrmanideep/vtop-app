@@ -385,8 +385,24 @@ object GlobalSyncer {
     ) {
         TelemetryTracer.trace("Attendance", TelemetryModule.SYNC) {
             val html = client.fetchAttendanceRawHtml(semId, null)
-            val summary = AttendanceParser.parseSummary(html)
+            val parsedSummary = AttendanceParser.parseSummary(html)
             val cached = Vault.getAttendance(context).orEmpty()
+
+            if (parsedSummary.isEmpty()) {
+                if (cached.isNotEmpty()) {
+                    Log.w("ATT_OPT", "SUMMARY EMPTY - preserving ${cached.size} cached courses")
+                    withContext(Dispatchers.Main) {
+                        AppBridge.attendanceState.value = cached
+                    }
+                    return@trace
+                } else {
+                    Log.w("ATT_OPT", "SUMMARY EMPTY - no cache to preserve")
+                    return@trace
+                }
+            }
+
+            val summary = parsedSummary
+
             val prefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
             val verifyKey = "ATTENDANCE_FULL_VERIFY_$semId"
             val lastVerify = prefs.getLong(verifyKey, 0L)
@@ -433,8 +449,7 @@ object GlobalSyncer {
 
                         Log.w(
                             "ATT_OPT",
-                            "Cannot fetch detail for ${course.courseCode}: " +
-                                    "courseId=$cId courseType=$cType"
+                            "DETAIL INVALID ${course.courseCode} $cType - courseId/type missing"
                         )
 
                         if (old != null) {
@@ -452,8 +467,13 @@ object GlobalSyncer {
                         semId, cId, cType, authorizedId, null
                     )
 
-                    if (!detailHtml.isNullOrBlank()) {
+                    val detailParsed = if (!detailHtml.isNullOrBlank()) {
                         AttendanceParser.parseDetailAndUpdate(detailHtml, course)
+                    } else {
+                        false
+                    }
+
+                    if (detailParsed) {
                         fetched++
 
                         Log.d(
@@ -473,13 +493,13 @@ object GlobalSyncer {
                             }
                         }
 
-                        if (forceFullVerification || verificationDue) {
+                        if (performedFullVerification) {
                             verificationSuccessful = false
                         }
 
                         Log.w(
                             "ATT_OPT",
-                            "DETAIL FAILED ${course.courseCode} $cType - preserved cache"
+                            "DETAIL REJECTED ${course.courseCode} $cType - preserving cached history"
                         )
                     }
                 } else {
@@ -504,8 +524,12 @@ object GlobalSyncer {
                 AppBridge.attendanceState.value = summary
             }
 
-            if (performedFullVerification && verificationSuccessful) {
-                prefs.edit().putLong(verifyKey, now).apply()
+            if (performedFullVerification) {
+                if (verificationSuccessful) {
+                    prefs.edit().putLong(verifyKey, now).apply()
+                } else {
+                    Log.w("ATT_OPT", "FULL VERIFICATION INCOMPLETE - verification timestamp not updated")
+                }
             }
 
             Log.i(
