@@ -73,6 +73,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.TimeUnit
+import androidx.work.OneTimeWorkRequestBuilder
 
 class MainActivity : ComponentActivity() {
 
@@ -150,11 +151,29 @@ class MainActivity : ComponentActivity() {
         }
 
         if (autoSyncInterval > 0) {
-            val syncRequest = PeriodicWorkRequestBuilder<VtopSyncWorker>(autoSyncInterval.toLong(), TimeUnit.HOURS).build()
-            WorkManager.getInstance(this).enqueueUniquePeriodicWork("VTOP_BACKGROUND_SYNC", ExistingPeriodicWorkPolicy.KEEP, syncRequest)
+            val syncRequest =
+                PeriodicWorkRequestBuilder<VtopSyncWorker>(
+                    autoSyncInterval.toLong(),
+                    TimeUnit.HOURS
+                ).build()
+
+            WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+                "VTOP_BACKGROUND_SYNC",
+                ExistingPeriodicWorkPolicy.KEEP,
+                syncRequest
+            )
         } else {
-            WorkManager.getInstance(this).cancelUniqueWork("VTOP_BACKGROUND_SYNC")
+            WorkManager.getInstance(this)
+                .cancelUniqueWork("VTOP_BACKGROUND_SYNC")
         }
+
+// TEMPORARY: test background attendance sync
+        val testAttendanceWorker =
+            androidx.work.OneTimeWorkRequestBuilder<VtopSyncWorker>()
+                .build()
+
+        WorkManager.getInstance(this)
+            .enqueue(testAttendanceWorker)
 
         lifecycleScope.launch(Dispatchers.IO) {
             val timetable = Vault.getTimetable(this@MainActivity)
