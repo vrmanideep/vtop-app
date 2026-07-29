@@ -115,7 +115,6 @@ import com.vtop.ui.legal.*
 import com.vtop.ui.pages.ProfilePage
 import com.vtop.ui.screens.profile.LegalDocumentScreen
 import com.vtop.ui.screens.sub.*
-import androidx.compose.ui.platform.LocalContext
 import com.vtop.ui.core.AppBridge
 import com.vtop.ui.screens.portal.VtopPortalScreen
 
@@ -177,6 +176,8 @@ fun Profile(
     onDeleteReminder: (String) -> Unit,
     lastSyncTime: String,
     onSyncClick: (Boolean) -> Unit,
+    onForceAttendanceSync: () -> Unit,
+    isForceAttendanceSyncing: Boolean,
     vtopClient: VtopClient?
 ) {
     LaunchedEffect(Unit) {
@@ -424,6 +425,24 @@ fun Profile(
                             Icon(Icons.Default.Refresh, contentDescription = "Sync", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                         }
                     }
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                    )
+
+                    SettingRow(
+                        label = "Force sync attendance",
+                        value = if (isForceAttendanceSyncing) {
+                            "Fetching complete attendance history..."
+                        } else {
+                            "Fetch complete attendance history"
+                        },
+                        actionText = if (isForceAttendanceSyncing) "Syncing..." else "Sync",
+                        onClick = {
+                            if (!isForceAttendanceSyncing) {
+                                onForceAttendanceSync()
+                            }
+                        }
+                    )
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
                     SettingRow(
