@@ -70,8 +70,10 @@ import com.vtop.ui.theme.DockPosition
 import com.vtop.ui.theme.ThemeManager
 import com.vtop.utils.Vault
 import com.vtop.widget.NextClassWidget
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -92,7 +94,6 @@ fun MainScreen(
 
     val context = LocalContext.current
     val sharedPrefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
-
 
     LaunchedEffect(examsData) {
         if (examsData.isNotEmpty()) {
@@ -144,9 +145,8 @@ fun MainScreen(
     } else 0
 
     var currentTab by rememberSaveable { mutableStateOf(navItems[initialPage]) }
-    var isProfileSubPage by rememberSaveable {
-        mutableStateOf(false)
-    }
+    var isProfileSubPage by rememberSaveable { mutableStateOf(false) }
+    var isForceAttendanceSyncing by remember { mutableStateOf(false) }
 
     val coroutineScope = rememberCoroutineScope()
 
@@ -168,7 +168,6 @@ fun MainScreen(
     val screenWidthPx = with(density) { config.screenWidthDp.dp.toPx() }
     val screenHeightPx = with(density) { config.screenHeightDp.dp.toPx() }
 
-    // THE FIX: Use rememberSaveable so your dock position doesn't reset either!
     var offsetX by rememberSaveable { mutableFloatStateOf(0f) }
     var offsetY by rememberSaveable { mutableFloatStateOf(0f) }
 
@@ -228,6 +227,7 @@ fun MainScreen(
                         val profileStateValue = AppBridge.profileState.value
                         val profileMap = remember(profileStateValue) { profileStateValue?.takeIf { it.isNotEmpty() } ?: Vault.getProfile(context) }
                         val vtopClient = AppBridge.activeClient
+
                         Profile(
                             onBack = { currentTab = "HOME" },
                             timetable = timetable,
@@ -265,7 +265,61 @@ fun MainScreen(
                             onDeleteReminder = {},
                             lastSyncTime = Vault.getLastSyncTimestamp(context).toString(),
                             onSyncClick = { handleSyncAndUpdateWidget(currentTab, it) },
-                            vtopClient = AppBridge.activeClient
+                            onForceAttendanceSync = {
+                                if (AppBridge.syncStatus.value != "IDLE") {
+                                    Toast.makeText(context, "A global sync is currently running. Please wait.", Toast.LENGTH_SHORT).show()
+                                    return@Profile
+                                }
+
+                                val client = AppBridge.activeClient
+                                if (client == null) {
+                                    Toast.makeText(context, "Session expired. Please perform a normal sync first.", Toast.LENGTH_SHORT).show()
+                                    return@Profile
+                                }
+
+                                val semId = Vault.getSelectedSemester(context)[0] ?: ""
+                                val rawReg = Vault.getRegNo(context)
+                                val authorizedId = if (rawReg.isNotBlank() && rawReg != "-") rawReg else (Vault.getCredentials(context)[0] ?: "")
+
+                                if (semId.isBlank() || authorizedId.isBlank()) {
+                                    Toast.makeText(context, "Missing student information. Please sync first.", Toast.LENGTH_SHORT).show()
+                                    return@Profile
+                                }
+
+                                isForceAttendanceSyncing = true
+
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    try {
+                                        val result = com.vtop.logic.AttendanceSyncEngine.sync(
+                                            context = context,
+                                            client = client,
+                                            semId = semId,
+                                            authorizedId = authorizedId,
+                                            mode = com.vtop.logic.AttendanceSyncMode.FORCE_FULL,
+                                            logTag = "ATT_FORCE"
+                                        )
+
+                                        withContext(Dispatchers.Main) {
+                                            if (result.successful) {
+                                                Toast.makeText(context, "Attendance synced", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                Toast.makeText(context, "Attendance sync incomplete", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e("ATT_FORCE", "Force attendance sync failed", e)
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "Attendance sync failed", Toast.LENGTH_SHORT).show()
+                                        }
+                                    } finally {
+                                        withContext(Dispatchers.Main) {
+                                            isForceAttendanceSyncing = false
+                                        }
+                                    }
+                                }
+                            },
+                            isForceAttendanceSyncing = isForceAttendanceSyncing,
+                            vtopClient = vtopClient
                         )
                     }
                 }

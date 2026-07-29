@@ -16,7 +16,6 @@ import com.vtop.utils.NotificationHelper
 import com.vtop.utils.*
 import com.vtop.logic.*
 import com.vtop.logic.MarksParser
-import com.vtop.logic.AttendanceParser
 import com.vtop.logic.OutingParser
 import com.vtop.utils.SemesterTransitionEngine
 import kotlinx.coroutines.Dispatchers
@@ -161,161 +160,14 @@ class VtopSyncWorker(
             val semId = semInfo[0] ?: ""
 
             // --- 1. CHECK ATTENDANCE ---
-            val attHtml = client.fetchAttendanceRawHtml(semId, null) ?: ""
-            val parsedSummary = AttendanceParser.parseSummary(attHtml)
-            val cachedAttendance = Vault.getAttendance(context).orEmpty()
-
-            if (parsedSummary.isEmpty()) {
-                if (cachedAttendance.isNotEmpty()) {
-                    Log.w("ATT_OPT_BG", "SUMMARY EMPTY - preserving ${cachedAttendance.size} cached courses")
-                    withContext(Dispatchers.Main) {
-                        AppBridge.attendanceState.value = cachedAttendance
-                    }
-                } else {
-                    Log.w("ATT_OPT_BG", "SUMMARY EMPTY - no cache to preserve")
-                }
-            } else {
-                val summary = parsedSummary
-                val prefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
-                val verifyKey = "ATTENDANCE_FULL_VERIFY_$semId"
-                val lastVerify = prefs.getLong(verifyKey, 0L)
-                val now = System.currentTimeMillis()
-                val verificationDue = now - lastVerify >= 24L * 60L * 60L * 1000L
-
-                val cachedMap = cachedAttendance.associateBy {
-                    "${it.courseId}|${it.courseType}"
-                }
-
-                val forceFullVerification = false
-                val performedFullVerification = forceFullVerification || verificationDue
-
-                var verificationSuccessful = true
-                var fetched = 0
-                var reused = 0
-
-                for (course in summary) {
-                    val key = "${course.courseId}|${course.courseType}"
-                    val old = cachedMap[key]
-                    val summaryChanged = old == null ||
-                            old.attendedClasses != course.attendedClasses ||
-                            old.totalClasses != course.totalClasses ||
-                            old.attendancePercentage != course.attendancePercentage
-
-                    val cachedTotal = old?.totalClasses?.toIntOrNull() ?: 0
-
-                    val historyMissing = old == null ||
-                            (cachedTotal > 0 && old.history.isNullOrEmpty())
-
-                    val shouldFetchDetail =
-                        forceFullVerification ||
-                                verificationDue ||
-                                summaryChanged ||
-                                historyMissing
-
-                    if (shouldFetchDetail) {
-                        val cId = course.courseId
-                        val cType = course.courseType
-
-                        if (cId.isNullOrBlank() || cType.isNullOrBlank()) {
-                            if (performedFullVerification) {
-                                verificationSuccessful = false
-                            }
-
-                            Log.w(
-                                "ATT_OPT_BG",
-                                "DETAIL INVALID ${course.courseCode} $cType - courseId/type missing"
-                            )
-
-                            if (old != null) {
-                                course.history = ArrayList(old.history)
-
-                                if (!old.classId.isNullOrBlank()) {
-                                    course.classId = old.classId
-                                }
-                            }
-
-                            continue
-                        }
-
-                        val detailHtml = client.fetchAttendanceDetailRawHtml(
-                            semId, cId, cType, authorizedId, null
-                        )
-
-                        val detailParsed = if (!detailHtml.isNullOrBlank()) {
-                            AttendanceParser.parseDetailAndUpdate(detailHtml, course)
-                        } else {
-                            false
-                        }
-
-                        if (detailParsed) {
-                            fetched++
-
-                            Log.d(
-                                "ATT_OPT_BG",
-                                "FETCH ${course.courseCode} $cType " +
-                                        "changed=$summaryChanged " +
-                                        "missing=$historyMissing " +
-                                        "verify=$verificationDue " +
-                                        "force=$forceFullVerification"
-                            )
-                        } else {
-                            if (old != null) {
-                                course.history = ArrayList(old.history)
-
-                                if (!old.classId.isNullOrBlank()) {
-                                    course.classId = old.classId
-                                }
-                            }
-
-                            if (performedFullVerification) {
-                                verificationSuccessful = false
-                            }
-
-                            Log.w(
-                                "ATT_OPT_BG",
-                                "DETAIL REJECTED ${course.courseCode} $cType - preserving cached history"
-                            )
-                        }
-                    } else {
-                        course.history = ArrayList(old!!.history)
-
-                        if (!old.classId.isNullOrBlank()) {
-                            course.classId = old.classId
-                        }
-
-                        reused++
-
-                        Log.d(
-                            "ATT_OPT_BG",
-                            "CACHE ${course.courseCode} ${course.courseType}"
-                        )
-                    }
-                }
-
-                Vault.saveAttendance(context, summary)
-
-                withContext(Dispatchers.Main) {
-                    AppBridge.attendanceState.value = summary
-                }
-
-                if (performedFullVerification) {
-                    if (verificationSuccessful) {
-                        prefs.edit().putLong(verifyKey, now).apply()
-                    } else {
-                        Log.w("ATT_OPT_BG", "FULL VERIFICATION INCOMPLETE - verification timestamp not updated")
-                    }
-                }
-
-                Log.i(
-                    "ATT_OPT_BG",
-                    "Background attendance sync complete: " +
-                            "total=${summary.size}, " +
-                            "detailFetched=$fetched, " +
-                            "cacheReused=$reused, " +
-                            "fullVerification=$performedFullVerification, " +
-                            "verificationSuccessful=$verificationSuccessful"
-                )
-            }
+            AttendanceSyncEngine.sync(
+                context = context,
+                client = client,
+                semId = semId,
+                authorizedId = authorizedId,
+                mode = AttendanceSyncMode.OPTIMIZED,
+                logTag = "ATT_OPT_BG"
+            )
 
             // --- 2. CHECK EXAM SEATS ---
             val isExamSync = inputData.getBoolean("IS_EXAM_SYNC", false)
