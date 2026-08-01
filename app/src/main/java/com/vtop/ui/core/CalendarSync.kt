@@ -36,6 +36,17 @@ object CalendarSync {
         return this.trim()
     }
 
+    private fun applyTemplate(
+        template: String,
+        values: Map<String, String>
+    ): String {
+        var result = template
+        values.forEach { (key, value) ->
+            result = result.replace("{$key}", value)
+        }
+        return result
+    }
+
     @SuppressLint("Range")
     fun getWritableCalendars(context: Context): List<CalendarInfo> {
         val calendars = mutableListOf<CalendarInfo>()
@@ -174,9 +185,21 @@ object CalendarSync {
                     val isLab = course.courseType?.contains("L", true) == true || course.courseType?.contains("P", true) == true
                     val eventColor = if (isLab) colorGreen else colorBlue
 
-                    val parsedTitle = titleTemplate.replace("{courseCode}", course.courseCode.cleanStr()).replace("{courseType}", course.courseType.cleanStr()).replace("{slot}", course.mergedSlot).replace("{courseTitle}", course.courseName.cleanStr())
-                    val parsedDesc = descTemplate.replace("{courseCode}", course.courseCode.cleanStr()).replace("{courseType}", course.courseType.cleanStr()).replace("{slot}", course.mergedSlot).replace("{faculty}", course.faculty.cleanStr()).replace("{courseTitle}", course.courseName.cleanStr()).replace("{classId}", course.classId.cleanStr()) + VTOP_SYNC_FOOTPRINT
-                    val parsedLoc = locTemplate.replace("{venue}", course.venue.cleanStr()).replace("{seat}", "").replace("{classId}", course.classId.cleanStr()).trim().removePrefix("-").trim()
+                    // Generate Universal Template Values
+                    val templateValues = mapOf(
+                        "courseCode" to course.courseCode.cleanStr(),
+                        "courseType" to course.courseType.cleanStr(),
+                        "slot" to course.mergedSlot,
+                        "courseTitle" to course.courseName.cleanStr(),
+                        "faculty" to course.faculty.cleanStr(),
+                        "classId" to course.classId.cleanStr(),
+                        "venue" to course.venue.cleanStr(),
+                        "seat" to ""
+                    )
+
+                    val parsedTitle = applyTemplate(titleTemplate, templateValues)
+                    val parsedDesc = applyTemplate(descTemplate, templateValues) + VTOP_SYNC_FOOTPRINT
+                    val parsedLoc = applyTemplate(locTemplate, templateValues).trim().removePrefix("-").trim()
 
                     val values = ContentValues().apply {
                         put(CalendarContract.Events.DTSTART, startCal.timeInMillis)
@@ -244,9 +267,21 @@ object CalendarSync {
                 val cleanSeat = exam.seatNumber.cleanStr()
                 val finalSeat = if (cleanLoc != " " && cleanSeat != " ") "$cleanLoc ($cleanSeat)" else if (cleanLoc != " ") cleanLoc else cleanSeat
 
-                val parsedTitle = "[EXAM] " + titleTemplate.replace("{courseCode}", exam.courseCode.cleanStr()).replace("{courseType}", exam.examType.cleanStr()).replace("{slot}", exam.slot.cleanStr()).replace("{courseTitle}", exam.courseTitle.cleanStr())
-                val parsedDesc = descTemplate.replace("{courseCode}", exam.courseCode.cleanStr()).replace("{courseType}", exam.examType.cleanStr()).replace("{slot}", exam.slot.cleanStr()).replace("{faculty}", "").replace("{courseTitle}", exam.courseTitle.cleanStr()).replace("{classId}", exam.classId.cleanStr()) + "\nSeat: $finalSeat" + VTOP_SYNC_FOOTPRINT
-                val parsedLoc = locTemplate.replace("{venue}", cleanVenue).replace("{seat}", finalSeat).replace("{classId}", exam.classId.cleanStr()).trim().removePrefix("-").trim()
+                // Generate Universal Template Values
+                val templateValues = mapOf(
+                    "courseCode" to exam.courseCode.cleanStr(),
+                    "courseType" to exam.examType.cleanStr(),
+                    "slot" to exam.slot.cleanStr(),
+                    "courseTitle" to exam.courseTitle.cleanStr(),
+                    "faculty" to "",
+                    "classId" to exam.classId.cleanStr(),
+                    "venue" to cleanVenue,
+                    "seat" to finalSeat
+                )
+
+                val parsedTitle = applyTemplate(titleTemplate, templateValues)
+                val parsedDesc = applyTemplate(descTemplate, templateValues) + "\nSeat: $finalSeat" + VTOP_SYNC_FOOTPRINT
+                val parsedLoc = applyTemplate(locTemplate, templateValues).trim().removePrefix("-").trim()
 
                 val values = ContentValues().apply {
                     put(CalendarContract.Events.DTSTART, startCal.timeInMillis)
