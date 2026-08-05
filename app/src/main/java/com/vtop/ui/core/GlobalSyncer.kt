@@ -9,6 +9,7 @@ import androidx.glance.appwidget.updateAll
 import com.vtop.widget.NextClassWidget
 import androidx.compose.runtime.mutableStateOf
 import com.vtop.core.SessionManager
+import com.vtop.core.SessionType
 import com.vtop.network.VtopClient
 import com.vtop.network.VtopException
 import com.vtop.utils.*
@@ -51,10 +52,14 @@ object GlobalSyncer {
                     AppBridge.syncStatus.value = "Logging in..."
                 }
 
-                val (client, credentials) = SessionManager.createClient(context)
-                val username = credentials.first ?: ""
+                val (client, credentials) = SessionManager.createClient(
+                    context,
+                    SessionType.SYNC
+                )
 
                 SessionManager.setSyncClient(client)
+
+                val username = credentials.first ?: ""
 
                 if (forceNewSession) {
                     Log.i(TAG, "Force Refresh Requested: Wiping existing session cookies.")
