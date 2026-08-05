@@ -49,14 +49,20 @@ public class VtopClient {
     private static final String BASE_URL = "https://vtop.vitap.ac.in/vtop";
     private static final long OTP_WAIT_TIMEOUT_SEC = 120;
 
+    // The OkHttpClient is shared to reuse the connection pool and threads.
+    // However, since CookieJar is immutable per OkHttpClient instance, we use
+    // sharedClient.newBuilder().cookieJar(...).build() for each VtopClient.
+    // This provides isolated cookies while sharing the underlying network resources.[cite: 24]
     private static OkHttpClient sharedClient = null;
-    private static SharedPrefsCookieJar cookieJarInstance = null;
 
     private final OkHttpClient client;
     private final String username;
     private final String password;
     private String csrfToken;
     private String authorizedId;
+
+    private final SharedPrefsCookieJar cookieJarInstance;
+    private final String sessionTag;
 
     public String getCsrfToken() { return this.csrfToken; }
     public String getUsername() { return this.username; }
@@ -74,8 +80,8 @@ public class VtopClient {
 
         private static String cookieKey(Cookie c) { return c.name() + "@" + c.domain() + c.path(); }
 
-        public SharedPrefsCookieJar(Context ctx) {
-            prefs = ctx.getSharedPreferences("VTOP_COOKIES", Context.MODE_PRIVATE);
+        public SharedPrefsCookieJar(Context ctx, String preferenceName) {
+            prefs = ctx.getSharedPreferences(preferenceName, Context.MODE_PRIVATE);
             for (Map.Entry<String, ?> entry : prefs.getAll().entrySet()) {
                 try {
                     String val = (String) entry.getValue();
@@ -123,16 +129,35 @@ public class VtopClient {
     }
 
     public VtopClient(Context context, String username, String password) {
+        this(context, username, password, "DEFAULT");
+    }
+
+    public VtopClient(Context context, String username, String password, String cookieNamespace) {
         this.username = username == null ? "" : username.trim();
         this.password = password == null ? "" : password.trim();
         this.authorizedId = this.username;
+        this.sessionTag = cookieNamespace == null || cookieNamespace.trim().isEmpty() ? "DEFAULT" : cookieNamespace.trim().toUpperCase();
+
+        String prefsName = "DEFAULT".equals(this.sessionTag) ? "VTOP_COOKIES" : "VTOP_COOKIES_" + this.sessionTag;
+        this.cookieJarInstance = new SharedPrefsCookieJar(context.getApplicationContext(), prefsName);
 
         if (sharedClient == null) {
-            cookieJarInstance = new SharedPrefsCookieJar(context.getApplicationContext());
-            sharedClient = getUnsafeOkHttpClientBuilder().cookieJar(cookieJarInstance).connectTimeout(30, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build();
+            sharedClient = getUnsafeOkHttpClientBuilder()
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .build();
         }
-        this.client = sharedClient;
-        this.csrfToken = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE).getString("CSRF_TOKEN", "");
+
+        // Isolate the CookieJar per instance while sharing network resources[cite: 24]
+        this.client = sharedClient.newBuilder()
+                .cookieJar(this.cookieJarInstance)
+                .build();
+
+        this.csrfToken = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE).getString(getCsrfPrefKey(), "");
+    }
+
+    private String getCsrfPrefKey() {
+        return "DEFAULT".equals(sessionTag) ? "CSRF_TOKEN" : "CSRF_TOKEN_" + sessionTag;
     }
 
     public void setAuthorizedId(String authorizedId) {
@@ -144,13 +169,13 @@ public class VtopClient {
     public void reinitializeSession(Context context) {
         if (cookieJarInstance != null) cookieJarInstance.clear();
         csrfToken = "";
-        context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE).edit().remove("CSRF_TOKEN").apply();
+        context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE).edit().remove(getCsrfPrefKey()).apply();
     }
 
     private void persistCsrf(Context ctx, String token) {
         if (token == null || token.isEmpty()) return;
         csrfToken = token;
-        ctx.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE).edit().putString("CSRF_TOKEN", token).apply();
+        ctx.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE).edit().putString(getCsrfPrefKey(), token).apply();
     }
 
     private void extractAndSetAuthorizedId(String html) {
