@@ -38,20 +38,6 @@ object GlobalSyncer {
         AppBridge.syncStatus.value = "IDLE"
     }
 
-    private fun extractAuthorizedIdFromContent(html: String?): String? {
-        if (html.isNullOrBlank()) return null
-
-        val regNoPattern = Regex("""\b\d{2}[a-zA-Z]{3}\d{4}\b""")
-        val match = regNoPattern.find(html)
-        if (match != null) return match.value.uppercase()
-
-        val jsPattern = Regex("""(?:let|var)\s+id\s*=\s*['"]([^'"]+)['"]""")
-        val jsMatch = jsPattern.find(html)
-        if (jsMatch != null) return jsMatch.groupValues[1].uppercase()
-
-        return null
-    }
-
     suspend fun performSync(context: Context, priorityTab: String? = null, forceNewSession: Boolean = false) {
         if (isSyncing.value) {
             Log.w(TAG, "performSync ignored: already syncing")
@@ -65,21 +51,10 @@ object GlobalSyncer {
                     AppBridge.syncStatus.value = "Logging in..."
                 }
 
-                val creds = Vault.getCredentials(context)
-                val username = creds[0] // Strictly used to log in
-                val password = creds[1]
+                val (client, credentials) = SessionManager.createClient(context)
+                val username = credentials.first ?: ""
 
-                val client = VtopClient(context, username, password)
-                Log.d(
-                    "TT_EXPORT",
-                    "GlobalSyncer created client: $client"
-                )
-
-                SessionManager.client = client
-                Log.d(
-                    "TT_EXPORT",
-                    "SessionManager.client assigned"
-                )
+                SessionManager.setSyncClient(client)
 
                 if (forceNewSession) {
                     Log.i(TAG, "Force Refresh Requested: Wiping existing session cookies.")
@@ -168,8 +143,10 @@ object GlobalSyncer {
                                     }
                                 })
                         } catch (e: VtopException.InvalidCredentials) {
+                            SessionManager.invalidateSync()
                             throw e
                         } catch (e: VtopException.AuthenticationFailed) {
+                            SessionManager.invalidateSync()
                             throw e
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
@@ -199,6 +176,7 @@ object GlobalSyncer {
                 }
 
                 if (!loginSuccess) {
+                    SessionManager.invalidateSync()
                     throw Exception("Failed to login after $MAX_RETRY attempts. VTOP might be blocking requests.")
                 }
 
@@ -230,7 +208,7 @@ object GlobalSyncer {
                             "[SYNC STEP 5] /content page fetched. Length: ${contentHtml?.length ?: 0}"
                         )
 
-                        val scrapedId = extractAuthorizedIdFromContent(contentHtml)
+                        val scrapedId = SessionManager.extractAuthorizedIdFromContent(contentHtml)
 
                         if (!scrapedId.isNullOrBlank() && validRegNoRegex.matches(scrapedId)) {
                             authorizedId = scrapedId
@@ -256,6 +234,7 @@ object GlobalSyncer {
 
                 Log.d(TAG, "[SYNC STEP 6.5] Injecting Authorized ID into Client: $authorizedId")
                 client.setAuthorizedId(authorizedId)
+                // TODO: The authorizedId should eventually become part of the Session object once SessionManager stores session metadata.
 
                 val semInfo = Vault.getSelectedSemester(context)
                 val semId = semInfo[0] ?: ""
@@ -359,6 +338,7 @@ object GlobalSyncer {
                 withContext(Dispatchers.Main) { Toast.makeText(context, "Sync Complete!", Toast.LENGTH_SHORT).show() }
 
             } catch (e: Exception) {
+                SessionManager.invalidateSync()
                 Log.e(TAG, "Sync Error", e)
                 withContext(Dispatchers.Main) { Toast.makeText(context, "Sync Error: ${e.message}", Toast.LENGTH_LONG).show() }
             } finally {
