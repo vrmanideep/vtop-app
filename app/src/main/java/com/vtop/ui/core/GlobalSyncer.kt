@@ -458,11 +458,7 @@ object GlobalSyncer {
         ) {
             try {
 
-                Log.d(
-                    TAG,
-                    "========== CALENDAR SYNC START =========="
-                )
-                Log.d(TAG, "Fetching dedicated calendar semester list...")
+                Log.d(TAG, "Fetching dedicated calendar semester list")
                 val calSemesters = client.fetchCalendarSemesters()
                 if (calSemesters.isNotEmpty()) {
                     Vault.saveCalendarSemesterOptions(context, calSemesters)
@@ -470,8 +466,6 @@ object GlobalSyncer {
                 } else {
                     Log.w(TAG, "Failed to extract calendar semesters.")
                 }
-                // -------------------------------------------------------------
-
                 val months =
                     client.fetchCalendarMonths(
                         semId,
@@ -560,11 +554,6 @@ object GlobalSyncer {
                 Log.d(
                     TAG,
                     "Calendar Sync Complete: ${allEvents.size} events"
-                )
-
-                Log.d(
-                    TAG,
-                    "=========== CALENDAR SYNC END ==========="
                 )
 
             } catch (e: Exception) {

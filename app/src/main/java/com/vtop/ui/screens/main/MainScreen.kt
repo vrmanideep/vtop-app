@@ -227,7 +227,7 @@ fun MainScreen(
                     "PROFILE" -> {
                         val profileStateValue = AppBridge.profileState.value
                         val profileMap = remember(profileStateValue) { profileStateValue?.takeIf { it.isNotEmpty() } ?: Vault.getProfile(context) }
-                        val vtopClient = SessionManager.client
+                        val vtopClient = SessionManager.getSyncClient()
 
                         Profile(
                             onBack = { currentTab = "HOME" },
@@ -272,7 +272,7 @@ fun MainScreen(
                                     return@Profile
                                 }
 
-                                val client = SessionManager.client
+                                val client = SessionManager.getSyncClient()
                                 if (client == null) {
                                     Toast.makeText(context, "Session expired. Please perform a normal sync first.", Toast.LENGTH_SHORT).show()
                                     return@Profile
@@ -344,11 +344,11 @@ fun MainScreen(
                     coroutineScope.launch {
                         try {
                             Toast.makeText(context, "Starting export...", Toast.LENGTH_SHORT).show()
-                            var client = SessionManager.client
+                            var client = SessionManager.getSyncClient()
                             if (client == null) {
                                 val creds = Vault.getCredentials(context)
                                 client = com.vtop.network.VtopClient(context, creds[0] ?: "", creds[1] ?: "")
-                                SessionManager.client = client
+                                SessionManager.setSyncClient(client)
                             }
                             val result = com.vtop.services.TTExport.exportCurrentSemesterTimetable(context, client)
                             result.onSuccess { Toast.makeText(context, "Timetable exported successfully", Toast.LENGTH_LONG).show() }

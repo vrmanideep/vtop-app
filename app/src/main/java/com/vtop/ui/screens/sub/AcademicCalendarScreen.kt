@@ -99,7 +99,7 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
             isFetchingSemesters = true
             withContext(Dispatchers.IO) {
                 try {
-                    val client = SessionManager.client
+                    val client = SessionManager.getSyncClient()
                     if (client != null) {
                         val fetched = client.fetchCalendarSemesters().toList()
                         if (fetched.isNotEmpty()) {
@@ -137,7 +137,7 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
 
             try {
                 // 1. AUTO-HEAL DEAD SESSIONS (FAST-TRACK)
-                if (SessionManager.client == null) {
+                if (SessionManager.getSyncClient() == null) {
                     withContext(Dispatchers.Main) { syncError = "RECONNECTING" }
 
                     // Trigger GlobalSyncer silently in the background
@@ -156,13 +156,13 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                     }
 
                     // Check if resurrection was successful
-                    if (SessionManager.client == null) {
+                    if (SessionManager.getSyncClient() == null) {
                         throw Exception("Failed to re-establish VTOP session. Please check credentials.")
                     }
                 }
 
                 withContext(Dispatchers.Main) { syncError = null }
-                val client = SessionManager.client!!
+                val client = SessionManager.getSyncClient()!!
 
                 // 2. FETCH CALENDAR DATA
                 val availableDates = client.fetchCalendarMonths(semIdToFetch, "ALL")

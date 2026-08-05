@@ -1,7 +1,6 @@
 package com.vtop.sync
 
 import android.content.Context
-import com.vtop.logic.GlobalSyncer
 import com.vtop.ui.core.GlobalSyncer
 
 object SyncManager {
@@ -10,11 +9,11 @@ object SyncManager {
         context: Context,
         force: Boolean = false
     ) {
-        GlobalSyncer.sync(
+        GlobalSyncer.performSync(
             context = context,
-            force = force
+            forceNewSession = force
         )
     }
 
-    fun isSyncing() = GlobalSyncer.isSyncing
+    fun isSyncing() = GlobalSyncer.isSyncing.value
 }

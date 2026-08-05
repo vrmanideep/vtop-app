@@ -284,6 +284,14 @@ fun Profile(
     var isDownloadingUpdate by remember { mutableStateOf(false) }
 
     var autoSyncInterval by remember { mutableIntStateOf(sharedPrefs.getInt("AUTO_SYNC_INTERVAL", 8)) }
+    var keepPortalResponsiveDuringSync by remember {
+        mutableStateOf(
+            sharedPrefs.getBoolean(
+                "PARALLEL_PORTAL_SESSION",
+                false
+            )
+        )
+    }
     var syncDropdownExpanded by remember { mutableStateOf(false) }
     val syncOptions = mapOf(0 to "None", 1 to "1 hr", 2 to "2 hrs", 4 to "4 hrs", 8 to "8 hrs")
 
@@ -545,7 +553,8 @@ fun Profile(
                                 modifier = Modifier.fillMaxWidth().clickable { syncDropdownExpanded = true }.padding(16.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
-                            ) {
+                            )
+                            {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text("Background Auto Sync", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                     Spacer(Modifier.height(2.dp))
@@ -590,6 +599,51 @@ fun Profile(
                                         }
                                     }
                                 }
+                            }
+
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                            )
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        "Keep Portal Responsive During Sync",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+
+                                    Spacer(Modifier.height(2.dp))
+
+                                    Text(
+                                        "Uses a separate VTOP session so the Portal remains usable while background sync is running.",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
+                                Switch(
+                                    checked = keepPortalResponsiveDuringSync,
+                                    onCheckedChange = { enabled ->
+                                        keepPortalResponsiveDuringSync = enabled
+
+                                        sharedPrefs.edit()
+                                            .putBoolean(
+                                                "PARALLEL_PORTAL_SESSION",
+                                                enabled
+                                            )
+                                            .apply()
+                                    }
+                                )
                             }
 
                             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
