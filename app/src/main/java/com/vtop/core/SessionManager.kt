@@ -9,6 +9,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+enum class SessionType {
+    SYNC,
+    PORTAL
+}
+
 object SessionManager {
 
     private val _state = MutableStateFlow<SessionState>(SessionState.LoggedOut)
@@ -17,7 +22,6 @@ object SessionManager {
 
     private var syncClient: VtopClient? = null
     private var portalClient: VtopClient? = null
-    private var registrationClient: VtopClient? = null
 
     fun getSyncClient(): VtopClient? = syncClient
 
@@ -53,21 +57,6 @@ object SessionManager {
         setPortalClient(null)
     }
 
-    fun getRegistrationClient(): VtopClient? = registrationClient
-
-    fun setRegistrationClient(client: VtopClient?) {
-        registrationClient = client
-        if (client == null) {
-            Log.i(TAG, "Invalidated Registration Session")
-        } else {
-            Log.i(TAG, "Created Registration Session")
-        }
-    }
-
-    fun invalidateRegistration() {
-        setRegistrationClient(null)
-    }
-
     fun updateState(state: SessionState) {
         _state.value = state
     }
@@ -80,14 +69,12 @@ object SessionManager {
         Log.w(TAG, "Session invalidated.")
         invalidateSync()
         invalidatePortal()
-        invalidateRegistration()
     }
 
     fun logout() {
         Log.i(TAG, "Logging out.")
         invalidateSync()
         invalidatePortal()
-        invalidateRegistration()
     }
 
     suspend fun login(
@@ -146,6 +133,13 @@ object SessionManager {
     fun createClient(
         context: Context
     ): Pair<VtopClient, Pair<String?, String?>> {
+        return createClient(context, SessionType.SYNC)
+    }
+
+    fun createClient(
+        context: Context,
+        type: SessionType
+    ): Pair<VtopClient, Pair<String?, String?>> {
 
         Log.d(TAG, "Loading credentials from Vault...")
 
@@ -154,15 +148,14 @@ object SessionManager {
         val username = creds[0]
         val password = creds[1]
 
-        Log.d(TAG, "Creating VtopClient for user: $username")
+        Log.d(TAG, "Creating VtopClient for user: $username with namespace: ${type.name}")
 
         val client = VtopClient(
             context,
             username,
-            password
+            password,
+            type.name
         )
-
-        setSyncClient(client)
 
         Log.d(TAG, "Client created successfully.")
 
