@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.net.http.SslError
 import android.os.Message
+import android.util.Log
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.SslErrorHandler
@@ -65,7 +66,7 @@ private const val MOBILE_UA =
 fun VtopPortalScreen(
     vtopClient: VtopClient,
     onBack: () -> Unit
-    ){
+){
     BackHandler {
         onBack()
     }
@@ -84,6 +85,16 @@ fun VtopPortalScreen(
             Context.MODE_PRIVATE
         )
     }
+
+    val sharedPrefs = remember {
+        context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
+    }
+
+    val isParallel = remember {
+        sharedPrefs.getBoolean("PARALLEL_PORTAL_SESSION", false)
+    }
+
+    var activeClient by remember { mutableStateOf(vtopClient) }
 
     var desktopMode by remember {
         mutableStateOf(
@@ -156,8 +167,26 @@ fun VtopPortalScreen(
 
         isLoading = true
         sessionError = null
+        Log.i(
+            "PORTAL",
+            "Starting Portal login (parallel=$isParallel)"
+        )
 
         try {
+
+            val authenticatingClient = if (isParallel && com.vtop.core.SessionManager.getPortalClient() == null) {
+                val (newClient, _) = com.vtop.core.SessionManager.createClient(context, com.vtop.core.SessionType.PORTAL)
+                newClient
+            } else {
+                activeClient
+            }
+            Log.i(
+                "PORTAL",
+                if (isParallel)
+                    "Using Portal session for authentication"
+                else
+                    "Using Sync session for authentication"
+            )
 
             val success = withContext(Dispatchers.IO) {
 
@@ -168,8 +197,12 @@ fun VtopPortalScreen(
                 while (attempts < maxRetries && !loginSuccess) {
 
                     try {
+                        Log.i(
+                            "PORTAL",
+                            "Login attempt ${attempts + 1} of $maxRetries"
+                        )
 
-                        loginSuccess = vtopClient.autoLogin(
+                        loginSuccess = authenticatingClient.autoLogin(
                             context,
                             object : VtopClient.LoginListener {
 
@@ -178,6 +211,10 @@ fun VtopPortalScreen(
                                 override fun onOtpRequired(
                                     resolver: VtopClient.OtpResolver
                                 ) {
+                                    Log.i(
+                                        "PORTAL",
+                                        "OTP requested"
+                                    )
 
                                     scope.launch(Dispatchers.IO) {
                                         // Capture the exact moment the WebView forced a login
@@ -227,23 +264,25 @@ fun VtopPortalScreen(
                                         if (!autoExtractedOtp.isNullOrBlank()) {
 
                                             withContext(Dispatchers.Main) {
-
                                                 Toast.makeText(
                                                     context,
                                                     "OTP Auto-filled! Resuming...",
                                                     Toast.LENGTH_SHORT
                                                 ).show()
                                             }
-
                                             resolver.submit(autoExtractedOtp)
-
+                                            Log.i(
+                                                "PORTAL",
+                                                "OTP auto-filled from Gmail"
+                                            )
                                         } else {
-
                                             withContext(Dispatchers.Main) {
-
-                                                AppBridge.currentOtpResolver.value =
-                                                    resolver
+                                                AppBridge.currentOtpResolver.value = resolver
                                             }
+                                            Log.i(
+                                                "PORTAL",
+                                                "Waiting for manual OTP entry"
+                                            )
                                         }
                                     }
                                 }
@@ -266,38 +305,57 @@ fun VtopPortalScreen(
                         attempts++
 
                         if (attempts < maxRetries) {
-
-                            vtopClient.reinitializeSession(context)
+                            Log.w(
+                                "PORTAL",
+                                "Retrying login (${attempts + 1}/$maxRetries)"
+                            )
+                            authenticatingClient.reinitializeSession(context)
                         }
                     }
                 }
 
                 loginSuccess
             }
-
-            // =====================================================
             // SUCCESS
-            // =====================================================
-
             if (success) {
+                Log.i(
+                    "PORTAL",
+                    "Portal login successful"
+                )
+                activeClient = authenticatingClient
+
+                if (isParallel) {
+                    Log.i(
+                        "PORTAL",
+                        "Registering Portal session"
+                    )
+                    com.vtop.core.SessionManager.setPortalClient(activeClient)
+                }
 
                 withContext(Dispatchers.Main) {
-
-                    webViewRef?.syncCookies(vtopClient)
-
+                    Log.i(
+                        "PORTAL",
+                        "Injecting cookies into WebView"
+                    )
+                    webViewRef?.syncCookies(activeClient)
                     webViewRef?.loadUrl(VTOP_OPEN_PAGE)
                 }
 
             } else {
-
+                Log.i(
+                    "PORTAL",
+                    "Injecting cookies into WebView"
+                )
                 sessionError =
                     "Failed to bypass Captcha after 3 attempts or OTP cancelled. Please retry."
             }
 
         } catch (e: Exception) {
-
+            Log.e(
+                "PORTAL",
+                "Portal login failed after 5 attempts"
+            )
             if (e !is CancellationException) {
-
                 sessionError =
                     e.message ?: "Unknown error occurred"
             }
@@ -305,6 +363,31 @@ fun VtopPortalScreen(
         } finally {
 
             isLoading = false
+        }
+    }
+
+    LaunchedEffect(isParallel) {
+        Log.i(
+            "PORTAL",
+            "Portal opened (parallel=$isParallel)"
+        )
+        if (isParallel) {
+            Log.i(
+                "PORTAL",
+                "Using Sync session"
+            )
+            val portalClient = com.vtop.core.SessionManager.getPortalClient()
+            if (portalClient != null) {
+                activeClient = portalClient
+            } else {
+                forceLogin()
+            }
+        } else {
+            Log.i(
+                "PORTAL",
+                "Using Sync session"
+            )
+            activeClient = vtopClient
         }
     }
 
@@ -581,7 +664,7 @@ fun VtopPortalScreen(
                                             .build()
 
                                     val response =
-                                        vtopClient.client
+                                        activeClient.client
                                             .newCall(request)
                                             .execute()
 
@@ -789,6 +872,10 @@ fun VtopPortalScreen(
                                 ) {
 
                                     scope.launch {
+                                        Log.w(
+                                            "PORTAL",
+                                            "Portal session expired, re-authenticating"
+                                        )
                                         forceLogin()
                                     }
                                 }
@@ -818,7 +905,7 @@ fun VtopPortalScreen(
 
                         webViewRef = this
 
-                        syncCookies(vtopClient)
+                        syncCookies(activeClient)
 
                         postDelayed(
                             {
@@ -883,7 +970,10 @@ private fun WebView.syncCookies(
     val cookies =
         vtopClient.client.cookieJar
             .loadForRequest(extractionUrl)
-
+    Log.i(
+        "PORTAL",
+        "Synchronizing ${cookies.size} cookies to WebView"
+    )
     val targetUrl =
         "https://vtop.vitap.ac.in/vtop"
 
