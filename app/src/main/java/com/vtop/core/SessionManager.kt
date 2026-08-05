@@ -44,4 +44,18 @@ object SessionManager {
             "SessionManager.login() has not been migrated yet."
         )
     }
+
+     fun extractAuthorizedIdFromContent(html: String?): String? {
+        if (html.isNullOrBlank()) return null
+
+        val regNoPattern = Regex("""\b\d{2}[a-zA-Z]{3}\d{4}\b""")
+        val match = regNoPattern.find(html)
+        if (match != null) return match.value.uppercase()
+
+        val jsPattern = Regex("""(?:let|var)\s+id\s*=\s*['"]([^'"]+)['"]""")
+        val jsMatch = jsPattern.find(html)
+        if (jsMatch != null) return jsMatch.groupValues[1].uppercase()
+
+        return null
+    }
 }
