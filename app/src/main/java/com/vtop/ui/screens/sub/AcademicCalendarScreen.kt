@@ -31,6 +31,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vtop.core.SessionManager
 import com.vtop.ui.core.AppBridge
 import com.vtop.ui.core.GlobalSyncer
 import com.vtop.utils.AnalyticsManager
@@ -98,7 +99,7 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
             isFetchingSemesters = true
             withContext(Dispatchers.IO) {
                 try {
-                    val client = AppBridge.activeClient
+                    val client = SessionManager.client
                     if (client != null) {
                         val fetched = client.fetchCalendarSemesters().toList()
                         if (fetched.isNotEmpty()) {
@@ -136,7 +137,7 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
 
             try {
                 // 1. AUTO-HEAL DEAD SESSIONS (FAST-TRACK)
-                if (AppBridge.activeClient == null) {
+                if (SessionManager.client == null) {
                     withContext(Dispatchers.Main) { syncError = "RECONNECTING" }
 
                     // Trigger GlobalSyncer silently in the background
@@ -155,13 +156,13 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                     }
 
                     // Check if resurrection was successful
-                    if (AppBridge.activeClient == null) {
+                    if (SessionManager.client == null) {
                         throw Exception("Failed to re-establish VTOP session. Please check credentials.")
                     }
                 }
 
                 withContext(Dispatchers.Main) { syncError = null }
-                val client = AppBridge.activeClient!!
+                val client = SessionManager.client!!
 
                 // 2. FETCH CALENDAR DATA
                 val availableDates = client.fetchCalendarMonths(semIdToFetch, "ALL")

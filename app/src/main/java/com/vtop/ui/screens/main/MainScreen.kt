@@ -60,6 +60,7 @@ import androidx.core.content.ContextCompat
 import androidx.glance.appwidget.updateAll
 import androidx.navigation.NavController
 import com.composables.icons.lucide.*
+import com.vtop.core.SessionManager
 import com.vtop.models.*
 import com.vtop.network.*
 import com.vtop.telemetry.*
@@ -226,7 +227,7 @@ fun MainScreen(
                     "PROFILE" -> {
                         val profileStateValue = AppBridge.profileState.value
                         val profileMap = remember(profileStateValue) { profileStateValue?.takeIf { it.isNotEmpty() } ?: Vault.getProfile(context) }
-                        val vtopClient = AppBridge.activeClient
+                        val vtopClient = SessionManager.client
 
                         Profile(
                             onBack = { currentTab = "HOME" },
@@ -271,7 +272,7 @@ fun MainScreen(
                                     return@Profile
                                 }
 
-                                val client = AppBridge.activeClient
+                                val client = SessionManager.client
                                 if (client == null) {
                                     Toast.makeText(context, "Session expired. Please perform a normal sync first.", Toast.LENGTH_SHORT).show()
                                     return@Profile
@@ -343,11 +344,11 @@ fun MainScreen(
                     coroutineScope.launch {
                         try {
                             Toast.makeText(context, "Starting export...", Toast.LENGTH_SHORT).show()
-                            var client = AppBridge.activeClient
+                            var client = SessionManager.client
                             if (client == null) {
                                 val creds = Vault.getCredentials(context)
                                 client = com.vtop.network.VtopClient(context, creds[0] ?: "", creds[1] ?: "")
-                                AppBridge.activeClient = client
+                                SessionManager.client = client
                             }
                             val result = com.vtop.services.TTExport.exportCurrentSemesterTimetable(context, client)
                             result.onSuccess { Toast.makeText(context, "Timetable exported successfully", Toast.LENGTH_LONG).show() }

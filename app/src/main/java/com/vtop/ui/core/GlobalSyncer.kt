@@ -8,6 +8,7 @@ import android.widget.Toast
 import androidx.glance.appwidget.updateAll
 import com.vtop.widget.NextClassWidget
 import androidx.compose.runtime.mutableStateOf
+import com.vtop.core.SessionManager
 import com.vtop.network.VtopClient
 import com.vtop.network.VtopException
 import com.vtop.utils.*
@@ -74,10 +75,10 @@ object GlobalSyncer {
                     "GlobalSyncer created client: $client"
                 )
 
-                AppBridge.activeClient = client
+                SessionManager.client = client
                 Log.d(
                     "TT_EXPORT",
-                    "AppBridge.activeClient assigned"
+                    "SessionManager.client assigned"
                 )
 
                 if (forceNewSession) {
