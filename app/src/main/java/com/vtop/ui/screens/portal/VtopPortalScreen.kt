@@ -45,6 +45,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.io.File
@@ -59,6 +60,8 @@ private const val DESKTOP_UA =
 
 private const val MOBILE_UA =
     "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Mobile Safari/537.36"
+
+private const val TAG = "PORTAL"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SetJavaScriptEnabled")
@@ -78,6 +81,10 @@ fun VtopPortalScreen(
     var isLoading by remember { mutableStateOf(false) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var sessionError by remember { mutableStateOf<String?>(null) }
+    var isWebViewReady by remember { mutableStateOf(false) }
+    var isInitialLoad by remember { mutableStateOf(true) }
+
+    val loginMutex = remember { kotlinx.coroutines.sync.Mutex() }
 
     val portalPreferences = remember {
         context.getSharedPreferences(
@@ -165,229 +172,229 @@ fun VtopPortalScreen(
 
     suspend fun forceLogin() {
 
-        isLoading = true
-        sessionError = null
-        Log.i(
-            "PORTAL",
-            "Starting Portal login (parallel=$isParallel)"
-        )
+        loginMutex.withLock {
+            isLoading = true
+            sessionError = null
 
-        try {
+            Log.i(TAG, "Starting Portal login")
 
-            val authenticatingClient = if (isParallel && com.vtop.core.SessionManager.getPortalClient() == null) {
-                val (newClient, _) = com.vtop.core.SessionManager.createClient(context, com.vtop.core.SessionType.PORTAL)
-                newClient
-            } else {
-                activeClient
-            }
-            Log.i(
-                "PORTAL",
-                if (isParallel)
-                    "Using Portal session for authentication"
-                else
-                    "Using Sync session for authentication"
-            )
+            try {
 
-            val success = withContext(Dispatchers.IO) {
+                val authenticatingClient = if (isParallel) {
+                    Log.i(TAG, "Using Portal session")
+                    getOrCreatePortalClient(context)
+                } else {
+                    Log.i(TAG, "Using Sync session")
+                    activeClient
+                }
 
-                var loginSuccess = false
-                var attempts = 0
-                val maxRetries = 3
+                val success = withContext(Dispatchers.IO) {
 
-                while (attempts < maxRetries && !loginSuccess) {
+                    var loginSuccess = false
+                    var attempts = 0
+                    val maxRetries = 3
 
-                    try {
-                        Log.i(
-                            "PORTAL",
-                            "Login attempt ${attempts + 1} of $maxRetries"
-                        )
+                    while (attempts < maxRetries && !loginSuccess) {
 
-                        loginSuccess = authenticatingClient.autoLogin(
-                            context,
-                            object : VtopClient.LoginListener {
+                        Log.i(TAG, "Login attempt ${attempts + 1}/$maxRetries")
 
-                                override fun onStatusUpdate(message: String) {}
+                        try {
 
-                                override fun onOtpRequired(
-                                    resolver: VtopClient.OtpResolver
-                                ) {
-                                    Log.i(
-                                        "PORTAL",
-                                        "OTP requested"
-                                    )
+                            loginSuccess = authenticatingClient.autoLogin(
+                                context,
+                                object : VtopClient.LoginListener {
 
-                                    scope.launch(Dispatchers.IO) {
-                                        // Capture the exact moment the WebView forced a login
-                                        val otpRequestedTime = System.currentTimeMillis()
+                                    override fun onStatusUpdate(message: String) {}
 
-                                        val googleEmail =
-                                            Vault.getGoogleEmail(context)
+                                    override fun onOtpRequired(
+                                        resolver: VtopClient.OtpResolver
+                                    ) {
 
-                                        var autoExtractedOtp: String? = null
+                                        Log.i(TAG, "OTP requested")
 
-                                        // =====================================
-                                        // AUTO OTP EXTRACTION
-                                        // =====================================
+                                        scope.launch(Dispatchers.IO) {
+                                            // Capture the exact moment the WebView forced a login
+                                            val otpRequestedTime = System.currentTimeMillis()
 
-                                        if (googleEmail.isNotBlank()) {
+                                            val googleEmail =
+                                                Vault.getGoogleEmail(context)
 
-                                            withContext(Dispatchers.Main) {
+                                            var autoExtractedOtp: String? = null
 
-                                                Toast.makeText(
-                                                    context,
-                                                    "Reading OTP from Gmail...",
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
+                                            // =====================================
+                                            // AUTO OTP EXTRACTION
+                                            // =====================================
+
+                                            if (googleEmail.isNotBlank()) {
+
+                                                withContext(Dispatchers.Main) {
+
+                                                    Toast.makeText(
+                                                        context,
+                                                        "Reading OTP from Gmail...",
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
+                                                }
+
+                                                try {
+
+                                                    delay(3000)
+
+                                                    autoExtractedOtp =
+                                                        GmailOtpExtractor
+                                                            .getLatestVtopOtp(
+                                                                context,
+                                                                googleEmail,
+                                                                otpRequestedTime // <-- Pass the timestamp here
+                                                            )
+
+                                                } catch (e: Exception) {
+                                                    e.printStackTrace()
+                                                }
                                             }
 
-                                            try {
+                                            // =====================================
+                                            // SUBMIT OTP
+                                            // =====================================
 
-                                                delay(3000)
+                                            if (!autoExtractedOtp.isNullOrBlank()) {
 
-                                                autoExtractedOtp =
-                                                    GmailOtpExtractor
-                                                        .getLatestVtopOtp(
-                                                            context,
-                                                            googleEmail,
-                                                            otpRequestedTime // <-- Pass the timestamp here
-                                                        )
+                                                Log.i(TAG, "OTP auto-filled")
 
-                                            } catch (e: Exception) {
-                                                e.printStackTrace()
+                                                withContext(Dispatchers.Main) {
+
+                                                    Toast.makeText(
+                                                        context,
+                                                        "OTP Auto-filled! Resuming...",
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
+                                                }
+
+                                                resolver.submit(autoExtractedOtp)
+
+                                            } else {
+
+                                                Log.i(TAG, "Waiting for manual OTP")
+
+                                                withContext(Dispatchers.Main) {
+
+                                                    AppBridge.currentOtpResolver.value =
+                                                        resolver
+                                                }
                                             }
-                                        }
-
-                                        // =====================================
-                                        // SUBMIT OTP
-                                        // =====================================
-
-                                        if (!autoExtractedOtp.isNullOrBlank()) {
-
-                                            withContext(Dispatchers.Main) {
-                                                Toast.makeText(
-                                                    context,
-                                                    "OTP Auto-filled! Resuming...",
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
-                                            }
-                                            resolver.submit(autoExtractedOtp)
-                                            Log.i(
-                                                "PORTAL",
-                                                "OTP auto-filled from Gmail"
-                                            )
-                                        } else {
-                                            withContext(Dispatchers.Main) {
-                                                AppBridge.currentOtpResolver.value = resolver
-                                            }
-                                            Log.i(
-                                                "PORTAL",
-                                                "Waiting for manual OTP entry"
-                                            )
                                         }
                                     }
                                 }
-                            }
-                        )
-
-                    } catch (e: Exception) {
-
-                        if (e is CancellationException) throw e
-
-                        loginSuccess = false
-                    }
-
-                    // =====================================
-                    // RETRY
-                    // =====================================
-
-                    if (!loginSuccess) {
-
-                        attempts++
-
-                        if (attempts < maxRetries) {
-                            Log.w(
-                                "PORTAL",
-                                "Retrying login (${attempts + 1}/$maxRetries)"
                             )
-                            authenticatingClient.reinitializeSession(context)
+
+                        } catch (e: Exception) {
+
+                            if (e is CancellationException) throw e
+
+                            loginSuccess = false
+                        }
+
+                        // =====================================
+                        // RETRY
+                        // =====================================
+
+                        if (!loginSuccess) {
+
+                            attempts++
+
+                            if (attempts < maxRetries) {
+
+                                Log.i(TAG, "Retrying Portal login (${attempts + 1}/$maxRetries)")
+
+                                authenticatingClient.reinitializeSession(context)
+                            }
                         }
                     }
+
+                    loginSuccess
                 }
 
-                loginSuccess
-            }
-            // SUCCESS
-            if (success) {
-                Log.i(
-                    "PORTAL",
-                    "Portal login successful"
-                )
-                activeClient = authenticatingClient
+                // =====================================================
+                // SUCCESS
+                // =====================================================
 
-                if (isParallel) {
-                    Log.i(
-                        "PORTAL",
-                        "Registering Portal session"
-                    )
-                    com.vtop.core.SessionManager.setPortalClient(activeClient)
+                if (success) {
+
+                    Log.i(TAG, "Login successful")
+
+                    activeClient = authenticatingClient
+
+                    if (isParallel) {
+                        Log.i(TAG, "Registering Portal session")
+                        com.vtop.core.SessionManager.setPortalClient(activeClient)
+                    }
+
+                    withContext(Dispatchers.Main) {
+
+                        Log.i(TAG, "Injecting cookies")
+                        webViewRef?.syncCookies(activeClient)
+
+                        if (isInitialLoad) {
+                            Log.i(TAG, "Loading WebView")
+                            isInitialLoad = false
+                        } else {
+                            Log.i(TAG, "Reloading WebView")
+                        }
+
+                        webViewRef?.loadUrl(VTOP_OPEN_PAGE)
+                    }
+
+                } else {
+
+                    Log.w(TAG, "Portal login failed after all retries")
+
+                    sessionError =
+                        "Failed to bypass Captcha after 3 attempts or OTP cancelled. Please retry."
                 }
 
-                withContext(Dispatchers.Main) {
-                    Log.i(
-                        "PORTAL",
-                        "Injecting cookies into WebView"
-                    )
-                    webViewRef?.syncCookies(activeClient)
-                    webViewRef?.loadUrl(VTOP_OPEN_PAGE)
+            } catch (e: Exception) {
+
+                if (e !is CancellationException) {
+
+                    Log.e(TAG, "Portal login exception", e)
+
+                    sessionError =
+                        e.message ?: "Unknown error occurred"
                 }
 
-            } else {
-                Log.i(
-                    "PORTAL",
-                    "Injecting cookies into WebView"
-                )
-                sessionError =
-                    "Failed to bypass Captcha after 3 attempts or OTP cancelled. Please retry."
+            } finally {
+                isLoading = false
             }
-
-        } catch (e: Exception) {
-            Log.e(
-                "PORTAL",
-                "Portal login failed after 5 attempts"
-            )
-            if (e !is CancellationException) {
-                sessionError =
-                    e.message ?: "Unknown error occurred"
-            }
-
-        } finally {
-
-            isLoading = false
         }
     }
 
-    LaunchedEffect(isParallel) {
-        Log.i(
-            "PORTAL",
-            "Portal opened (parallel=$isParallel)"
-        )
+    LaunchedEffect(isParallel, isWebViewReady) {
+        if (!isWebViewReady) return@LaunchedEffect
+
+        Log.i(TAG, "Portal opened")
+
         if (isParallel) {
-            Log.i(
-                "PORTAL",
-                "Using Sync session"
-            )
             val portalClient = com.vtop.core.SessionManager.getPortalClient()
             if (portalClient != null) {
+                Log.i(TAG, "Reusing Portal session")
                 activeClient = portalClient
+                Log.i(TAG, "Injecting cookies")
+                webViewRef?.syncCookies(activeClient)
+                Log.i(TAG, "Loading WebView")
+                isInitialLoad = false
+                webViewRef?.loadUrl(VTOP_OPEN_PAGE)
             } else {
+                Log.i(TAG, "No Portal session found")
                 forceLogin()
             }
         } else {
-            Log.i(
-                "PORTAL",
-                "Using Sync session"
-            )
+            Log.i(TAG, "Using Sync session")
             activeClient = vtopClient
+            Log.i(TAG, "Injecting cookies")
+            webViewRef?.syncCookies(activeClient)
+            Log.i(TAG, "Loading WebView")
+            isInitialLoad = false
+            webViewRef?.loadUrl(VTOP_OPEN_PAGE)
         }
     }
 
@@ -871,11 +878,9 @@ fun VtopPortalScreen(
                                     url?.contains("vtop/login/error") == true
                                 ) {
 
+                                    Log.w(TAG, "Portal session expired")
+
                                     scope.launch {
-                                        Log.w(
-                                            "PORTAL",
-                                            "Portal session expired, re-authenticating"
-                                        )
                                         forceLogin()
                                     }
                                 }
@@ -905,14 +910,9 @@ fun VtopPortalScreen(
 
                         webViewRef = this
 
-                        syncCookies(activeClient)
-
-                        postDelayed(
-                            {
-                                loadUrl(VTOP_OPEN_PAGE)
-                            },
-                            500
-                        )
+                        post {
+                            isWebViewReady = true
+                        }
                     }
                 },
 
@@ -945,6 +945,24 @@ fun VtopPortalScreen(
 }
 
 // =========================================================
+// HELPER METHODS
+// =========================================================
+
+private fun getOrCreatePortalClient(context: Context): VtopClient {
+    com.vtop.core.SessionManager.getPortalClient()?.let {
+        return it
+    }
+
+    Log.i(TAG, "Creating Portal session")
+    val (client, _) = com.vtop.core.SessionManager.createClient(
+        context,
+        com.vtop.core.SessionType.PORTAL
+    )
+
+    return client
+}
+
+// =========================================================
 // COOKIE SYNC
 // =========================================================
 
@@ -970,10 +988,9 @@ private fun WebView.syncCookies(
     val cookies =
         vtopClient.client.cookieJar
             .loadForRequest(extractionUrl)
-    Log.i(
-        "PORTAL",
-        "Synchronizing ${cookies.size} cookies to WebView"
-    )
+
+    Log.i(TAG, "Synchronizing ${cookies.size} cookies")
+
     val targetUrl =
         "https://vtop.vitap.ac.in/vtop"
 
@@ -991,6 +1008,7 @@ private fun WebView.syncCookies(
     }
 
     cookieManager.flush()
+    Log.i(TAG, "Cookie synchronization complete")
 }
 
 // =========================================================
