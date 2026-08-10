@@ -1,4 +1,4 @@
-package com.vtop.utils
+package com.vtop.logic
 
 import android.content.Context
 import com.google.android.gms.auth.api.signin.GoogleSignIn

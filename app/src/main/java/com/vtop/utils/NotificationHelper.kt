@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
 import androidx.core.content.FileProvider
+import com.vtop.receivers.OtpReceiver
 import com.vtop.ui.MainActivity
 import com.vtop.telemetry.Telemetry
 import com.vtop.telemetry.model.TelemetryModule

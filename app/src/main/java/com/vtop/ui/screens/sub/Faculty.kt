@@ -1,6 +1,5 @@
 package com.vtop.ui.screens.sub
 
-import android.content.Context
 import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -49,7 +48,7 @@ import coil.compose.AsyncImage
 import com.vtop.models.FacultyEntity
 import com.vtop.network.FacultyScraper
 import com.vtop.utils.AnalyticsManager
-import com.vtop.utils.FacultyStorage
+import com.vtop.core.FacultyStorage
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 

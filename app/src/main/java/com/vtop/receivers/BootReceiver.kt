@@ -4,7 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import com.vtop.utils.ExamSeatScheduler
+import com.vtop.sync.ExamSeatScheduler
 import com.vtop.utils.Vault
 import com.vtop.telemetry.Telemetry
 import com.vtop.telemetry.model.TelemetryModule

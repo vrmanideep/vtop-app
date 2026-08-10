@@ -1,4 +1,4 @@
-package com.vtop.utils
+package com.vtop.logic
 
 import android.accounts.Account
 import android.content.Context

@@ -1,2 +1,70 @@
-package com.vtop.core 
+package com.vtop.core
 
+import android.content.Context
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
+import com.vtop.models.FacultyEntity
+import java.io.File
+
+object FacultyStorage {
+
+    private const val FILE_NAME = "faculty.json"
+
+    /**
+     * Returns the app's working faculty.json file.
+     */
+    private fun facultyFile(context: Context): File {
+        return File(context.filesDir, FILE_NAME)
+    }
+
+
+
+    /**
+     * Reads the working faculty.json from internal storage.
+     */
+    fun loadFaculty(context: Context): List<FacultyEntity> {
+        return try {
+            val file = facultyFile(context)
+            if (!file.exists()) {
+                return emptyList()
+            }
+            val json = file.readText(Charsets.UTF_8)
+            if (json.isBlank()) {
+                return emptyList()
+            }
+            Gson().fromJson(
+                json,
+                object : TypeToken<List<FacultyEntity>>() {}.type
+            ) ?: emptyList()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
+    }
+
+    /**
+     * Saves a freshly scraped faculty list.
+     */
+    fun saveFaculty(
+        context: Context,
+        faculty: List<FacultyEntity>
+    ) {
+        val json = Gson().toJson(faculty)
+        facultyFile(context).writeText(json, Charsets.UTF_8)
+    }
+
+    /**
+     * Deletes the cached faculty file.
+     * Mainly useful during development/testing.
+     */
+    fun clearFaculty(context: Context) {
+        facultyFile(context).delete()
+    }
+
+    /**
+     * Returns true if a cached faculty.json already exists.
+     */
+    fun hasFaculty(context: Context): Boolean {
+        return facultyFile(context).exists()
+    }
+}

@@ -5,7 +5,7 @@ import android.util.Log
 import com.vtop.core.SessionManager
 import com.vtop.core.SessionType
 import com.vtop.network.VtopClient
-import com.vtop.utils.GmailOtpExtractor
+import com.vtop.logic.GmailOtpExtractor
 import com.vtop.utils.Vault
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers

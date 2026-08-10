@@ -40,6 +40,7 @@ import kotlinx.coroutines.delay
 
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
+import com.vtop.logic.AuthHelper
 import com.vtop.utils.AnalyticsManager
 
 @Composable
@@ -331,7 +332,7 @@ private fun SemesterPickerView(semesters: List<Map<String, String>>, isDownloadi
 fun GoogleSignInDialog(onDismiss: () -> Unit, onSuccess: (String) -> Unit) {
     val context = LocalContext.current
     val webClientId = context.getString(context.resources.getIdentifier("default_web_client_id", "string", context.packageName))
-    val signInClient = remember { com.vtop.utils.AuthHelper.getGoogleSignInClient(context, webClientId) }
+    val signInClient = remember { AuthHelper.getGoogleSignInClient(context, webClientId) }
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val task = com.google.android.gms.auth.api.signin.GoogleSignIn.getSignedInAccountFromIntent(result.data)
