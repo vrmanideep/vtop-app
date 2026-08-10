@@ -1,13 +1,11 @@
 package com.vtop.ui.screens.main
 
 import android.content.Context
-import android.content.Intent
 import android.net.Uri
 import android.util.Base64
-import android.util.Log
 import android.widget.Toast
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -22,7 +20,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -47,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.*
 import com.google.gson.Gson
 import com.vtop.models.*
+import com.vtop.utils.AnalyticsManager
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.time.YearMonth
@@ -54,9 +56,6 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.zip.GZIPOutputStream
 import kotlin.math.roundToInt
-import androidx.browser.customtabs.CustomTabsIntent
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
-import com.vtop.utils.AnalyticsManager
 
 private val MarksPrimaryAccent = Color(0xFF0090FF)
 private val MarksColorSuccess = Color(0xFF4ADE80)
@@ -171,7 +170,6 @@ private fun calculateSemesterGPA(courses: List<GradeHistoryItem>): Double {
 
 private fun parseExamMonth(month: String): YearMonth {
     return try {
-        // Handle varying cases from VTOP correctly (e.g. "JAN-2025" -> "Jan-2025")
         val cleanMonth = month.trim().split("-").let {
             if (it.size == 2) {
                 it[0].lowercase().replaceFirstChar { c -> c.uppercase() } + "-" + it[1]
@@ -201,7 +199,6 @@ fun Marks(
     val pagerState = rememberPagerState(pageCount = { 2 })
     val coroutineScope = rememberCoroutineScope()
 
-    // Hoist the state here so it survives tab switches
     val groupedHistory = remember(historyData) { historyData.groupBy { it.examMonth ?: "Unknown Semester" } }
     val expandedStates = remember(groupedHistory) {
         androidx.compose.runtime.mutableStateMapOf<String, Boolean>().apply {
@@ -210,27 +207,24 @@ fun Marks(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-
-        // HorizontalPager now fills the whole screen, allowing scrolling content to run underneath everything
         HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
             when (page) {
                 0 -> CurrentSemesterMarksView(marksData, mergeMarks)
-                1 -> AcademicHistoryView(historySummary, historyData, groupedHistory, expandedStates, onHistoryLoad)
+                1 -> AcademicHistoryView(historySummary, historyData, groupedHistory, expandedStates)
             }
         }
 
-        // Standard Underlined Tabs (Design 2 Style) flush with the Top Bar
         TabRow(
             selectedTabIndex = pagerState.currentPage,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 80.dp), // Aligns perfectly under GlobalTopBar
+                .padding(top = 80.dp),
             containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
             divider = { HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)) },
             indicator = { tabPositions ->
                 TabRowDefaults.SecondaryIndicator(
                     modifier = Modifier.tabIndicatorOffset(tabPositions[pagerState.currentPage]),
-                    color = MaterialTheme.colorScheme.primary, // Adopts user's accent color
+                    color = MaterialTheme.colorScheme.primary,
                     height = 3.dp
                 )
             }
@@ -251,7 +245,6 @@ fun Marks(
             )
         }
 
-        // Floating Action Button cleanly layered on top
         AnimatedVisibility(
             visible = pagerState.currentPage == 1 && historyData.isNotEmpty(),
             enter = fadeIn() + scaleIn(),
@@ -313,7 +306,6 @@ fun Marks(
         }
     }
 }
-
 
 @Composable
 fun CurrentSemesterMarksView(marksData: List<CourseMark>, mergeMarks: Boolean) {
@@ -532,55 +524,133 @@ fun AcademicHistoryView(
     historySummary: CGPASummary?,
     historyData: List<GradeHistoryItem>,
     groupedHistory: Map<String, List<GradeHistoryItem>>,
-    expandedStates: MutableMap<String, Boolean>,
-    onSyncClick: () -> Unit
+    expandedStates: MutableMap<String, Boolean>
 ) {
     if (historyData.isEmpty()) {
         return
     }
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    var selectedFilter by rememberSaveable { mutableStateOf("All") }
 
-    // Precalculate original GPAs mapping BEFORE filtering so that the GPA does not drop
-    // when you search for specific courses.
+    val listState = rememberLazyListState()
+
     val originalGpas = remember(groupedHistory) {
         groupedHistory.mapValues { calculateSemesterGPA(it.value) }
     }
 
-    val filteredHistory = remember(historyData, searchQuery) {
+    val formattedMonthsMap = remember(groupedHistory) {
+        groupedHistory.keys.associateWith { examMonth ->
+            examMonth.split("-").let { parts ->
+                if (parts.size == 2) {
+                    "${parts[0].trim().lowercase().replaceFirstChar { it.uppercase() }} ${parts[1].trim()}"
+                } else examMonth
+            }
+        }
+    }
+
+    val filterOptions = remember(formattedMonthsMap) {
+        listOf("All") + groupedHistory.keys.mapNotNull { formattedMonthsMap[it] }.sortedDescending()
+    }
+
+    val filteredHistory = remember(historyData, searchQuery, selectedFilter, formattedMonthsMap) {
         historyData.filter { item ->
             val q = searchQuery.trim().lowercase()
-
-            q.isBlank() ||
+            val matchesSearch = q.isBlank() ||
                     item.courseCode.orEmpty().lowercase().contains(q) ||
                     item.courseTitle.orEmpty().lowercase().contains(q) ||
                     item.courseType.orEmpty().lowercase().contains(q) ||
                     item.grade.orEmpty().lowercase().contains(q) ||
-                    item.credits.orEmpty().lowercase().contains(q) ||
-                    item.examMonth.orEmpty().lowercase().contains(q) ||
-                    item.courseDistribution.orEmpty().lowercase().contains(q)
+                    item.credits.orEmpty().lowercase().contains(q)
+
+            val itemFormattedMonth = formattedMonthsMap[item.examMonth] ?: ""
+            val matchesFilter = selectedFilter == "All" || selectedFilter == itemFormattedMonth
+
+            matchesSearch && matchesFilter
         }
     }
 
     val sortedAndGroupedHistory = remember(filteredHistory) {
         filteredHistory
-            .sortedBy { parseExamMonth(it.examMonth ?: "Jan-1900") }
+            .sortedByDescending { parseExamMonth(it.examMonth ?: "Jan-1900") }
             .groupBy { it.examMonth ?: "Unknown Semester" }
     }
 
+    // --- GRADE COUNTING LOGIC ---
+    val gradeCounts = remember(historyData) {
+        val counts = mutableMapOf<String, Int>()
+        historyData.forEach { item ->
+            val grade = item.grade?.trim()?.uppercase() ?: return@forEach
+            counts[grade] = (counts[grade] ?: 0) + 1
+        }
+        // Sort in logical academic order
+        val order = listOf("S", "A", "B", "C", "D", "E", "F", "N", "U")
+        counts.entries
+            .sortedBy { order.indexOf(it.key).takeIf { idx -> idx >= 0 } ?: 99 }
+            .associate { it.key to it.value }
+    }
+
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 130.dp, bottom = 120.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // 1. Top Summary Stats (Preserves total unfiltered scope using groupedHistory)
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    )
+    {
+        // 1. Theme-Aware Compact Dashboard Card
         item {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                HistoryStatCard("CGPA", historySummary?.cgpa ?: "--", Lucide.Award, Modifier.weight(1f))
-                HistoryStatCard("Credits", historySummary?.creditsEarned ?: "--", Lucide.BookOpen, Modifier.weight(1f))
-                HistoryStatCard("Semesters", groupedHistory.size.toString(), Lucide.Calendar, Modifier.weight(1f))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    // Top Row: CGPA and Credits
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("OVERALL CGPA", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f), letterSpacing = 1.sp)
+                            Spacer(Modifier.height(2.dp))
+                            Text(historySummary?.cgpa ?: "0.00", fontSize = 36.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("CREDITS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f), letterSpacing = 1.sp)
+                            Spacer(Modifier.height(4.dp))
+                            Text("${historySummary?.creditsEarned ?: "0"} / 160", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
+                    }
+
+                    Spacer(Modifier.height(20.dp))
+
+                    Text("GRADE DISTRIBUTION", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f), letterSpacing = 1.sp)
+                    Spacer(Modifier.height(8.dp))
+
+                    // Bottom Row: Grade Pill Ribbon
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(gradeCounts.entries.toList()) { (grade, count) ->
+                            val gColor = getGradeColor(grade)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                                    .border(1.dp, gColor.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text(grade, color = gColor, fontSize = 14.sp, fontWeight = FontWeight.Black)
+                                Spacer(Modifier.width(6.dp))
+                                Text(count.toString(), color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
             }
-            Spacer(modifier = Modifier.height(8.dp))
         }
 
         // 2. Search Bar
@@ -588,24 +658,12 @@ fun AcademicHistoryView(
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 8.dp),
+                modifier = Modifier.fillMaxWidth(),
                 placeholder = {
-                    Text(
-                        text = "Search by course, grade, or type...",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Text(text = "Search courses...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 },
                 leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = "Search",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp)
-                    )
+                    Icon(imageVector = Icons.Default.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
                 },
                 singleLine = true,
                 shape = RoundedCornerShape(16.dp),
@@ -621,22 +679,41 @@ fun AcademicHistoryView(
             )
         }
 
-        // 3. Chronologically Grouped Semesters
-        sortedAndGroupedHistory.forEach { (examMonth, courses) ->
-            val isExpanded = expandedStates[examMonth] ?: true
+        // 3. Dynamic Semester Filters
+        item {
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(filterOptions) { option ->
+                    val isSelected = selectedFilter == option
+                    val bg = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surface
+                    val border = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                    val fg = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
 
-            item {
-                val semGpa = originalGpas[examMonth] ?: 0.0
-                val rotation by animateFloatAsState(if (isExpanded) 180f else 0f, label = "arrow_$examMonth")
-
-                // Format "JAN-2025" to "Jan - 2025"
-                val formattedMonth = examMonth.split("-").let { parts ->
-                    if (parts.size == 2) {
-                        "${parts[0].trim().lowercase().replaceFirstChar { it.uppercase() }} - ${parts[1].trim()}"
-                    } else {
-                        examMonth.lowercase().replaceFirstChar { it.uppercase() }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(bg)
+                            .border(1.dp, border, RoundedCornerShape(12.dp))
+                            .clickable { selectedFilter = option }
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Text(text = option, color = fg, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
                 }
+            }
+        }
+
+        // 4. Grouped Semesters & Enhanced Course Rows
+        sortedAndGroupedHistory.forEach { (examMonth, courses) ->
+            val isExpanded = expandedStates[examMonth] ?: true
+            val semGpa = originalGpas[examMonth] ?: 0.0
+
+            val formattedMonth = formattedMonthsMap[examMonth] ?: examMonth
+
+            item {
+                val rotation by animateFloatAsState(if (isExpanded) 180f else 0f, label = "arrow_rotation_$examMonth")
 
                 Row(
                     modifier = Modifier
@@ -648,18 +725,23 @@ fun AcademicHistoryView(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text(text = formattedMonth, color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        Text(text = "${courses.size} Course${if (courses.size > 1) "s" else ""}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                    }
+                    Text(text = formattedMonth, color = MaterialTheme.colorScheme.onSurface, fontSize = 18.sp, fontWeight = FontWeight.Bold)
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text(text = String.format(Locale.US, "%.2f", semGpa), color = MaterialTheme.colorScheme.primary, fontSize = 18.sp, fontWeight = FontWeight.Black)
-                            Text(text = "Semester GPA", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                        Surface(
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = String.format(Locale.US, "SGPA: %.2f", semGpa),
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
                         }
 
-                        Spacer(Modifier.width(12.dp))
+                        Spacer(Modifier.width(8.dp))
 
                         Icon(
                             imageVector = Icons.Default.KeyboardArrowDown,
@@ -673,7 +755,7 @@ fun AcademicHistoryView(
 
             if (isExpanded) {
                 items(courses) { course ->
-                    HistoryItemCard(course)
+                    EnhancedHistoryItemCard(course)
                 }
             }
         }
@@ -681,57 +763,76 @@ fun AcademicHistoryView(
 }
 
 @Composable
-fun HistoryStatCard(title: String, value: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier = Modifier) {
-    Card(
-        modifier = modifier,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
-        shape = RoundedCornerShape(12.dp)
-    ) {
-        Column(modifier = Modifier.padding(12.dp), horizontalAlignment = Alignment.Start) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.height(8.dp))
-            Text(value, color = MaterialTheme.colorScheme.onSurface, fontSize = 18.sp, fontWeight = FontWeight.Black)
-            Text(title, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Medium)
-        }
-    }
-}
-
-@Composable
-fun HistoryItemCard(course: GradeHistoryItem) {
+fun EnhancedHistoryItemCard(course: GradeHistoryItem) {
     val gradeColor = getGradeColor(course.grade)
+    val isLabOrProject = course.courseType?.contains("Lab", true) == true || course.courseType?.contains("Project", true) == true
+
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp)),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
     ) {
-        Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
-                Text(course.courseCode ?: "", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(2.dp))
-                Text(course.courseTitle ?: "", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.height(4.dp))
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f).padding(end = 16.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isLabOrProject) Lucide.Calculator else Lucide.BookOpen,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
 
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text( "${course.credits ?: "-"}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    Box(modifier = Modifier.size(3.dp).background(MaterialTheme.colorScheme.onSurfaceVariant, CircleShape))
-                    Text(course.courseType ?: "-", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.width(12.dp))
 
-                    if (!course.courseDistribution.isNullOrBlank()) {
-                        Box(modifier = Modifier.size(3.dp).background(MaterialTheme.colorScheme.onSurfaceVariant, CircleShape))
-                        Text(course.courseDistribution ?: "", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = course.courseTitle ?: course.courseCode ?: "",
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = "${course.courseCode} • ${course.credits ?: "0"} Credits",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Normal
+                        )
                     }
                 }
-            }
-            Box(
-                modifier = Modifier
-                    .background(gradeColor.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
-                    .border(1.dp, gradeColor.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                    .size(42.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(course.grade ?: "-", color = gradeColor, fontSize = 18.sp, fontWeight = FontWeight.Black)
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .background(gradeColor.copy(alpha = 0.1f), RoundedCornerShape(10.dp))
+                            .border(1.5.dp, gradeColor.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
+                            .size(42.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = course.grade ?: "-",
+                            color = gradeColor,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
         }
     }
