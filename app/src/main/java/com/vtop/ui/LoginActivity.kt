@@ -11,8 +11,8 @@ import androidx.activity.compose.setContent
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import com.vtop.network.VtopClient
-import com.vtop.ui.core.AppBridge
-import com.vtop.ui.core.LoginBridge
+import com.vtop.core.AppState
+import com.vtop.core.AuthStateManager
 import com.vtop.ui.screens.auth.LoginScreen
 import com.vtop.ui.theme.AppTheme
 import com.vtop.ui.theme.AppThemeMode
@@ -51,7 +51,7 @@ class LoginActivity : ComponentActivity() {
         val savedThemeString = sharedPrefs.getString("APP_THEME", AppThemeMode.SYSTEM.name) ?: AppThemeMode.SYSTEM.name
         val savedTheme = AppThemeMode.valueOf(savedThemeString)
 
-        LoginBridge.currentState.value = AuthState.FORM
+        AuthStateManager.currentState.value = AuthState.FORM
 
         setContent {
             AppTheme(themeMode = savedTheme) {
@@ -64,7 +64,7 @@ class LoginActivity : ComponentActivity() {
                             Vault.saveCredentials(this@LoginActivity, regNo, pass)
                             sharedPrefs.edit().putBoolean("IS_EXPLICITLY_LOGGED_OUT", false).apply()
 
-                            LoginBridge.currentState.value = AuthState.LOADING_SEMESTERS
+                            AuthStateManager.currentState.value = AuthState.LOADING_SEMESTERS
 
                             lifecycleScope.launch(Dispatchers.IO) {
                                 try {
@@ -78,20 +78,19 @@ class LoginActivity : ComponentActivity() {
                                     while (!loginSuccess && attempts < maxAttempts) {
                                         attempts++
                                         if (attempts > 1) {
-                                            withContext(Dispatchers.Main) { LoginBridge.loginError.value = "Retrying login ($attempts/$maxAttempts)..." }
+                                            withContext(Dispatchers.Main) { AuthStateManager.loginError.value = "Retrying login ($attempts/$maxAttempts)..." }
                                             delay(1000)
                                         }
 
                                         loginSuccess = client.autoLogin(this@LoginActivity, object : VtopClient.LoginListener {
                                             override fun onStatusUpdate(message: String) { Log.d("VTOP_LOGIN", message) }
                                             override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
-                                                lifecycleScope.launch(Dispatchers.Main) { AppBridge.currentOtpResolver.value = resolver }
+                                                lifecycleScope.launch(Dispatchers.Main) { AppState.currentOtpResolver.value = resolver }
                                             }
                                         })
                                     }
 
                                     if (loginSuccess) {
-                                        // Save the dynamically extracted ID securely to the vault!
                                         if (client.authorizedId != null && !client.authorizedId.isEmpty() && !client.authorizedId.equals(regNo)) {
                                             Vault.saveRegNo(this@LoginActivity, client.authorizedId)
                                         }
@@ -105,33 +104,32 @@ class LoginActivity : ComponentActivity() {
                                         }
 
                                         withContext(Dispatchers.Main) {
-                                            LoginBridge.loginError.value = null
-                                            LoginBridge.fetchedSemesters.value = processedSemesters
-                                            LoginBridge.currentState.value = AuthState.SELECT_SEMESTER
+                                            AuthStateManager.loginError.value = null
+                                            AuthStateManager.fetchedSemesters.value = processedSemesters
+                                            AuthStateManager.currentState.value = AuthState.SELECT_SEMESTER
                                         }
                                     } else {
                                         withContext(Dispatchers.Main) {
-                                            LoginBridge.loginError.value = "Invalid Credentials or VTOP is down."
-                                            LoginBridge.currentState.value = AuthState.FORM
+                                            AuthStateManager.loginError.value = "Invalid Credentials or VTOP is down."
+                                            AuthStateManager.currentState.value = AuthState.FORM
                                         }
                                     }
                                 } catch (e: Exception) {
                                     withContext(Dispatchers.Main) {
-                                        LoginBridge.loginError.value = "Network error: ${e.message}"
-                                        LoginBridge.currentState.value = AuthState.FORM
+                                        AuthStateManager.loginError.value = "Network error: ${e.message}"
+                                        AuthStateManager.currentState.value = AuthState.FORM
                                     }
                                 }
                             }
                         }
 
                         override fun onSemesterSelect(semId: String, semName: String) {
-                            LoginBridge.currentState.value = AuthState.DOWNLOADING_DATA
+                            AuthStateManager.currentState.value = AuthState.DOWNLOADING_DATA
 
                             lifecycleScope.launch(Dispatchers.IO) {
                                 Vault.saveSelectedSemester(this@LoginActivity, semId, semName)
 
                                 withContext(Dispatchers.Main) {
-                                    // Start MainActivity and explicitly command it to Sync immediately!
                                     val intent = Intent(this@LoginActivity, MainActivity::class.java).apply {
                                         putExtra("TRIGGER_INITIAL_SYNC", true)
                                     }

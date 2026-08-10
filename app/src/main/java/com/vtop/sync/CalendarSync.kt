@@ -1,8 +1,9 @@
-package com.vtop.ui.core
+package com.vtop.sync
 
 import android.annotation.SuppressLint
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.Color
 import android.provider.CalendarContract
 import android.widget.Toast
 import androidx.work.Data
@@ -10,11 +11,13 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.vtop.models.ExamScheduleModel
 import com.vtop.models.TimetableModel
-import com.vtop.ui.screens.main.ProcessedCourse
 import com.vtop.ui.screens.main.processAndMergeCourses
 import org.json.JSONObject
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 
 data class CalendarInfo(val id: Long, val name: String, val accountName: String)
@@ -142,9 +145,9 @@ object CalendarSync {
             var examCount = 0
             val currentTimeMs = System.currentTimeMillis()
 
-            val colorBlue = android.graphics.Color.parseColor("#4285F4")
-            val colorGreen = android.graphics.Color.parseColor("#34A853")
-            val colorOrange = android.graphics.Color.parseColor("#F9AB00")
+            val colorBlue = Color.parseColor("#4285F4")
+            val colorGreen = Color.parseColor("#34A853")
+            val colorOrange = Color.parseColor("#F9AB00")
 
             // ==============================================
             // 1. SYNC WEEKLY TIMETABLE
@@ -236,7 +239,10 @@ object CalendarSync {
 
                 var parsedDate: Date? = null
                 for (format in dateFormats) {
-                    try { parsedDate = SimpleDateFormat(format, Locale.ENGLISH).parse(dateStr); if (parsedDate != null) break } catch (e: Exception) { }
+                    try { parsedDate = SimpleDateFormat(
+                        format,
+                        Locale.ENGLISH
+                    ).parse(dateStr); if (parsedDate != null) break } catch (e: Exception) { }
                 }
                 if (parsedDate == null) return@forEach
 

@@ -16,9 +16,6 @@ import java.util.concurrent.TimeUnit
 
 object H2P {
 
-
-
-    // INCREASED TIMEOUTS: Render free tier takes 50+ seconds to wake up from sleep.
     private val client = OkHttpClient.Builder()
         .connectTimeout(90, TimeUnit.SECONDS)
         .writeTimeout(90, TimeUnit.SECONDS)

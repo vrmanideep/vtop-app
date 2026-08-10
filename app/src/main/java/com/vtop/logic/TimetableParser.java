@@ -260,7 +260,7 @@ public class TimetableParser {
                     faculty = facultyPs.get(0).text().split("-")[0].trim();
                 }
 
-                Log.d(TAG, "Parsed Summary Table -> Course: " + courseCode + " | ClassID: " + classId);
+                //Log.d(TAG, "Parsed Summary Table -> Course: " + courseCode + " | ClassID: " + classId);
                 list.add(new CourseInfo(courseCode, courseName, parsedType,
                         slot, venue, faculty, classId));
             } catch (Exception ignored) {}
@@ -313,7 +313,7 @@ public class TimetableParser {
             String cleanInfoVenue = info.venue.replace(" ", "");
 
             if (cleanGridVenue.equalsIgnoreCase(cleanInfoVenue)) {
-                Log.d(TAG, "[MATCH SUCCESS] Grid Slot: " + actualSlot + " matched ClassID: " + info.classId + " via Venue");
+                //Log.d(TAG, "[MATCH SUCCESS] Grid Slot: " + actualSlot + " matched ClassID: " + info.classId + " via Venue");
                 return new CourseSession(info.courseName, courseCode, courseType,
                         actualSlot, info.venue, info.faculty, timeSlot, cleanText, info.classId);
             }
@@ -323,7 +323,7 @@ public class TimetableParser {
         for (CourseInfo info : courseInfoList) {
             if (!info.courseCode.equals(courseCode)) continue;
             if (info.courseType.equalsIgnoreCase(courseType)) {
-                Log.d(TAG, "[MATCH SUCCESS] Grid Slot: " + actualSlot + " matched ClassID: " + info.classId + " via Type");
+                //Log.d(TAG, "[MATCH SUCCESS] Grid Slot: " + actualSlot + " matched ClassID: " + info.classId + " via Type");
                 return new CourseSession(info.courseName, courseCode, courseType,
                         actualSlot, expectedVenue, info.faculty, timeSlot, cleanText, info.classId);
             }
@@ -332,7 +332,7 @@ public class TimetableParser {
         // --- Pass 3: course code only (Last resort to avoid "Unknown") ---
         for (CourseInfo info : courseInfoList) {
             if (info.courseCode.equals(courseCode)) {
-                Log.d(TAG, "[MATCH SUCCESS] Grid Slot: " + actualSlot + " matched ClassID: " + info.classId + " via Code Only");
+                //Log.d(TAG, "[MATCH SUCCESS] Grid Slot: " + actualSlot + " matched ClassID: " + info.classId + " via Code Only");
                 return new CourseSession(info.courseName, courseCode, courseType,
                         actualSlot, expectedVenue, info.faculty, timeSlot, cleanText, info.classId);
             }

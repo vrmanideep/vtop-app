@@ -7,7 +7,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.vtop.models.ExamScheduleModel
-import com.vtop.ui.core.VtopSyncWorker
+import com.vtop.sync.VtopSyncWorker
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale

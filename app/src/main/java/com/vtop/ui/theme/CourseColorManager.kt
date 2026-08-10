@@ -1,7 +1,6 @@
-package com.vtop.ui.core
+package com.vtop.ui.theme
 
 import androidx.compose.ui.graphics.Color
-import com.vtop.ui.theme.CoursePalette
 import kotlin.math.abs
 
 object CourseColorManager {

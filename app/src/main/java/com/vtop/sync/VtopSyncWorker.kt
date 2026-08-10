@@ -1,33 +1,36 @@
-package com.vtop.ui.core
+package com.vtop.sync
 
 import android.content.Context
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
+import android.os.SystemClock
 import android.util.Log
 import androidx.work.CoroutineWorker
-import androidx.work.WorkerParameters
+import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
-import androidx.work.ExistingWorkPolicy
+import androidx.work.WorkerParameters
+import com.vtop.core.EventBus
+import com.vtop.core.AppEvent
+import com.vtop.core.SessionManager
+import com.vtop.core.SessionType
+import com.vtop.core.ExamsRepository
+import com.vtop.core.MarksRepository
+import com.vtop.core.OutingsRepository
+import com.vtop.core.SemesterRepository
 import com.vtop.network.VtopClient
 import com.vtop.network.VtopException
-import com.vtop.utils.NotificationHelper
 import com.vtop.utils.*
 import com.vtop.logic.*
-import com.vtop.logic.MarksParser
-import com.vtop.logic.OutingParser
-import com.vtop.utils.SemesterTransitionEngine
+import com.vtop.telemetry.Telemetry
+import com.vtop.telemetry.model.TelemetryModule
+import com.vtop.telemetry.model.TelemetryStatus
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
-import android.os.SystemClock
-import com.vtop.telemetry.Telemetry
-import com.vtop.telemetry.model.TelemetryModule
-import com.vtop.telemetry.model.TelemetryStatus
 
 class VtopSyncWorker(
     private val context: Context,
@@ -52,10 +55,7 @@ class VtopSyncWorker(
             tag = "VTOP_WORKER",
             message = "Worker started",
             module = TelemetryModule.WORK,
-            metadata = mapOf(
-                "worker" to javaClass.simpleName,
-                "runAttemptCount" to runAttemptCount
-            )
+            metadata = mapOf("worker" to javaClass.simpleName, "runAttemptCount" to runAttemptCount)
         )
         Log.d(tag, "Background sync started.")
 
@@ -65,18 +65,11 @@ class VtopSyncWorker(
             val password = creds[1]
 
             if (username.isNullOrBlank() || password.isNullOrBlank()) {
-
-                Telemetry.log(
-                    level = TelemetryStatus.FAILURE,
-                    tag = "VTOP_WORKER",
-                    message = "Credentials missing",
-                    module = TelemetryModule.WORK
-                )
-
+                Telemetry.log(TelemetryStatus.FAILURE, "VTOP_WORKER", "Credentials missing", TelemetryModule.WORK)
                 return@withContext Result.failure()
             }
 
-            val client = VtopClient(context, username, password)
+            val client = SessionManager.getSyncClient() ?: SessionManager.createClient(context, SessionType.SYNC).first
 
             var loginSuccess = false
             var otpTriggered = false
@@ -88,40 +81,19 @@ class VtopSyncWorker(
                         override fun onStatusUpdate(message: String) {}
                         override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
                             CoroutineScope(Dispatchers.IO).launch {
-                                // Capture the exact moment the background worker hit the OTP wall
                                 val otpRequestedTime = System.currentTimeMillis()
                                 val savedEmail = Vault.getGoogleEmail(context)
 
                                 if (savedEmail.isNotBlank()) {
-                                    val extractedOtp = GmailOtpExtractor.getLatestVtopOtp(
-                                        context,
-                                        savedEmail,
-                                        otpRequestedTime // <-- Pass the timestamp here
-                                    )
+                                    val extractedOtp = GmailOtpExtractor.getLatestVtopOtp(context, savedEmail, otpRequestedTime)
                                     if (extractedOtp != null) {
                                         resolver.submit(extractedOtp)
                                         return@launch
                                     }
                                 }
 
-                                if (AppBridge.isAppInForeground) {
-                                    withContext(Dispatchers.Main) { AppBridge.currentOtpResolver.value = resolver }
-                                } else {
-                                    otpTriggered = true
-                                    val deferredOtp = kotlinx.coroutines.CompletableDeferred<String?>()
-                                    AppBridge.pendingOtpDeferred = deferredOtp
-                                    NotificationHelper.showOtpNotification(context)
-
-                                    val userOtp = withTimeoutOrNull(180_000L) { deferredOtp.await() }
-
-                                    if (userOtp != null) {
-                                        resolver.submit(userOtp)
-                                    } else {
-                                        resolver.cancel()
-                                        AppBridge.pendingOtpDeferred = null
-                                        NotificationHelper.dismissNotification(context, NotificationHelper.OTP_NOTIFICATION_ID)
-                                    }
-                                }
+                                otpTriggered = true
+                                EventBus.emit(AppEvent.AuthOtpRequested(resolver))
                             }
                         }
                     })
@@ -134,7 +106,7 @@ class VtopSyncWorker(
                     }
                 } catch (_: VtopException.InvalidCredentials) {
                     Vault.saveCredentials(context, "", "")
-                    NotificationHelper.showNotification(context, "VTOP Sync Failed", "Your password may have changed. Please open the app and log in again.", 999)
+                    NotificationHelper.showNotification(context, "VTOP Sync Failed", "Your password may have changed. Please log in again.", 999)
                     return@withContext Result.failure()
                 } catch (_: VtopException.AuthenticationFailed) {
                     NotificationHelper.showNotification(context, "VTOP Account Locked", "Max attempts reached. Please login in VTOP manually.", 998)
@@ -142,24 +114,19 @@ class VtopSyncWorker(
                 } catch (_: Exception) {
                     attempts++
                     client.reinitializeSession(context)
-                } finally {
-                    withContext(Dispatchers.Main) { AppBridge.currentOtpResolver.value = null }
-                    AppBridge.pendingOtpDeferred = null
                 }
             }
 
             if (!loginSuccess) return@withContext Result.retry()
+            SessionManager.setSyncClient(client)
 
             var authorizedId = Vault.getRegNo(context)
-            if (authorizedId.isBlank() || authorizedId == "-") {
-                authorizedId = username
-            }
+            if (authorizedId.isBlank() || authorizedId == "-") authorizedId = username
 
             client.setAuthorizedId(authorizedId)
             val semInfo = Vault.getSelectedSemester(context)
             val semId = semInfo[0] ?: ""
 
-            // --- 1. CHECK ATTENDANCE ---
             AttendanceSyncEngine.sync(
                 context = context,
                 client = client,
@@ -169,10 +136,7 @@ class VtopSyncWorker(
                 logTag = "ATT_OPT_BG"
             )
 
-            // --- 2. CHECK EXAM SEATS ---
-            val isExamSync = inputData.getBoolean("IS_EXAM_SYNC", false)
-            // Note: If you want it to check for exams on EVERY background sync, remove the 'if (isExamSync)' block
-            if (isExamSync) {
+            if (inputData.getBoolean("IS_EXAM_SYNC", false)) {
                 val oldExams = Vault.getExamSchedule(context) ?: emptyList()
                 val examHtml = client.fetchExamScheduleRawHtml(semId, null) ?: ""
                 val newExams = ExamScheduleParser.parse(examHtml)
@@ -188,16 +152,12 @@ class VtopSyncWorker(
                         hasSeat && isUpcoming && (oldExam == null || oldExam.seatNumber != newExam.seatNumber)
                     }
 
-                    newlySeatedExams.forEachIndexed { index, exam ->
-                        // Calculate exact start time for the sticky notification
+                    newlySeatedExams.forEach { exam ->
                         val dateTimeString = "${exam.examDate} ${exam.reportingTime.clean().ifBlank { "09:00 AM" }}"
                         val examStartTimeMillis = try {
                             SimpleDateFormat("dd-MMM-yyyy hh:mm a", Locale.ENGLISH).parse(dateTimeString)?.time ?: System.currentTimeMillis()
-                        } catch (e: Exception) {
-                            System.currentTimeMillis()
-                        }
+                        } catch (e: Exception) { System.currentTimeMillis() }
 
-                        // Use your new custom sticky notification
                         NotificationHelper.showExamSeatNotification(
                             context = context,
                             title = "Exam Seating Allotment",
@@ -206,12 +166,10 @@ class VtopSyncWorker(
                         )
                         delay(1000)
                     }
-                    Vault.saveExamSchedule(context, newExams)
-                    withContext(Dispatchers.Main) { AppBridge.examsState.value = newExams }
+                    ExamsRepository.update(context, newExams)
                 }
             }
 
-            // --- 3. CHECK MARKS ---
             val oldMarks = Vault.getMarks(context) ?: emptyList()
             val marksHtml = client.fetchMarksRawHtml(semId, null) ?: ""
             val newMarks = MarksParser.parseMarks(marksHtml)
@@ -230,11 +188,9 @@ class VtopSyncWorker(
                         }
                     }
                 }
-                Vault.saveMarks(context, newMarks)
-                withContext(Dispatchers.Main) { AppBridge.marksState.value = newMarks }
+                MarksRepository.update(context, newMarks)
             }
 
-            // --- 4. CHECK OUTINGS ---
             val oldOutings = Vault.getOutings(context) ?: emptyList()
             val genHtml = client.fetchGeneralOutingRawHtml(authorizedId, null) ?: ""
             val weekHtml = client.fetchWeekendOutingRawHtml(authorizedId, null) ?: ""
@@ -243,29 +199,13 @@ class VtopSyncWorker(
             if (newOutings.isNotEmpty()) {
                 newOutings.forEach { newOut ->
                     val oldOut = oldOutings.find { it.id == newOut.id }
-
-                    // --- THE FIX: EXPIRED LEAVE CHECK ---
                     val isExpired = try {
-                        val sdfOut = if (newOut.fromDate.contains("-") && newOut.fromDate.split("-")[0].length == 4) {
-                            SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
-                        } else {
-                            SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH)
-                        }
+                        val sdfOut = if (newOut.fromDate.contains("-") && newOut.fromDate.split("-")[0].length == 4) SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH) else SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH)
                         val startDate = sdfOut.parse(newOut.fromDate)
-
-                        val todayMidnight = Calendar.getInstance().apply {
-                            set(Calendar.HOUR_OF_DAY, 0)
-                            set(Calendar.MINUTE, 0)
-                            set(Calendar.SECOND, 0)
-                            set(Calendar.MILLISECOND, 0)
-                        }.time
-
+                        val todayMidnight = Calendar.getInstance().apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }.time
                         startDate != null && startDate.before(todayMidnight)
-                    } catch (e: Exception) {
-                        false // If parsing fails, default to false to be safe
-                    }
+                    } catch (e: Exception) { false }
 
-                    // Only trigger notification if status changed AND the leave hasn't expired yet
                     if (oldOut != null && oldOut.status != newOut.status && !isExpired) {
                         val s = newOut.status.uppercase(Locale.getDefault())
                         val oldS = oldOut.status.uppercase(Locale.getDefault())
@@ -280,52 +220,19 @@ class VtopSyncWorker(
                         }
                     }
                 }
-                Vault.saveOutings(context, newOutings)
-                withContext(Dispatchers.Main) { AppBridge.outingsState.value = newOutings }
+                OutingsRepository.update(context, newOutings)
             }
 
             Vault.saveLastSyncTime(context)
 
-            // --- 5. SEMESTER TRANSITION ---
-            val savedExams = Vault.getExamSchedule(context)
-            if (SemesterTransitionEngine.checkIfLastFatIsOver(savedExams)) {
-                withContext(Dispatchers.Main) { AppBridge.isSemesterCompleted.value = true }
-                if (SemesterTransitionEngine.attemptAutoSwitch(context)) {
-                    WorkManager.getInstance(context).enqueueUniqueWork("TRANSITION_SYNC", ExistingWorkPolicy.REPLACE, OneTimeWorkRequestBuilder<VtopSyncWorker>().build())
-                }
-            }
-
             val duration = SystemClock.elapsedRealtime() - workerStart
-
-            Telemetry.log(
-                level = TelemetryStatus.SUCCESS,
-                tag = "VTOP_WORKER",
-                message = "Worker completed",
-                module = TelemetryModule.WORK,
-                metadata = mapOf(
-                    "worker" to javaClass.simpleName,
-                    "durationMs" to duration
-                )
-            )
+            Telemetry.log(TelemetryStatus.SUCCESS, "VTOP_WORKER", "Worker completed", TelemetryModule.WORK, mapOf("worker" to javaClass.simpleName, "durationMs" to duration))
 
             return@withContext Result.success()
         } catch (e: Exception) {
             Log.e(tag, "Sync failed: ${e.message}")
             val duration = SystemClock.elapsedRealtime() - workerStart
-
-            Telemetry.log(
-                level = TelemetryStatus.ERROR,
-                tag = "VTOP_WORKER",
-                message = "Worker failed",
-                module = TelemetryModule.WORK,
-                metadata = mapOf(
-                    "worker" to javaClass.simpleName,
-                    "durationMs" to duration,
-                    "exception" to e.javaClass.simpleName,
-                    "message" to e.message
-                )
-            )
-
+            Telemetry.log(TelemetryStatus.ERROR, "VTOP_WORKER", "Worker failed", TelemetryModule.WORK, mapOf("worker" to javaClass.simpleName, "durationMs" to duration, "exception" to e.javaClass.simpleName, "message" to e.message))
             return@withContext Result.retry()
         }
     }

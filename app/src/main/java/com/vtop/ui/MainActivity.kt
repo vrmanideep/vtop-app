@@ -3,25 +3,17 @@ package com.vtop.ui
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
-import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.border
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -30,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -39,7 +32,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
@@ -55,25 +47,30 @@ import androidx.navigation.compose.rememberNavController
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.OneTimeWorkRequestBuilder
 import com.vtop.models.TimetableModel
 import com.vtop.network.VtopClient
-import com.vtop.telemetry.*
-import com.vtop.telemetry.lifecycle.*
-import com.vtop.telemetry.collectors.*
-import com.vtop.ui.core.*
+import com.vtop.core.EventBus
+import com.vtop.core.AppEvent
+import com.vtop.core.AppRepositories
+import com.vtop.core.AppState
+import com.vtop.core.TimetableRepository
+import com.vtop.core.AttendanceRepository
+import com.vtop.core.ExamsRepository
+import com.vtop.sync.SyncManager
 import com.vtop.ui.screens.auth.GoogleSignInDialog
 import com.vtop.ui.screens.main.*
-import com.vtop.ui.screens.portal.VtopPortalScreen
 import com.vtop.ui.screens.sub.*
 import com.vtop.ui.theme.*
 import com.vtop.utils.*
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.concurrent.TimeUnit
-import androidx.work.OneTimeWorkRequestBuilder
 
 class MainActivity : ComponentActivity() {
 
@@ -82,12 +79,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        AppBridge.isAppInForeground = true
+        AppState.isAppInForeground = true
     }
 
     override fun onPause() {
         super.onPause()
-        AppBridge.isAppInForeground = false
+        AppState.isAppInForeground = false
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -151,55 +148,55 @@ class MainActivity : ComponentActivity() {
         }
 
         if (autoSyncInterval > 0) {
-            val syncRequest =
-                PeriodicWorkRequestBuilder<VtopSyncWorker>(
-                    autoSyncInterval.toLong(),
-                    TimeUnit.HOURS
-                ).build()
+            val syncRequest = PeriodicWorkRequestBuilder<com.vtop.sync.VtopSyncWorker>(
+                autoSyncInterval.toLong(), TimeUnit.HOURS
+            ).build()
 
-            WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-                "VTOP_BACKGROUND_SYNC",
-                ExistingPeriodicWorkPolicy.KEEP,
-                syncRequest
-            )
+            WorkManager.getInstance(this).enqueueUniquePeriodicWork("VTOP_BACKGROUND_SYNC", ExistingPeriodicWorkPolicy.KEEP, syncRequest)
         } else {
-            WorkManager.getInstance(this)
-                .cancelUniqueWork("VTOP_BACKGROUND_SYNC")
+            WorkManager.getInstance(this).cancelUniqueWork("VTOP_BACKGROUND_SYNC")
         }
 
-// TEMPORARY: test background attendance sync
-        val testAttendanceWorker =
-            androidx.work.OneTimeWorkRequestBuilder<VtopSyncWorker>()
-                .build()
-
-        WorkManager.getInstance(this)
-            .enqueue(testAttendanceWorker)
+        val testAttendanceWorker = OneTimeWorkRequestBuilder<com.vtop.sync.VtopSyncWorker>().build()
+        WorkManager.getInstance(this).enqueue(testAttendanceWorker)
 
         lifecycleScope.launch(Dispatchers.IO) {
-            val timetable = Vault.getTimetable(this@MainActivity)
-            val attendance = Vault.getAttendance(this@MainActivity) ?: emptyList()
-            val exams = Vault.getExamSchedule(this@MainActivity) ?: emptyList()
-            val outings = Vault.getOutings(this@MainActivity) ?: emptyList()
-            val marks = Vault.getMarks(this@MainActivity) ?: emptyList()
-            val grades = Vault.getGrades(this@MainActivity) ?: emptyList()
-            val historySummary = Vault.getCGPASummary(this@MainActivity)
-            val historyItems = Vault.getHistory(this@MainActivity) ?: emptyList()
-
+            AppRepositories.loadAll(this@MainActivity)
             withContext(Dispatchers.Main) {
-                AppBridge.timetableState.value = timetable
-                AppBridge.attendanceState.value = attendance
-                AppBridge.examsState.value = exams
-                AppBridge.outingsState.value = outings
-                AppBridge.marksState.value = marks
-                AppBridge.gradesState.value = grades
-                AppBridge.historySummaryState.value = historySummary
-                AppBridge.historyItemsState.value = historyItems
                 isDataLoaded.value = true
             }
         }
 
-
         setContent {
+            LaunchedEffect(Unit) {
+                EventBus.events.collect { event ->
+                    when (event) {
+                        is AppEvent.SyncStatusChanged -> AppState.syncStatus.value = event.status
+                        is AppEvent.ToastMessage -> Toast.makeText(this@MainActivity, event.message, if (event.isLong) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
+                        is AppEvent.SyncError -> AppState.appError.value = event.exception.message
+                        is AppEvent.AuthOtpRequested -> {
+                            val resolver = event.resolver as VtopClient.OtpResolver
+                            if (AppState.isAppInForeground) {
+                                AppState.currentOtpResolver.value = resolver
+                            } else {
+                                val deferredOtp = CompletableDeferred<String?>()
+                                AppState.pendingOtpDeferred = deferredOtp
+                                NotificationHelper.showOtpNotification(this@MainActivity)
+                                val userOtp = withTimeoutOrNull(180_000L) { deferredOtp.await() }
+                                if (userOtp != null) resolver.submit(userOtp)
+                                else {
+                                    resolver.cancel()
+                                    AppState.pendingOtpDeferred = null
+                                    NotificationHelper.dismissNotification(this@MainActivity, NotificationHelper.OTP_NOTIFICATION_ID)
+                                    SyncManager.cancelActiveSync()
+                                }
+                            }
+                        }
+                        is AppEvent.SyncCompleted -> { }
+                    }
+                }
+            }
+
             val themeMode = ThemeManager.themeMode.value
             val isDark = when (themeMode) {
                 AppThemeMode.LIGHT -> false
@@ -245,9 +242,9 @@ class MainActivity : ComponentActivity() {
             val triggerInitialSync = remember { intent.getBooleanExtra("TRIGGER_INITIAL_SYNC", false) }
 
             LaunchedEffect(triggerInitialSync) {
-                if (triggerInitialSync && !GlobalSyncer.isSyncing.value) {
+                if (triggerInitialSync && !SyncManager.isSyncing.value) {
                     intent.putExtra("TRIGGER_INITIAL_SYNC", false)
-                    GlobalSyncer.performSync(this@MainActivity, "PROFILE", false)
+                    SyncManager.performSync(this@MainActivity, "PROFILE", false)
                 }
             }
 
@@ -256,6 +253,11 @@ class MainActivity : ComponentActivity() {
                     Crossfade(targetState = isDataLoaded.value, animationSpec = tween(500), label = "DataLoadTransition") { loaded ->
                         if (loaded) {
                             val navController = rememberNavController()
+
+                            val timetable by TimetableRepository.timetable.collectAsState()
+                            val attendanceData by AttendanceRepository.attendance.collectAsState()
+                            val examsData by ExamsRepository.exams.collectAsState()
+
                             NavHost(navController = navController, startDestination = "main") {
                                 composable(
                                     route = "main",
@@ -267,11 +269,11 @@ class MainActivity : ComponentActivity() {
                                     MainScreen(
                                         navController = navController,
                                         initialShortcutAction = shortcutAction,
-                                        timetable = AppBridge.timetableState.value ?: TimetableModel(),
-                                        attendanceData = AppBridge.attendanceState.value ?: emptyList(),
-                                        examsData = AppBridge.examsState.value ?: emptyList(),
+                                        timetable = timetable ?: TimetableModel(),
+                                        attendanceData = attendanceData,
+                                        examsData = examsData,
                                         onSyncClick = { activeTab, forceNewSession ->
-                                            lifecycleScope.launch { GlobalSyncer.performSync(this@MainActivity, activeTab, forceNewSession) }
+                                            lifecycleScope.launch { SyncManager.performSync(this@MainActivity, activeTab, forceNewSession) }
                                         },
                                         onLogoutClick = {
                                             sharedPrefs.edit { putBoolean("IS_EXPLICITLY_LOGGED_OUT", true) }
@@ -354,7 +356,7 @@ class MainActivity : ComponentActivity() {
 
                                                         withContext(Dispatchers.Main) {
                                                             Toast.makeText(this@MainActivity, if (success) "Weekend Request Submitted!" else "Submission Failed", Toast.LENGTH_LONG).show()
-                                                            if (success) { lifecycleScope.launch { GlobalSyncer.performSync(this@MainActivity) } }
+                                                            if (success) { lifecycleScope.launch { SyncManager.performSync(this@MainActivity) } }
                                                         }
                                                     } catch (_: Exception) { withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error during submission", Toast.LENGTH_SHORT).show() } }
                                                 }
@@ -371,7 +373,7 @@ class MainActivity : ComponentActivity() {
 
                                                         withContext(Dispatchers.Main) {
                                                             Toast.makeText(this@MainActivity, if (success) "General Leave Submitted!" else "Submission Failed", Toast.LENGTH_LONG).show()
-                                                            if (success) { lifecycleScope.launch { GlobalSyncer.performSync(this@MainActivity) } }
+                                                            if (success) { lifecycleScope.launch { SyncManager.performSync(this@MainActivity) } }
                                                         }
                                                     } catch (_: Exception) { withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error during submission", Toast.LENGTH_SHORT).show() } }
                                                 }
@@ -387,7 +389,7 @@ class MainActivity : ComponentActivity() {
                                                         val success = client.deleteOuting(id, isWeekend)
 
                                                         withContext(Dispatchers.Main) {
-                                                            if (success) { Toast.makeText(this@MainActivity, "Leave Cancelled!", Toast.LENGTH_SHORT).show(); lifecycleScope.launch { GlobalSyncer.performSync(this@MainActivity) } }
+                                                            if (success) { Toast.makeText(this@MainActivity, "Leave Cancelled!", Toast.LENGTH_SHORT).show(); lifecycleScope.launch { SyncManager.performSync(this@MainActivity) } }
                                                             else { Toast.makeText(this@MainActivity, "Failed to cancel request.", Toast.LENGTH_SHORT).show() }
                                                         }
                                                     } catch (e: Exception) { withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_SHORT).show() } }
@@ -396,18 +398,11 @@ class MainActivity : ComponentActivity() {
                                         }
                                     )
                                 }
-
-                                composable(
-                                    route = "simulator",
-                                    enterTransition = { slideInVertically(initialOffsetY = { it }, animationSpec = tween(300)) + fadeIn() },
-                                    exitTransition = { slideOutVertically(targetOffsetY = { it }, animationSpec = tween(300)) + fadeOut() }
-                                ) {
+                                composable("simulator") {
                                     val semInfo = Vault.getSelectedSemester(this@MainActivity)
                                     val currentSemName = semInfo[1] ?: semInfo[0] ?: "Unknown Semester"
-                                    BunkSimulatorTab(timetable = AppBridge.timetableState.value ?: TimetableModel(), attendanceData = AppBridge.attendanceState.value ?: emptyList(), selectedSemester = currentSemName, onBack = { navController.popBackStack() })
+                                    BunkSimulatorTab(timetable = timetable ?: TimetableModel(), attendanceData = attendanceData, selectedSemester = currentSemName, onBack = { navController.popBackStack() })
                                 }
-
-
                             }
                         } else {
                             VtopSplashScreen()
@@ -436,7 +431,6 @@ class MainActivity : ComponentActivity() {
                             text = {
                                 Column(modifier = Modifier.fillMaxWidth().heightIn(max = 350.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                                     Text(text = "Version ${info.latestVersion} is ready to download. Do you want to install it now?", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
-
                                     if (info.features.isNotEmpty()) {
                                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                             Text("✨ Features", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary, letterSpacing = 0.5.sp)
@@ -448,7 +442,6 @@ class MainActivity : ComponentActivity() {
                                             }
                                         }
                                     }
-
                                     if (info.fixes.isNotEmpty()) {
                                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                             Text("🛠 Fixes", fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFF10B981), letterSpacing = 0.5.sp)
@@ -456,18 +449,6 @@ class MainActivity : ComponentActivity() {
                                                 Row(verticalAlignment = Alignment.Top) {
                                                     Text("•", color = Color(0xFF10B981), modifier = Modifier.padding(end = 8.dp))
                                                     Text(fix, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    if (info.important.isNotEmpty()) {
-                                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            Text("📢 Important", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.error, letterSpacing = 0.5.sp)
-                                            info.important.forEach { note ->
-                                                Row(verticalAlignment = Alignment.Top) {
-                                                    Text("•", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(end = 8.dp))
-                                                    Text(note, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
                                                 }
                                             }
                                         }
@@ -494,22 +475,11 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-/*
-    override fun onDestroy() {
-        super.onDestroy()
-
-        Telemetry.shutdown()
-    }
 }
-
- */
 
 @Composable
 fun VtopSplashScreen() {
-    Box(
-        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
-        contentAlignment = Alignment.Center
-    ) {
+    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Box(
                 modifier = Modifier
@@ -521,67 +491,7 @@ fun VtopSplashScreen() {
             Spacer(modifier = Modifier.height(24.dp))
             Text(text = "VTOP", color = MaterialTheme.colorScheme.onBackground, fontSize = 24.sp, fontWeight = FontWeight.Black, letterSpacing = 4.sp)
             Spacer(modifier = Modifier.height(32.dp))
-            UiverseLoader()
+            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         }
     }
-}
-
-@Composable
-fun UiverseLoader() {
-    val barWidth = remember { androidx.compose.animation.core.Animatable(16f) }
-    val barOffset = remember { androidx.compose.animation.core.Animatable(0f) }
-    val textOffset = remember { androidx.compose.animation.core.Animatable(0f) }
-    val letterSpacing = remember { androidx.compose.animation.core.Animatable(1f) }
-
-    LaunchedEffect(Unit) {
-        while (true) {
-            launch { barWidth.animateTo(targetValue = 80f, animationSpec = tween(1400)) }
-            launch { textOffset.animateTo(targetValue = 26f, animationSpec = tween(1400)) }
-            launch { letterSpacing.animateTo(targetValue = 2f, animationSpec = tween(1400)) }
-            kotlinx.coroutines.delay(1400)
-
-            launch { barWidth.animateTo(targetValue = 16f, animationSpec = tween(1400)) }
-            launch { barOffset.animateTo(targetValue = 64f, animationSpec = tween(1400)) }
-            launch { textOffset.animateTo(targetValue = 32f, animationSpec = tween(1400)) }
-            launch { letterSpacing.animateTo(targetValue = 1f, animationSpec = tween(1400)) }
-            kotlinx.coroutines.delay(1400)
-
-            launch { barWidth.animateTo(targetValue = 80f, animationSpec = tween(350)) }
-            launch { barOffset.animateTo(targetValue = 0f, animationSpec = tween(350)) }
-            launch { textOffset.animateTo(targetValue = 0f, animationSpec = tween(350)) }
-            launch { letterSpacing.animateTo(targetValue = 2f, animationSpec = tween(350)) }
-            kotlinx.coroutines.delay(350)
-
-            launch { barWidth.animateTo(targetValue = 16f, animationSpec = tween(350)) }
-            launch { letterSpacing.animateTo(targetValue = 1f, animationSpec = tween(350)) }
-            kotlinx.coroutines.delay(350)
-        }
-    }
-
-    Box(modifier = Modifier.width(80.dp).height(50.dp)) {
-        Text(
-            text = "loading",
-            color = MaterialTheme.colorScheme.primary,
-            fontSize = 12.sp,
-            letterSpacing = letterSpacing.value.sp,
-            modifier = Modifier.offset(x = textOffset.value.dp)
-        )
-        Box(
-            modifier = Modifier
-                .offset(x = barOffset.value.dp, y = 30.dp)
-                .width(barWidth.value.dp)
-                .height(16.dp)
-                .clip(RoundedCornerShape(50.dp))
-                .background(MaterialTheme.colorScheme.primary)
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(0.8f)
-                    .clip(RoundedCornerShape(50.dp))
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
-            )
-        }
-    }
-}
 }

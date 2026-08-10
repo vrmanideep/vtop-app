@@ -1,4 +1,4 @@
-package com.vtop.ui.core
+package com.vtop.core
 
 import android.content.Context
 import org.json.JSONArray
@@ -25,7 +25,8 @@ object ReminderManager {
         val list = mutableListOf<CourseReminder>()
         val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
         val todayCal = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(
+            Calendar.MILLISECOND, 0)
         }
 
         try {

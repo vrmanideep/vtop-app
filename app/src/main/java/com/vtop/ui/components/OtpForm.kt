@@ -1,18 +1,41 @@
-package com.vtop.ui.core
+package com.vtop.ui.components
 
 import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -70,8 +93,15 @@ fun OtpForm(onVerify: (String) -> Unit, onCancel: () -> Unit) {
                     Box(
                         modifier = Modifier
                             .size(64.dp)
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), CircleShape)
-                            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f), CircleShape),
+                            .background(
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                                CircleShape
+                            )
+                            .border(
+                                1.dp,
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                                CircleShape
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -84,7 +114,12 @@ fun OtpForm(onVerify: (String) -> Unit, onCancel: () -> Unit) {
 
                     Spacer(Modifier.height(24.dp))
 
-                    Text("Verification Required", color = MaterialTheme.colorScheme.onSurface, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                    Text(
+                        "Verification Required",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Black
+                    )
                     Text(
                         text = "A new network was detected. Enter the 6-digit code sent to your VIT email.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -121,24 +156,40 @@ fun OtpForm(onVerify: (String) -> Unit, onCancel: () -> Unit) {
                                         index >= otpCode.length -> ""
                                         else -> otpCode[index].toString()
                                     }
-                                    val isFocused = otpCode.length == index || (otpCode.length == 6 && index == 5)
+                                    val isFocused =
+                                        otpCode.length == index || (otpCode.length == 6 && index == 5)
 
                                     Box(
                                         modifier = Modifier
                                             .weight(1f)
                                             .aspectRatio(0.8f)
                                             .background(
-                                                if (isFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                                RoundedCornerShape(8.dp)
+                                                if (isFocused) MaterialTheme.colorScheme.primary.copy(
+                                                    alpha = 0.1f
+                                                ) else MaterialTheme.colorScheme.surfaceVariant.copy(
+                                                    alpha = 0.5f
+                                                ),
+                                                androidx.compose.foundation.shape.RoundedCornerShape(
+                                                    8.dp
+                                                )
                                             )
                                             .border(
                                                 1.dp,
-                                                if (isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
-                                                RoundedCornerShape(8.dp)
+                                                if (isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(
+                                                    alpha = 0.2f
+                                                ),
+                                                androidx.compose.foundation.shape.RoundedCornerShape(
+                                                    8.dp
+                                                )
                                             ),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        Text(char, color = MaterialTheme.colorScheme.onSurface, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            char,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            fontSize = 24.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
                                     }
                                 }
                             }
@@ -157,7 +208,7 @@ fun OtpForm(onVerify: (String) -> Unit, onCancel: () -> Unit) {
                         },
                         enabled = otpCode.length == 6 && !isVerifying,
                         modifier = Modifier.fillMaxWidth().height(50.dp),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primary,
                             disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant
@@ -188,14 +239,22 @@ fun OtpForm(onVerify: (String) -> Unit, onCancel: () -> Unit) {
                         },
                         enabled = !isVerifying
                     ) {
-                        Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            "Cancel",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium
+                        )
                     }
 
                     if (isVerifying) {
                         LaunchedEffect(Unit) {
                             delay(8_000)
                             if (isVerifying) {
-                                Log.w(TAG, "Still verifying after 8s (dialog not dismissed). Re-enabling input.")
+                                Log.w(
+                                    TAG,
+                                    "Still verifying after 8s (dialog not dismissed). Re-enabling input."
+                                )
                                 isVerifying = false
                                 otpCode = ""
                                 delay(100)

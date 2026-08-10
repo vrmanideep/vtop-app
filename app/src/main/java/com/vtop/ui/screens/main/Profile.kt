@@ -100,9 +100,9 @@ import com.vtop.models.SemesterOption
 import com.vtop.models.TimetableModel
 import com.vtop.network.VtopClient
 import com.vtop.telemetry.Telemetry
-import com.vtop.ui.core.CalendarInfo
-import com.vtop.ui.core.CalendarSync
-import com.vtop.ui.core.CourseReminder
+import com.vtop.sync.CalendarInfo
+import com.vtop.sync.CalendarSync
+import com.vtop.core.CourseReminder
 import com.vtop.ui.theme.AppThemeMode
 import com.vtop.utils.AnalyticsManager
 import com.vtop.utils.UpdateInfo
@@ -115,7 +115,6 @@ import com.vtop.ui.legal.*
 import com.vtop.ui.pages.ProfilePage
 import com.vtop.ui.screens.profile.LegalDocumentScreen
 import com.vtop.ui.screens.sub.*
-import com.vtop.ui.core.AppBridge
 import com.vtop.ui.screens.portal.VtopPortalScreen
 
 private fun formatReminderDate(dateStr: String): String {
@@ -590,7 +589,7 @@ fun Profile(
                                                         workManager.cancelUniqueWork("VTOP_BACKGROUND_SYNC")
                                                         Toast.makeText(context, "Auto sync disabled", Toast.LENGTH_SHORT).show()
                                                     } else {
-                                                        val syncRequest = androidx.work.PeriodicWorkRequestBuilder<com.vtop.ui.core.VtopSyncWorker>(hours.toLong(), java.util.concurrent.TimeUnit.HOURS).build()
+                                                        val syncRequest = androidx.work.PeriodicWorkRequestBuilder<com.vtop.sync.VtopSyncWorker>(hours.toLong(), java.util.concurrent.TimeUnit.HOURS).build()
                                                         workManager.enqueueUniquePeriodicWork("VTOP_BACKGROUND_SYNC", androidx.work.ExistingPeriodicWorkPolicy.REPLACE, syncRequest)
                                                         Toast.makeText(context, "Auto sync set to $label", Toast.LENGTH_SHORT).show()
                                                     }

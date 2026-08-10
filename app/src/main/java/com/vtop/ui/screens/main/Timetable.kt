@@ -94,8 +94,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vtop.models.*
 import com.vtop.network.FacultyScraper
-import com.vtop.ui.core.CourseReminder
-import com.vtop.ui.core.ReminderManager
+import com.vtop.core.CourseReminder
+import com.vtop.core.ReminderManager
 import com.vtop.utils.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -104,6 +104,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import java.util.UUID
 import kotlin.math.abs
 
 val ColorDanger = Color(0xFFC91818)
@@ -976,7 +977,7 @@ fun CourseDetailsSheet(
                     onClick = {
                         val finalType = if (selectedType == "Others") customType.ifBlank { "Task" } else selectedType
                         val newReminder = CourseReminder(
-                            id = editingReminderId ?: java.util.UUID.randomUUID().toString(),
+                            id = editingReminderId ?: UUID.randomUUID().toString(),
                             courseCode = course.courseCode ?: "", classId = course.classId ?: "", type = finalType, date = selectedDate, syllabus = syllabus
                         )
                         val updatedList = allReminders.toMutableList()

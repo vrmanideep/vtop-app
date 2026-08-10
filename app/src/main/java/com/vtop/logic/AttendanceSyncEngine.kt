@@ -3,7 +3,7 @@ package com.vtop.logic
 import android.content.Context
 import android.util.Log
 import com.vtop.network.VtopClient
-import com.vtop.ui.core.AppBridge
+import com.vtop.core.AttendanceRepository
 import com.vtop.utils.Vault
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -39,7 +39,7 @@ object AttendanceSyncEngine {
             if (cachedAttendance.isNotEmpty()) {
                 Log.w(logTag, "SUMMARY EMPTY - preserving ${cachedAttendance.size} cached courses")
                 withContext(Dispatchers.Main) {
-                    AppBridge.attendanceState.value = cachedAttendance
+                    AttendanceRepository.update(context, cachedAttendance)
                 }
             } else {
                 Log.w(logTag, "SUMMARY EMPTY - no cache to preserve")
@@ -119,10 +119,8 @@ object AttendanceSyncEngine {
             }
         }
 
-        Vault.saveAttendance(context, summary)
-
         withContext(Dispatchers.Main) {
-            AppBridge.attendanceState.value = summary
+            AttendanceRepository.update(context, summary)
         }
 
         Log.i(logTag, "Attendance sync complete: total=${summary.size}, detailFetched=$fetched, cacheReused=$reused, mode=$mode, successful=$syncSuccessful")

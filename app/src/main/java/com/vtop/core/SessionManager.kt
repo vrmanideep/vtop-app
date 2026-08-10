@@ -4,7 +4,6 @@ import com.vtop.network.VtopClient
 import android.content.Context
 import android.util.Log
 import com.vtop.utils.Vault
-import com.vtop.ui.core.AppBridge
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,8 +26,6 @@ object SessionManager {
 
     fun setSyncClient(client: VtopClient?) {
         syncClient = client
-        AppBridge.activeClient = client
-
         if (client == null) {
             Log.i(TAG, "Invalidated Sync Session")
             _state.value = SessionState.LoggedOut

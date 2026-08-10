@@ -31,9 +31,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.vtop.core.SessionManager
-import com.vtop.ui.core.AppBridge
-import com.vtop.ui.core.GlobalSyncer
+import com.vtop.core.*
+import com.vtop.sync.SyncManager
 import com.vtop.utils.AnalyticsManager
 import com.vtop.utils.Vault
 import kotlinx.coroutines.Dispatchers
@@ -124,8 +123,8 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
     var syncCompletedSteps by remember { mutableIntStateOf(0) }
     var syncError by remember { mutableStateOf<String?>(null) }
 
-    // Live Sync Status from GlobalSyncer for UI feedback
-    val globalSyncStatus = AppBridge.syncStatus.value
+    // Live Sync Status from SyncManager via AppState for UI feedback
+    val globalSyncStatus = AppState.syncStatus.value
 
     // Reusable sync function
     val fetchCalendar = { semIdToFetch: String ->
@@ -140,14 +139,14 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                 if (SessionManager.getSyncClient() == null) {
                     withContext(Dispatchers.Main) { syncError = "RECONNECTING" }
 
-                    // Trigger GlobalSyncer silently in the background
-                    if (!GlobalSyncer.isSyncing.value) {
-                        GlobalSyncer.performSync(context, forceNewSession = true)
+                    // Trigger SyncManager silently in the background
+                    if (!SyncManager.isSyncing.value) {
+                        SyncManager.performSync(context, forceNewSession = true)
                     }
 
                     // Suspend execution ONLY until the login phase is complete
-                    while (GlobalSyncer.isSyncing.value) {
-                        val status = AppBridge.syncStatus.value
+                    while (SyncManager.isSyncing.value) {
+                        val status = AppState.syncStatus.value
                         // As soon as it starts fetching actual modules, authentication is done
                         if (status.startsWith("Syncing") || status == "Finishing up...") {
                             break

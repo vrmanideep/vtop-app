@@ -23,14 +23,14 @@ import androidx.glance.appwidget.updateAll
 import androidx.glance.color.ColorProvider
 import androidx.glance.layout.*
 import androidx.glance.text.*
-import com.vtop.ui.core.CalendarSync
-import com.vtop.ui.core.CourseReminder
-import com.vtop.ui.core.ReminderManager
+import com.vtop.sync.CalendarSync
+import com.vtop.core.CourseReminder
+import com.vtop.core.ReminderManager
+import com.vtop.core.SemesterRepository
 import com.vtop.ui.screens.main.ProcessedCourse
 import com.vtop.ui.screens.main.processAndMergeCourses
 import com.vtop.models.ExamScheduleModel
 import com.vtop.utils.Vault
-import com.vtop.utils.SemesterTransitionEngine
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
@@ -162,7 +162,8 @@ class NextClassWidget : GlanceAppWidget() {
                     match?.value
                 }
             }
-            var semesterEnded = SemesterTransitionEngine.checkIfLastFatIsOver(exams)
+
+            var semesterEnded = SemesterRepository.isSemesterCompleted.value
             if (!semesterEnded && bunkCache.lastInstructionalDay.isNotEmpty() && exams.isEmpty()) {
                 try {
                     val endMs = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).parse(bunkCache.lastInstructionalDay)?.time ?: 0L
@@ -176,7 +177,6 @@ class NextClassWidget : GlanceAppWidget() {
             var finalExam: ExamScheduleModel? = null
             var finalCourse: ProcessedCourse? = null
 
-            // 3. EXAM EVALUATION
             val todayExams = exams.filter { isDateMatching(it.examDate, cal) }
             val validExams = mutableListOf<Pair<ExamScheduleModel, Pair<Long, Long>>>()
             for (exam in todayExams) {
@@ -236,7 +236,6 @@ class NextClassWidget : GlanceAppWidget() {
                 }
             }
 
-            // 4. CLASS EVALUATION
             if (todayExams.isEmpty() && todayHoliday == null) {
                 val todayStr = SimpleDateFormat("EEEE", Locale.getDefault()).format(cal.time)
                 val todayCourses = processAndMergeCourses(timetable?.scheduleMap?.get(todayStr) ?: emptyList(), mergeLabs)
@@ -274,7 +273,6 @@ class NextClassWidget : GlanceAppWidget() {
                 }
             }
 
-            // 5. SCHEDULE THE NEXT WAKEUP
             val nextAlarm = eventTimes.filter { it > now }.minOrNull() ?: midnightCal.timeInMillis
             scheduleSmartAlarm(context, nextAlarm)
 
@@ -284,26 +282,23 @@ class NextClassWidget : GlanceAppWidget() {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                 }
 
-                // High contrast colors to verify the border
                 val widgetBg = ColorProvider(day = Color(0xFFF4F4F5), night = Color(0xFF141414))
                 val borderColor = ColorProvider(day = Color(0xFF000000), night = Color(0x131414))
 
-                // OUTER BOX (The Border)
                 Box(
                     modifier = GlanceModifier
                         .fillMaxSize()
-                        .background(borderColor) // The border color
+                        .background(borderColor)
                         .cornerRadius(24.dp)
-                        .padding(2.dp) // Thickness of the border
+                        .padding(2.dp)
                 ) {
-                    // INNER BOX (The Content)
                     Box(
                         modifier = GlanceModifier
                             .fillMaxSize()
                             .background(widgetBg)
-                            .cornerRadius(22.dp) // Radius must be smaller than outer to fit
+                            .cornerRadius(22.dp)
                             .clickable(actionStartActivity(launchIntent))
-                            .padding(14.dp) // Content padding
+                            .padding(14.dp)
                     ) {
                         when {
                             semesterEnded -> EmptyWidgetContent("Semester Completed")

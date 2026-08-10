@@ -32,9 +32,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.vtop.ui.core.LoginBridge
-import com.vtop.ui.core.AppBridge
-import com.vtop.ui.core.OtpForm
+import com.vtop.core.AuthStateManager
+import com.vtop.core.AppState
+import com.vtop.ui.components.OtpForm
 import com.vtop.ui.theme.*
 import kotlinx.coroutines.delay
 
@@ -48,13 +48,13 @@ fun LoginScreen(savedReg: String?, savedPass: String?, callback: AuthActionCallb
         AnalyticsManager.logScreenView("Login_Screen_View")
     }
     val context = LocalContext.current
-    val currentState = LoginBridge.currentState.value
-    val errorMsg = LoginBridge.loginError.value
+    val currentState = AuthStateManager.currentState.value
+    val errorMsg = AuthStateManager.loginError.value
 
     LaunchedEffect(errorMsg) {
         if (errorMsg != null) {
             delay(5000)
-            LoginBridge.loginError.value = null
+            AuthStateManager.loginError.value = null
         }
     }
 
@@ -76,9 +76,9 @@ fun LoginScreen(savedReg: String?, savedPass: String?, callback: AuthActionCallb
                     LoginFormView(savedReg, savedPass, state == AuthState.LOADING_SEMESTERS, callback)
                 }
                 AuthState.SELECT_SEMESTER, AuthState.DOWNLOADING_DATA -> {
-                    val sems = if (LoginBridge.fetchedSemesters.value.isEmpty()) {
+                    val sems = if (AuthStateManager.fetchedSemesters.value.isEmpty()) {
                         loadSemestersFromCache(context)
-                    } else LoginBridge.fetchedSemesters.value
+                    } else AuthStateManager.fetchedSemesters.value
 
                     SemesterPickerView(sems, state == AuthState.DOWNLOADING_DATA, callback)
                 }
@@ -95,7 +95,7 @@ fun LoginScreen(savedReg: String?, savedPass: String?, callback: AuthActionCallb
             Card(
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.error),
-                modifier = Modifier.padding(16.dp).fillMaxWidth(0.9f).clickable { LoginBridge.loginError.value = null }
+                modifier = Modifier.padding(16.dp).fillMaxWidth(0.9f).clickable { AuthStateManager.loginError.value = null }
             ) {
                 Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Warning, contentDescription = "Error", tint = Color.White)
@@ -105,10 +105,9 @@ fun LoginScreen(savedReg: String?, savedPass: String?, callback: AuthActionCallb
             }
         }
 
-        val otpResolver = AppBridge.currentOtpResolver.value
+        val otpResolver = AppState.currentOtpResolver.value
         if (otpResolver != null) {
 
-            // Check if we should prompt for Google Sign-In while they wait for the OTP
             var showGooglePrompt by remember {
                 mutableStateOf(com.vtop.utils.Vault.getGoogleEmail(context).isEmpty() && !com.vtop.utils.Vault.hasPromptedGoogleSignIn(context))
             }
@@ -124,15 +123,14 @@ fun LoginScreen(savedReg: String?, savedPass: String?, callback: AuthActionCallb
                     }
                 )
             } else {
-                // Only show the OTP form AFTER the dialog is dismissed or completed
                 OtpForm(
                     onVerify = { otp ->
                         otpResolver.submit(otp)
-                        AppBridge.currentOtpResolver.value = null
+                        AppState.currentOtpResolver.value = null
                     },
                     onCancel = {
                         otpResolver.cancel()
-                        AppBridge.currentOtpResolver.value = null
+                        AppState.currentOtpResolver.value = null
                     }
                 )
             }
@@ -162,7 +160,6 @@ private fun LoginFormView(savedReg: String?, savedPass: String?, isLoading: Bool
         modifier = Modifier.fillMaxWidth(0.85f),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Logo Header
         Box(
             modifier = Modifier
                 .size(64.dp)
@@ -188,7 +185,6 @@ private fun LoginFormView(savedReg: String?, savedPass: String?, isLoading: Bool
             unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
         )
 
-        // Username Field
         Column(modifier = Modifier.fillMaxWidth()) {
             Text("Username", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp, start = 2.dp))
             OutlinedTextField(
@@ -205,7 +201,6 @@ private fun LoginFormView(savedReg: String?, savedPass: String?, isLoading: Bool
 
         Spacer(Modifier.height(16.dp))
 
-        // Password Field
         Column(modifier = Modifier.fillMaxWidth()) {
             Text("Password", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp, start = 2.dp))
             OutlinedTextField(
@@ -233,11 +228,10 @@ private fun LoginFormView(savedReg: String?, savedPass: String?, isLoading: Bool
 
         Spacer(Modifier.height(32.dp))
 
-        // Primary Log In Button
         Button(
             onClick = {
-                LoginBridge.cachedRegNo = regNo
-                LoginBridge.cachedPassword = password
+                AuthStateManager.cachedRegNo = regNo
+                AuthStateManager.cachedPassword = password
                 callback.onLoginSubmit(regNo, password)
             },
             enabled = !isLoading && regNo.isNotBlank() && password.isNotBlank(),
@@ -284,7 +278,6 @@ private fun SemesterPickerView(semesters: List<Map<String, String>>, isDownloadi
         )
 
         if (isDownloading) {
-            // Wait state logic if any applies during download
             CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
