@@ -1,19 +1,6 @@
 package com.vtop.ui.screens.portal
 
-import android.annotation.SuppressLint
 import android.content.Context
-import android.graphics.Bitmap
-import android.net.http.SslError
-import android.os.Message
-import android.util.Log
-import android.view.ViewGroup
-import android.webkit.CookieManager
-import android.webkit.SslErrorHandler
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -35,30 +22,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import com.vtop.network.VtopClient
+import com.vtop.portal.PortalController
+import com.vtop.portal.PortalHost
 import com.vtop.portal.PortalSessionProvider
-import com.vtop.core.*
-import com.vtop.utils.NotificationHelper
-import com.vtop.utils.Vault
+import com.vtop.core.AppState
+import com.vtop.core.SessionManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.HttpUrl.Companion.toHttpUrl
-
-private const val VTOP_BASE = "https://vtop.vitap.ac.in"
-private const val VTOP_OPEN_PAGE = "$VTOP_BASE/vtop/open/page"
-private const val VTOP_CONTENT = "$VTOP_BASE/vtop/content"
-
-private const val DESKTOP_UA =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
-private const val MOBILE_UA =
-    "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Mobile Safari/537.36"
-
-private const val TAG = "PORTAL"
 
 @OptIn(ExperimentalMaterial3Api::class)
-@SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun VtopPortalScreen(
     vtopClient: VtopClient,
@@ -70,44 +44,15 @@ fun VtopPortalScreen(
     val scope = rememberCoroutineScope()
 
     var pageTitle by remember { mutableStateOf("VTOP") }
-    var isLoading by remember { mutableStateOf(false) }
-    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var isLoading by remember { mutableStateOf(true) }
     var sessionError by remember { mutableStateOf<String?>(null) }
-    var isWebViewReady by remember { mutableStateOf(false) }
-    var isInitialLoad by remember { mutableStateOf(true) }
+    var activeClient by remember { mutableStateOf<VtopClient?>(null) }
 
     val portalPreferences = remember { context.getSharedPreferences("vtop_portal_preferences", Context.MODE_PRIVATE) }
-    val sharedPrefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
-    val isParallel = remember { sharedPrefs.getBoolean("PARALLEL_PORTAL_SESSION", false) }
+    val isParallel = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE).getBoolean("PARALLEL_PORTAL_SESSION", false) }
 
-    var activeClient by remember { mutableStateOf(vtopClient) }
     var desktopMode by remember { mutableStateOf(portalPreferences.getBoolean("desktop_mode", true)) }
     var expandedMenu by remember { mutableStateOf(false) }
-
-    fun applyDesktopMode(webView: WebView?) {
-        if (webView == null) return
-        val settings = webView.settings
-        if (desktopMode) {
-            settings.userAgentString = DESKTOP_UA
-            settings.useWideViewPort = true
-            settings.loadWithOverviewMode = true
-            settings.layoutAlgorithm = WebSettings.LayoutAlgorithm.TEXT_AUTOSIZING
-            settings.builtInZoomControls = true
-            settings.displayZoomControls = false
-            settings.setSupportZoom(true)
-            webView.setInitialScale(1)
-        } else {
-            settings.userAgentString = MOBILE_UA
-            settings.useWideViewPort = false
-            settings.loadWithOverviewMode = false
-            settings.layoutAlgorithm = WebSettings.LayoutAlgorithm.NORMAL
-            settings.builtInZoomControls = true
-            settings.displayZoomControls = false
-            settings.setSupportZoom(true)
-            webView.setInitialScale(100)
-        }
-        webView.reload()
-    }
 
     suspend fun executeLoginFlow() {
         isLoading = true
@@ -116,60 +61,44 @@ fun VtopPortalScreen(
         val result = PortalSessionProvider.getOrCreateSession(
             context = context,
             isParallel = isParallel,
-            fallbackClient = activeClient,
+            fallbackClient = vtopClient,
             onStatusUpdate = { message ->
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                }
+                withContext(Dispatchers.Main) { Toast.makeText(context, message, Toast.LENGTH_SHORT).show() }
             },
             onOtpRequested = { resolver ->
-                withContext(Dispatchers.Main) {
-                    AppState.currentOtpResolver.value = resolver
-                }
+                withContext(Dispatchers.Main) { AppState.currentOtpResolver.value = resolver }
             }
         )
 
         result.onSuccess { client ->
-            activeClient = client
-            withContext(Dispatchers.Main) {
-                webViewRef?.syncCookies(activeClient)
-                if (isInitialLoad) isInitialLoad = false
-                webViewRef?.loadUrl(VTOP_OPEN_PAGE)
-            }
+            withContext(Dispatchers.Main) { activeClient = client }
         }.onFailure { error ->
-            sessionError = error.message ?: "Unknown error occurred"
+            withContext(Dispatchers.Main) { sessionError = error.message ?: "Unknown error occurred" }
         }
 
-        isLoading = false
+        withContext(Dispatchers.Main) { isLoading = false }
     }
 
-    LaunchedEffect(isParallel, isWebViewReady) {
-        if (!isWebViewReady) return@LaunchedEffect
-        Log.i(TAG, "Portal opened")
-
+    LaunchedEffect(Unit) {
         if (isParallel) {
-            val portalClient = com.vtop.core.SessionManager.getPortalClient()
+            val portalClient = SessionManager.getPortalClient()
             if (portalClient != null) {
-                Log.i(TAG, "Reusing Portal session")
                 activeClient = portalClient
-                webViewRef?.syncCookies(activeClient)
-                isInitialLoad = false
-                webViewRef?.loadUrl(VTOP_OPEN_PAGE)
             } else {
-                Log.i(TAG, "No Portal session found")
                 executeLoginFlow()
             }
         } else {
-            Log.i(TAG, "Using Sync session")
             activeClient = vtopClient
-            webViewRef?.syncCookies(activeClient)
-            isInitialLoad = false
-            webViewRef?.loadUrl(VTOP_OPEN_PAGE)
         }
     }
 
     if (sessionError != null) {
         VtopWebViewLoading(error = sessionError, onRetry = { scope.launch { executeLoginFlow() } })
+        return
+    }
+
+    if (activeClient == null) {
+        VtopWebViewLoading(error = null, onRetry = null)
         return
     }
 
@@ -186,16 +115,15 @@ fun VtopPortalScreen(
                         IconButton(onClick = { expandedMenu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "Menu") }
                         DropdownMenu(expanded = expandedMenu, onDismissRequest = { expandedMenu = false }) {
                             DropdownMenuItem(
-                                text = { Text(if (desktopMode) "Desktop Mode" else "Mobile Mode ") },
+                                text = { Text(if (desktopMode) "Mobile Mode" else "Desktop Mode") },
                                 onClick = {
                                     expandedMenu = false
                                     desktopMode = !desktopMode
                                     portalPreferences.edit().putBoolean("desktop_mode", desktopMode).apply()
-                                    applyDesktopMode(webViewRef)
-                                    Toast.makeText(context, if (desktopMode) "Mobile mode enabled" else "Desktop mode enabled", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, if (desktopMode) "Desktop mode enabled" else "Mobile mode enabled", Toast.LENGTH_SHORT).show()
                                 }
                             )
-                            DropdownMenuItem(text = { Text("Refresh") }, onClick = { expandedMenu = false; webViewRef?.reload() })
+                            DropdownMenuItem(text = { Text("Refresh") }, onClick = { expandedMenu = false; PortalController.reload() })
                             DropdownMenuItem(text = { Text("Force Refresh Session") }, onClick = { expandedMenu = false; scope.launch { executeLoginFlow() } })
                         }
                     }
@@ -205,153 +133,13 @@ fun VtopPortalScreen(
         }
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            AndroidView(
-                factory = { ctx ->
-                    WebView(ctx).apply {
-                        layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                        overScrollMode = WebView.OVER_SCROLL_ALWAYS
-                        isVerticalScrollBarEnabled = true
-                        isHorizontalScrollBarEnabled = true
-                        setOnTouchListener { view, _ -> view.parent?.requestDisallowInterceptTouchEvent(true); false }
 
-                        settings.apply {
-                            javaScriptEnabled = true
-                            domStorageEnabled = true
-                            databaseEnabled = true
-                            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                            javaScriptCanOpenWindowsAutomatically = true
-                            setSupportMultipleWindows(true)
-                            builtInZoomControls = true
-                            displayZoomControls = false
-                            setSupportZoom(true)
-
-                            if (desktopMode) {
-                                userAgentString = DESKTOP_UA
-                                useWideViewPort = true
-                                loadWithOverviewMode = true
-                                layoutAlgorithm = WebSettings.LayoutAlgorithm.TEXT_AUTOSIZING
-                            } else {
-                                userAgentString = MOBILE_UA
-                                useWideViewPort = false
-                                loadWithOverviewMode = false
-                                layoutAlgorithm = WebSettings.LayoutAlgorithm.NORMAL
-                            }
-                        }
-                        setInitialScale(if (desktopMode) 1 else 100)
-
-                        webChromeClient = object : WebChromeClient() {
-                            override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
-                                val newWebView = WebView(context)
-                                newWebView.webViewClient = object : WebViewClient() {
-                                    override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                                        webViewRef?.loadUrl(request?.url.toString())
-                                        return true
-                                    }
-                                }
-                                val transport = resultMsg?.obj as WebView.WebViewTransport
-                                transport.webView = newWebView
-                                resultMsg.sendToTarget()
-                                return true
-                            }
-                        }
-
-                        setDownloadListener { url, _, contentDisposition, mimeType, _ ->
-                            val fileName = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimeType)
-                            Toast.makeText(context, "Downloading $fileName...", Toast.LENGTH_SHORT).show()
-                            scope.launch(Dispatchers.IO) {
-                                try {
-                                    val request = okhttp3.Request.Builder().url(url).addHeader("Referer", VTOP_BASE).build()
-                                    val response = activeClient.client.newCall(request).execute()
-                                    val bytes = response.body?.bytes()
-
-                                    if (response.isSuccessful && bytes != null) {
-                                        val resolver = context.contentResolver
-                                        val values = android.content.ContentValues().apply {
-                                            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                                            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mimeType ?: "application/pdf")
-                                            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
-                                        }
-                                        val collection = if (android.os.Build.VERSION.SDK_INT >= 29) android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI else android.provider.MediaStore.Files.getContentUri("external")
-                                        val uri = resolver.insert(collection, values) ?: throw Exception("Failed creating download entry")
-                                        resolver.openOutputStream(uri)?.use { it.write(bytes) }
-
-                                        withContext(Dispatchers.Main) {
-                                            NotificationHelper.showDownloadNotificationFromUri(context = context, uri = uri, fileName = fileName, title = "Download Complete", description = "Tap to open $fileName")
-                                            Toast.makeText(context, "Saved to Downloads", Toast.LENGTH_SHORT).show()
-                                        }
-                                    } else {
-                                        withContext(Dispatchers.Main) { Toast.makeText(context, "Download rejected by server", Toast.LENGTH_SHORT).show() }
-                                    }
-                                } catch (e: Exception) {
-                                    withContext(Dispatchers.Main) { Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_LONG).show() }
-                                }
-                            }
-                        }
-
-                        webViewClient = object : WebViewClient() {
-                            override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) { isLoading = true }
-
-                            override fun onPageFinished(view: WebView, url: String?) {
-                                isLoading = false
-                                view.evaluateJavascript(
-                                    """
-                                    (function() {
-                                        document.documentElement.style.overflowY = 'auto';
-                                        document.body.style.overflowY = 'auto';
-                                        document.documentElement.style.height = 'auto';
-                                        document.body.style.height = 'auto';
-                                        var scrollContainers = document.querySelectorAll('.content-wrapper, .main-sidebar, .sidebar, .sidebar-menu');
-                                        scrollContainers.forEach(function(element) {
-                                            element.style.overflowY = 'auto';
-                                            element.style.maxHeight = 'none';
-                                            element.style.height = 'auto';
-                                            element.style.webkitOverflowScrolling = 'touch';
-                                        });
-                                    })();
-                                    """.trimIndent(), null
-                                )
-
-                                if (url?.contains("open/page") == true) {
-                                    val regNo = Vault.getCredentials(context)[0] ?: ""
-                                    val jsCode = """
-                                        (function() {
-                                            var csrfInput = document.querySelector('input[name="_csrf"]');
-                                            var token = csrfInput ? csrfInput.value : '';
-                                            if (token) {
-                                                var form = document.createElement('form');
-                                                form.method = 'POST';
-                                                form.action = '$VTOP_CONTENT';
-                                                form.innerHTML = '<input type="hidden" name="_csrf" value="'+token+'">' +
-                                                                 '<input type="hidden" name="authorizedID" value="$regNo">' +
-                                                                 '<input type="hidden" name="verifyMenu" value="true">' +
-                                                                 '<input type="hidden" name="nocache" value="'+(new Date().getTime())+'">';
-                                                document.body.appendChild(form);
-                                                form.submit();
-                                            }
-                                        })()
-                                    """.trimIndent()
-                                    view.evaluateJavascript(jsCode, null)
-                                } else if (url?.contains("content") == true) {
-                                    pageTitle = view.title?.take(30) ?: "VTOP Dashboard"
-                                } else if (url?.endsWith("vtop/login") == true || url?.contains("vtop/login/error") == true) {
-                                    Log.w(TAG, "Portal session expired")
-                                    scope.launch { executeLoginFlow() }
-                                }
-                            }
-
-                            @SuppressLint("WebViewClientOnReceivedSslError")
-                            override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) { handler?.proceed() }
-
-                            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                                return !request.url.toString().startsWith(VTOP_BASE)
-                            }
-                        }
-
-                        webViewRef = this
-                        post { isWebViewReady = true }
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
+            PortalHost(
+                activeClient = activeClient!!,
+                desktopMode = desktopMode,
+                onPageLoading = { isLoading = it },
+                onTitleUpdate = { pageTitle = it },
+                onSessionExpired = { scope.launch { executeLoginFlow() } }
             )
 
             AnimatedVisibility(visible = isLoading, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopCenter)) {
@@ -359,25 +147,6 @@ fun VtopPortalScreen(
             }
         }
     }
-}
-
-private fun WebView.syncCookies(vtopClient: VtopClient) {
-    val cookieManager = CookieManager.getInstance()
-    cookieManager.setAcceptCookie(true)
-    cookieManager.setAcceptThirdPartyCookies(this, true)
-    cookieManager.removeAllCookies(null)
-
-    val extractionUrl = "https://vtop.vitap.ac.in/vtop/login".toHttpUrl()
-    val cookies = vtopClient.client.cookieJar.loadForRequest(extractionUrl)
-
-    Log.i(TAG, "Synchronizing ${cookies.size} cookies")
-    val targetUrl = "https://vtop.vitap.ac.in/vtop"
-    cookies.forEach { cookie ->
-        val cookieStr = "${cookie.name}=${cookie.value}; Domain=.vitap.ac.in; Path=/vtop; Secure"
-        cookieManager.setCookie(targetUrl, cookieStr)
-    }
-    cookieManager.flush()
-    Log.i(TAG, "Cookie synchronization complete")
 }
 
 @Composable

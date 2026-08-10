@@ -111,7 +111,7 @@ fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
 
     val statusColor = when {
         percentage < 75 -> MaterialTheme.colorScheme.error
-        percentage < 85 -> Color(0xFFF59E0B) // Warning Amber
+        percentage < 80 -> Color(0xFFF59E0B) // Warning Amber
         else -> Color(0xFF4CAF50) // Success Green
     }
 

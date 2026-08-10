@@ -4,9 +4,6 @@ import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingWorkPolicy
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.vtop.core.EventBus
 import com.vtop.core.AppEvent
@@ -15,7 +12,6 @@ import com.vtop.core.SessionType
 import com.vtop.core.ExamsRepository
 import com.vtop.core.MarksRepository
 import com.vtop.core.OutingsRepository
-import com.vtop.core.SemesterRepository
 import com.vtop.network.VtopClient
 import com.vtop.network.VtopException
 import com.vtop.utils.*

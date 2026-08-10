@@ -95,6 +95,7 @@ import androidx.compose.ui.unit.sp
 import com.vtop.models.*
 import com.vtop.network.FacultyScraper
 import com.vtop.core.CourseReminder
+import com.vtop.core.FacultyStorage
 import com.vtop.core.ReminderManager
 import com.vtop.utils.*
 import kotlinx.coroutines.delay
@@ -476,10 +477,9 @@ fun Timetable(
 
         AnimatedVisibility(
             visible = showJumpToToday, enter = fadeIn() + slideInVertically { it }, exit = fadeOut() + slideOutVertically { it },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = 100.dp)
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 100.dp)
         ) {
             Button(
-                // FIX: Removed the + 1 offset here too
                 onClick = { coroutineScope.launch { listState.animateScrollToItem(todayIndex) } },
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onSurface),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), shape = RoundedCornerShape(20.dp), elevation = ButtonDefaults.buttonElevation(8.dp)
