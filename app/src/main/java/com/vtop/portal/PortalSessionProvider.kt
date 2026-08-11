@@ -13,6 +13,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 object PortalSessionProvider {
     private const val TAG = "PORTAL_SESSION"
@@ -31,7 +32,7 @@ object PortalSessionProvider {
         fallbackClient: VtopClient,
         onStatusUpdate: suspend (String) -> Unit,
         onOtpRequested: suspend (VtopClient.OtpResolver) -> Unit
-    ): Result<VtopClient> {
+    ): Result<VtopClient> = withContext(Dispatchers.IO) { // <-- MOVED ENTIRE FLOW TO IO THREAD
         loginMutex.withLock {
             try {
                 val authenticatingClient = if (isParallel) {
@@ -53,7 +54,12 @@ object PortalSessionProvider {
                         loginSuccess = authenticatingClient.autoLogin(
                             context,
                             object : VtopClient.LoginListener {
-                                override fun onStatusUpdate(message: String) {}
+                                override fun onStatusUpdate(message: String) {
+                                    // Safely bounce status updates back to the UI thread
+                                    kotlinx.coroutines.GlobalScope.launch(Dispatchers.Main) {
+                                        onStatusUpdate(message)
+                                    }
+                                }
 
                                 override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
                                     Log.i(TAG, "OTP requested")
@@ -89,6 +95,7 @@ object PortalSessionProvider {
                         )
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
+                        Log.e(TAG, "Login attempt failed", e)
                         loginSuccess = false
                     }
 
@@ -107,15 +114,15 @@ object PortalSessionProvider {
                         Log.i(TAG, "Registering Portal session")
                         SessionManager.setPortalClient(authenticatingClient)
                     }
-                    return Result.success(authenticatingClient)
+                    return@withContext Result.success(authenticatingClient)
                 } else {
                     Log.w(TAG, "Portal login failed after all retries")
-                    return Result.failure(Exception("Failed to bypass Captcha after 3 attempts or OTP cancelled. Please retry."))
+                    return@withContext Result.failure(Exception("Failed to bypass Captcha after 3 attempts or OTP cancelled. Please retry."))
                 }
 
             } catch (e: Exception) {
                 Log.e(TAG, "Portal login exception", e)
-                return Result.failure(e)
+                return@withContext Result.failure(e)
             }
         }
     }

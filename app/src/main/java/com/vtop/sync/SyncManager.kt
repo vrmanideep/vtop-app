@@ -38,7 +38,7 @@ object SyncManager {
         EventBus.tryEmit(AppEvent.SyncStatusChanged("IDLE"))
     }
 
-    suspend fun performSync(context: Context, priorityTab: String? = null, forceNewSession: Boolean = false) {
+    suspend fun performSync(context: Context, priorityTab: String? = null, forceNewSession: Boolean = false, targetSemId: String? = null) {
         if (_isSyncing.value) {
             Log.w(TAG, "performSync ignored: already syncing")
             return
@@ -142,7 +142,7 @@ object SyncManager {
                 client.setAuthorizedId(authorizedId)
 
                 val semInfo = Vault.getSelectedSemester(context)
-                val semId = semInfo[0] ?: ""
+                val semId = targetSemId ?: semInfo[0] ?: ""
                 val showOutings = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE).getBoolean("SHOW_OUTINGS", true)
 
                 suspend fun updateStatus(msg: String) {
@@ -166,6 +166,7 @@ object SyncManager {
                             val profileHtml = client.fetchProfileRawHtml(null)
                             ProfileRepository.update(context, ProfileParser.parse(profileHtml))
                         }
+                        "CALENDAR" -> { updateStatus("Syncing Calendar..."); syncCalendar(context, client, semId) }
                     }
                 }
 
@@ -183,7 +184,15 @@ object SyncManager {
                         val profileHtml = client.fetchProfileRawHtml(null)
                         ProfileRepository.update(context, ProfileParser.parse(profileHtml))
                     }
+                    if (priority != "CALENDAR") {
+                        val existingCalendar = Vault.getAcademicCalendar(context, semId)
+                        if (existingCalendar.isEmpty()) {
+                            updateStatus("Fetching Academic Calendar...")
+                            syncCalendar(context, client, semId)
+                        }
+                    }
                 }
+
 
                 updateStatus("Finishing up...")
                 Vault.saveLastSyncTime(context)
@@ -248,6 +257,35 @@ object SyncManager {
             val weekHtml = client.fetchWeekendOutingRawHtml(authorizedId, null)
             val allOutings = OutingParser.parseGeneral(genHtml ?: "") + OutingParser.parseWeekend(weekHtml ?: "")
             OutingsRepository.update(context, allOutings)
+        }
+    }
+
+    private suspend fun syncCalendar(context: Context, client: VtopClient, semId: String) {
+        TelemetryTracer.trace("Calendar", TelemetryModule.SYNC) {
+            val semestersHtml = client.fetchCalendarSemestersRawHtml()
+            val fetchedSems = AcademicCalendarParser.parseSemesters(semestersHtml)
+            if (fetchedSems.isNotEmpty()) {
+                Vault.saveCalendarSemesterOptions(context, fetchedSems)
+            }
+
+            val monthsHtml = client.fetchCalendarMonthsRawHtml(semId, "ALL")
+            val availableDates = AcademicCalendarParser.parseMonths(monthsHtml)
+
+            if (availableDates.isNotEmpty()) {
+                val allEvents = mutableListOf<com.vtop.models.AcademicCalendarEvent>()
+                availableDates.forEachIndexed { index, dateStr ->
+                    EventBus.emit(AppEvent.SyncStatusChanged("Syncing Calendar (Month ${index + 1} of ${availableDates.size})..."))
+                    val html = client.fetchCalendarRawHtml(semId, dateStr, "ALL")
+                    if (!html.isNullOrBlank()) {
+                        val monthlyEvents = CalendarParser.parseCalendarHtml(html)
+                        allEvents.addAll(monthlyEvents)
+                    }
+                    kotlinx.coroutines.delay(250L) // WAF breather
+                }
+                if (allEvents.isNotEmpty()) {
+                    CalendarRepository.update(context, semId, allEvents)
+                }
+            }
         }
     }
 }

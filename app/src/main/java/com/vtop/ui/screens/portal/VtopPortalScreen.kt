@@ -115,12 +115,12 @@ fun VtopPortalScreen(
                         IconButton(onClick = { expandedMenu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "Menu") }
                         DropdownMenu(expanded = expandedMenu, onDismissRequest = { expandedMenu = false }) {
                             DropdownMenuItem(
-                                text = { Text(if (desktopMode) "Mobile Mode" else "Desktop Mode") },
+                                text = { Text(if (desktopMode) "Desktop Mode" else "Mobile Mode") },
                                 onClick = {
                                     expandedMenu = false
                                     desktopMode = !desktopMode
                                     portalPreferences.edit().putBoolean("desktop_mode", desktopMode).apply()
-                                    Toast.makeText(context, if (desktopMode) "Desktop mode enabled" else "Mobile mode enabled", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, if (desktopMode) "Mobile mode enabled" else "Desktop mode enabled", Toast.LENGTH_SHORT).show()
                                 }
                             )
                             DropdownMenuItem(text = { Text("Refresh") }, onClick = { expandedMenu = false; PortalController.reload() })

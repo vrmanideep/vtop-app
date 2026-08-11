@@ -22,6 +22,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -114,7 +116,7 @@ fun MainScreen(
     }
 
     var navStyle by remember { mutableStateOf(Vault.getNavStyle(context).takeIf { it.isNotBlank() } ?: "STATIC") }
-    val reminders by remember { mutableStateOf(ReminderManager.loadReminders(context)) }
+    var reminders by remember { mutableStateOf(ReminderManager.loadReminders(context)) }
 
     var showOutings by remember { mutableStateOf(sharedPrefs.getBoolean("SHOW_OUTINGS", true)) }
     var mergeLabs by remember { mutableStateOf(sharedPrefs.getBoolean("MERGE_LABS", true)) }
@@ -133,9 +135,19 @@ fun MainScreen(
 
     var currentTab by rememberSaveable { mutableStateOf(navItems[initialPage]) }
     var isProfileSubPage by rememberSaveable { mutableStateOf(false) }
+
     var isForceAttendanceSyncing by remember { mutableStateOf(false) }
+    var isForceTimetableSyncing by remember { mutableStateOf(false) }
+    var showPortal by rememberSaveable { mutableStateOf(false) }
 
     val coroutineScope = rememberCoroutineScope()
+
+    // Reload reminders when entering the profile tab to ensure it's up to date
+    LaunchedEffect(currentTab) {
+        if (currentTab == "PROFILE") {
+            reminders = ReminderManager.loadReminders(context)
+        }
+    }
 
     val handleSyncAndUpdateWidget = { screen: String, forceNewSession: Boolean ->
         onSyncClick(screen, forceNewSession)
@@ -144,7 +156,15 @@ fun MainScreen(
         }
         Unit
     }
-    BackHandler(enabled = currentTab != "HOME" && !isProfileSubPage) { currentTab = "HOME" }
+
+    // Updated BackHandler to manage the Portal overlay first
+    BackHandler(enabled = showPortal || (currentTab != "HOME" && !isProfileSubPage)) {
+        if (showPortal) {
+            showPortal = false
+        } else {
+            currentTab = "HOME"
+        }
+    }
 
     val config = LocalConfiguration.current
     val density = LocalDensity.current
@@ -195,7 +215,7 @@ fun MainScreen(
                             onBack = { currentTab = "HOME" },
                             timetable = timetable,
                             examsData = examsData,
-                            onOpenPortal = { navController.navigate("portal") },
+                            onOpenPortal = { showPortal = true },
                             currentTheme = ThemeManager.themeMode.value,
                             onThemeChange = { ThemeManager.themeMode.value = it },
                             useDynamicColor = ThemeManager.useDynamicColor.value,
@@ -223,7 +243,12 @@ fun MainScreen(
                             currentPass = Vault.getCredentials(context)[1] ?: "",
                             onCredentialsSave = { _, _ -> },
                             reminders = reminders,
-                            onDeleteReminder = {},
+                            onDeleteReminder = { id ->
+                                val updated = reminders.filter { it.id != id }
+                                ReminderManager.saveReminders(context, updated)
+                                reminders = updated
+                                Toast.makeText(context, "Reminder deleted", Toast.LENGTH_SHORT).show()
+                            },
                             lastSyncTime = Vault.getLastSyncTimestamp(context).toString(),
                             onSyncClick = { handleSyncAndUpdateWidget(currentTab, it) },
                             onForceAttendanceSync = {
@@ -279,6 +304,52 @@ fun MainScreen(
                                 }
                             },
                             isForceAttendanceSyncing = isForceAttendanceSyncing,
+                            onForceTimetableSync = {
+                                if (AppState.syncStatus.value != "IDLE") {
+                                    Toast.makeText(context, "A sync is currently running. Please wait.", Toast.LENGTH_SHORT).show()
+                                    return@Profile
+                                }
+
+                                val client = SessionManager.getSyncClient()
+                                if (client == null) {
+                                    Toast.makeText(context, "Session expired. Please perform a normal sync first.", Toast.LENGTH_SHORT).show()
+                                    return@Profile
+                                }
+
+                                val semId = Vault.getSelectedSemester(context)[0] ?: ""
+                                if (semId.isBlank()) {
+                                    Toast.makeText(context, "Missing student information. Please sync first.", Toast.LENGTH_SHORT).show()
+                                    return@Profile
+                                }
+
+                                isForceTimetableSyncing = true
+
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    try {
+                                        val html = client.fetchTimetableRawHtml(semId, null)
+                                        if (!html.isNullOrBlank()) {
+                                            val data = com.vtop.logic.TimetableParser.parse(html)
+                                            com.vtop.core.TimetableRepository.update(context, data)
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, "Timetable synced successfully", Toast.LENGTH_SHORT).show()
+                                            }
+                                        } else {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, "Failed to retrieve timetable data", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    } catch (e: Exception) {
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "Timetable sync failed", Toast.LENGTH_SHORT).show()
+                                        }
+                                    } finally {
+                                        withContext(Dispatchers.Main) {
+                                            isForceTimetableSyncing = false
+                                        }
+                                    }
+                                }
+                            },
+                            isForceTimetableSyncing = isForceTimetableSyncing,
                             vtopClient = vtopClient
                         )
                     }
@@ -293,6 +364,7 @@ fun MainScreen(
                 currentScreen = currentTab,
                 onProfileClick = { coroutineScope.launch { currentTab = "PROFILE" } },
                 isProfileSubPage = isProfileSubPage,
+                onOpenPortal = { showPortal = true },
                 onExportTimetable = {
                     coroutineScope.launch {
                         try {
@@ -376,6 +448,24 @@ fun MainScreen(
                 )
             }
         }
+
+        // --- SUB-SCREEN PORTAL OVERLAY ---
+        AnimatedVisibility(
+            visible = showPortal,
+            enter = fadeIn(tween(150)) + slideInVertically(tween(300)) { it / 8 },
+            exit = fadeOut(tween(150)) + slideOutVertically(tween(300)) { it / 8 },
+            modifier = Modifier.fillMaxSize().zIndex(50f)
+        ) {
+            val vtopClient = SessionManager.getSyncClient()
+            if (vtopClient != null) {
+                com.vtop.ui.screens.portal.VtopPortalScreen(vtopClient = vtopClient, onBack = { showPortal = false })
+            } else {
+                LaunchedEffect(Unit) { handleSyncAndUpdateWidget("PORTAL", true) }
+                Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
+                    Text("Preparing VTOP session...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
     }
 }
 
@@ -393,7 +483,7 @@ fun SemesterCompletedView() {
 }
 
 @Composable
-fun GlobalTopBar(currentScreen: String, onProfileClick: () -> Unit, onExportTimetable: () -> Unit = {}, isProfileSubPage: Boolean) {
+fun GlobalTopBar(currentScreen: String, onProfileClick: () -> Unit, onExportTimetable: () -> Unit = {}, onOpenPortal: () -> Unit = {}, isProfileSubPage: Boolean) {
     if (isProfileSubPage) return
     val context = LocalContext.current
     val syncStatus by AppState.syncStatus
@@ -444,6 +534,9 @@ fun GlobalTopBar(currentScreen: String, onProfileClick: () -> Unit, onExportTime
                             Icon(imageVector = Lucide.ArrowDownToLine, contentDescription = "Export Timetable", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
+                    IconButton(onClick = onOpenPortal, modifier = Modifier.padding(end = 8.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f), CircleShape)) {
+                        Icon(imageVector = Lucide.Globe, contentDescription = "Open VTOP", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     IconButton(onClick = onProfileClick, modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f), CircleShape)) {
                         Icon(imageVector = Lucide.User, contentDescription = "Profile", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -452,7 +545,6 @@ fun GlobalTopBar(currentScreen: String, onProfileClick: () -> Unit, onExportTime
         }
     }
 }
-
 @Composable
 fun BottomNavigation(currentTab: String, availableTabs: List<String>, onSelect: (String) -> Unit) {
     val allTabs = listOf(

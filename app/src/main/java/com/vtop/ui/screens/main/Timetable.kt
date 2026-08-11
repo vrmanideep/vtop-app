@@ -77,6 +77,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
@@ -86,6 +88,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -280,12 +283,27 @@ fun Timetable(
         }.coerceAtLeast(0)
     }
 
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = todayIndex)
+    val density = LocalDensity.current
 
-    // FIX: Removed the + 1 offset since the NextClassCard is no longer item 0 in the list
-    LaunchedEffect(todayIndex) {
-        if (todayIndex >= 0) {
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = todayIndex
+    )
+
+    var pinnedBottomPx by remember { mutableStateOf<Int?>(null) }
+    var initialPositionAdjusted by remember { mutableStateOf(false) }
+
+    val dynamicTopPadding = with(density) {
+        ((pinnedBottomPx ?: 0) + 12.dp.roundToPx()).toDp()
+    }
+
+    LaunchedEffect(todayIndex, pinnedBottomPx) {
+        if (
+            todayIndex >= 0 &&
+            pinnedBottomPx != null &&
+            !initialPositionAdjusted
+        ) {
             listState.scrollToItem(todayIndex)
+            initialPositionAdjusted = true
         }
     }
 
@@ -384,8 +402,10 @@ fun Timetable(
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            // Adjusted padding slightly to guarantee clearance
-            contentPadding = PaddingValues(top = 210.dp, bottom = 120.dp),
+            contentPadding = PaddingValues(
+                top = dynamicTopPadding,
+                bottom = 120.dp
+            ),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -460,10 +480,14 @@ fun Timetable(
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 80.dp) // Sit directly below the standard global TopBar
+                .padding(top = 80.dp)
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.background) // Masks the scrolling items underneath cleanly
-                .padding(top = 16.dp, bottom = 12.dp),
+                .background(MaterialTheme.colorScheme.background)
+                .padding(top = 16.dp, bottom = 12.dp)
+                .onGloballyPositioned { coordinates ->
+                    pinnedBottomPx =
+                        (coordinates.positionInRoot().y + coordinates.size.height).toInt()
+                },
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             NextClassCard(
@@ -800,8 +824,8 @@ fun TimetableRow(
             .clickable { onExpandToggle() }
     ) {
         if (isExpanded) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
+            Column(modifier = Modifier.padding(vertical = 12.dp)) {
+                Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
                     Row(verticalAlignment = Alignment.Bottom) {
                         Text(dateCal.get(Calendar.DAY_OF_MONTH).toString(), fontSize = 24.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
                         Spacer(Modifier.width(6.dp))
@@ -811,10 +835,11 @@ fun TimetableRow(
                 }
                 Spacer(Modifier.height(12.dp))
                 if (mergedCourses.isEmpty()) {
-                    Text("No Classes 🎉", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp, horizontal = 8.dp))
+                    Text("No Classes 🎉", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp, horizontal = 12.dp))
                 } else {
                     LazyRow(
                         modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 12.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
                     ) {
                         itemsIndexed(mergedCourses) { index, course ->
@@ -824,7 +849,8 @@ fun TimetableRow(
                     }
                 }
             }
-        } else {
+        }
+        else {
             Column(modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp, horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -927,7 +953,7 @@ fun CourseDetailsSheet(
             var showDatePicker by remember { mutableStateOf(false) }
             var syllabus by remember(course.classId, editingReminderId) { mutableStateOf(reminderToEdit?.syllabus ?: "") }
 
-            Text("TYPE", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Text("Type", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             Spacer(Modifier.height(6.dp))
             Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
                 predefinedTypes.forEach { type ->
@@ -939,21 +965,30 @@ fun CourseDetailsSheet(
             }
             if (selectedType == "Others") {
                 Spacer(Modifier.height(12.dp))
-                OutlinedTextField(value = customType, onValueChange = { customType = it }, label = { Text("Custom Type", color = MaterialTheme.colorScheme.onSurfaceVariant) }, colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = themePrimary, unfocusedBorderColor = MaterialTheme.colorScheme.outline, focusedTextColor = MaterialTheme.colorScheme.onSurface, unfocusedTextColor = MaterialTheme.colorScheme.onSurface), modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(
+                    value = customType,
+                    onValueChange = { customType = it },
+                    label = { Text("Custom Type", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = themePrimary, unfocusedBorderColor = MaterialTheme.colorScheme.outline, focusedTextColor = MaterialTheme.colorScheme.onSurface, unfocusedTextColor = MaterialTheme.colorScheme.onSurface),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp)
+                )
             }
             Spacer(Modifier.height(16.dp))
-            Text("DATE", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Text("Date", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             Spacer(Modifier.height(6.dp))
 
             Card(
                 modifier = Modifier.fillMaxWidth().clickable { showDatePicker = true },
+                shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(containerColor = getPremiumSurfaceColor()),
                 border = BorderStroke(1.dp, getPremiumBorderColor())
             ) {
                 Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.DateRange, null, tint = themePrimary)
                     Spacer(Modifier.width(12.dp))
-                    Text(selectedDate, color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    Text(formatReminderDate(selectedDate), color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Medium)
                 }
             }
             if (showDatePicker) {
@@ -965,9 +1000,16 @@ fun CourseDetailsSheet(
                 ) { DatePicker(state = datePickerState) }
             }
             Spacer(Modifier.height(16.dp))
-            Text("SYLLABUS / NOTES", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Text("Syllabus", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             Spacer(Modifier.height(6.dp))
-            OutlinedTextField(value = syllabus, onValueChange = { syllabus = it }, modifier = Modifier.fillMaxWidth().height(100.dp), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = themePrimary, unfocusedBorderColor = MaterialTheme.colorScheme.outline, focusedTextColor = MaterialTheme.colorScheme.onSurface, unfocusedTextColor = MaterialTheme.colorScheme.onSurface), placeholder = { Text("Modules, topics, or notes...", color = MaterialTheme.colorScheme.onSurfaceVariant) })
+            OutlinedTextField(
+                value = syllabus,
+                onValueChange = { syllabus = it },
+                modifier = Modifier.fillMaxWidth().height(100.dp),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = themePrimary, unfocusedBorderColor = MaterialTheme.colorScheme.outline, focusedTextColor = MaterialTheme.colorScheme.onSurface, unfocusedTextColor = MaterialTheme.colorScheme.onSurface),
+                placeholder = { Text("Modules, topics, or notes...", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                shape = RoundedCornerShape(12.dp)
+            )
             Spacer(Modifier.height(24.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(onClick = { isEditingReminder = false }, modifier = Modifier.weight(1f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = getPremiumSurfaceColor()), shape = RoundedCornerShape(12.dp)) {

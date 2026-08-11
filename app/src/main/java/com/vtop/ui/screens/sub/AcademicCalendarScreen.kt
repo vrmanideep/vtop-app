@@ -100,7 +100,8 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                 try {
                     val client = SessionManager.getSyncClient()
                     if (client != null) {
-                        val fetched = client.fetchCalendarSemesters().toList()
+                        val html = client.fetchCalendarSemestersRawHtml()
+                        val fetched = com.vtop.logic.AcademicCalendarParser.parseSemesters(html).toList()
                         if (fetched.isNotEmpty()) {
                             Vault.saveCalendarSemesterOptions(context, fetched)
                             withContext(Dispatchers.Main) { availableSemesters = fetched }
@@ -164,7 +165,8 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                 val client = SessionManager.getSyncClient()!!
 
                 // 2. FETCH CALENDAR DATA
-                val availableDates = client.fetchCalendarMonths(semIdToFetch, "ALL")
+                val monthsHtml = client.fetchCalendarMonthsRawHtml(semIdToFetch, "ALL")
+                val availableDates = com.vtop.logic.AcademicCalendarParser.parseMonths(monthsHtml)
 
                 if (availableDates.isNotEmpty()) {
                     withContext(Dispatchers.Main) { syncTotalSteps = availableDates.size }

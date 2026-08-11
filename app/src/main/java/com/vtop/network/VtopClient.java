@@ -525,12 +525,9 @@ public class VtopClient {
             return res != null;
         } catch (Exception e) { return false; }
     }
-    public List<com.vtop.models.SemesterOption> fetchCalendarSemesters() {
-        List<com.vtop.models.SemesterOption> list = new ArrayList<>();
+    public String fetchCalendarSemestersRawHtml() {
         try {
-            Log.d(TAG, "[CALENDAR] Fetching dedicated semester list...");
-
-            // Fire Step 1 to prime the menu and get the HTML
+            Log.d(TAG, "[CALENDAR] Fetching dedicated semester list HTML...");
             RequestBody previewBody = new FormBody.Builder()
                     .add("verifyMenu", "true")
                     .add("authorizedID", authorizedId)
@@ -538,93 +535,29 @@ public class VtopClient {
                     .add("nocache", "@(new Date().getTime())")
                     .build();
 
-            String html = executeWafFetch("/academics/common/CalendarPreview", previewBody, "/content?");
-
-            if (html != null) {
-                // Regex targeting the option tags directly
-                Matcher m = Pattern.compile("<option\\s+value=\"([^\"]+)\"[^>]*>([^<]+)</option>").matcher(html);
-                while (m.find()) {
-                    String id = m.group(1);
-                    String name = m.group(2);
-
-                    if (name != null && !name.toLowerCase().contains("choose") && !id.trim().isEmpty() && !id.trim().equals("COMB")) {
-
-                        // Clean the name and strip " - AMR" from the end if it exists
-                        String cleanName = name.trim().replaceAll("(?i)\\s*-\\s*AMR$", "");
-
-                        list.add(new com.vtop.models.SemesterOption(id.trim(), cleanName));
-                    }
-                }
-                Log.d(TAG, "[CALENDAR] Found " + list.size() + " dedicated calendar semesters.");
-            }
+            return executeWafFetch("/academics/common/CalendarPreview", previewBody, "/content?");
         } catch (Exception e) {
-            Log.e(TAG, "Failed to fetch calendar semesters", e);
+            Log.e(TAG, "Failed to fetch calendar semesters HTML", e);
+            return null;
         }
-        return list;
     }
-    public List<String> fetchCalendarMonths(
-            String semId,
-            String classGroupId
-    ) {
 
-        List<String> months = new ArrayList<>();
-
+    public String fetchCalendarMonthsRawHtml(String semId, String classGroupId) {
         try {
+            RequestBody body = new FormBody.Builder()
+                    .add("_csrf", csrfToken)
+                    .add("paramReturnId", "getListForSemester")
+                    .add("semSubId", semId)
+                    .add("classGroupId", classGroupId)
+                    .add("authorizedID", authorizedId)
+                    .add("x", getGmtTimestamp())
+                    .build();
 
-            RequestBody body =
-                    new FormBody.Builder()
-                            .add("_csrf", csrfToken)
-                            .add("paramReturnId", "getListForSemester")
-                            .add("semSubId", semId)
-                            .add("classGroupId", classGroupId)
-                            .add("authorizedID", authorizedId)
-                            .add("x", getGmtTimestamp())
-                            .build();
-
-            String html =
-                    executeWafFetch(
-                            "/getListForSemester",
-                            body,
-                            "/content?"
-                    );
-
-            if (html == null) {
-                return months;
-            }
-
-            Matcher matcher =
-                    Pattern.compile(
-                            "processViewCalendar\\(&#39;([A-Z0-9\\-]+)&#39;\\)"
-                    ).matcher(html);
-
-            while (matcher.find()) {
-
-                String month = matcher.group(1);
-
-                Log.d(
-                        TAG,
-                        "CALENDAR MONTH: " + month
-                );
-
-                months.add(month);
-            }
-
-            Log.d(
-                    TAG,
-                    "Calendar Months Found: "
-                            + months.size()
-            );
-
+            return executeWafFetch("/getListForSemester", body, "/content?");
         } catch (Exception e) {
-
-            Log.e(
-                    TAG,
-                    "Month extraction failed",
-                    e
-            );
+            Log.e(TAG, "Month HTML fetch failed", e);
+            return null;
         }
-
-        return months;
     }
     public String fetchCalendarRawHtml(
             String semId,

@@ -189,6 +189,8 @@ fun Profile(
     onSyncClick: (Boolean) -> Unit,
     onForceAttendanceSync: () -> Unit,
     isForceAttendanceSyncing: Boolean,
+    onForceTimetableSync: () -> Unit,
+    isForceTimetableSyncing: Boolean,
     vtopClient: VtopClient?
 ) {
     LaunchedEffect(Unit) {
@@ -277,7 +279,7 @@ fun Profile(
     var autoSyncInterval by remember { mutableIntStateOf(sharedPrefs.getInt("AUTO_SYNC_INTERVAL", 8)) }
     var keepPortalResponsiveDuringSync by remember { mutableStateOf(sharedPrefs.getBoolean("PARALLEL_PORTAL_SESSION", false)) }
     var syncDropdownExpanded by remember { mutableStateOf(false) }
-    val syncOptions = mapOf(0 to "None", 1 to "1 hr", 2 to "2 hrs", 4 to    "4 hrs", 8 to "8 hrs")
+    val syncOptions = mapOf(0 to "None", 1 to "1 hr", 2 to "2 hrs", 4 to "4 hrs", 8 to "8 hrs")
 
     when (currentPage) {
         ProfilePage.MAIN -> {
@@ -347,7 +349,7 @@ fun Profile(
                             Box(
                                 modifier = Modifier
                                     .size(56.dp)
-                                    .background(Color(0xFF4B23D6), CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary, CircleShape)
                                     .clickable {
                                         heroTapCount++
                                         if (heroTapCount >= 5) {
@@ -360,7 +362,7 @@ fun Profile(
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(initial, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                                Text(initial, color = MaterialTheme.colorScheme.onPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                             }
 
                             Spacer(Modifier.width(16.dp))
@@ -486,9 +488,6 @@ fun Profile(
                 ProfileListItem(Lucide.UserCog, "Account", "Credentials, Semester") { activeSheet = ProfileSheet.ACCOUNT }
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 24.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
 
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 24.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 24.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-
                 ProfileListItem(Lucide.CalendarDays, "Calendar & Reminders", "${reminders.size} active reminders") { activeSheet = ProfileSheet.CALENDAR }
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 24.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
 
@@ -532,8 +531,22 @@ fun Profile(
                             ProfileSheet.SYNC -> {
                                 Text("Sync Settings", fontSize = 20.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurface)
                                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), modifier = Modifier.padding(vertical = 8.dp))
-                                SettingRow("Force Sync Timetable", "Update schedule and marks", "Sync Now") { activeSheet = ProfileSheet.NONE; onSyncClick(false) }
-                                SettingRow("Force Sync Attendance", "Fetch complete history", if (isForceAttendanceSyncing) "Syncing..." else "Sync") { if(!isForceAttendanceSyncing) onForceAttendanceSync() }
+
+                                SettingRow("Force Sync Timetable", "Update schedule and marks", if (isForceTimetableSyncing) "Syncing..." else "Sync Now") {
+                                    if (!isForceTimetableSyncing) {
+                                        android.util.Log.d("PROFILE_SYNC", "Force Sync Timetable requested by user")
+                                        Toast.makeText(context, "Timetable sync started...", Toast.LENGTH_SHORT).show()
+                                        onForceTimetableSync()
+                                    }
+                                }
+
+                                SettingRow("Force Sync Attendance", "Fetch complete history", if (isForceAttendanceSyncing) "Syncing..." else "Sync Now") {
+                                    if (!isForceAttendanceSyncing) {
+                                        android.util.Log.d("PROFILE_SYNC", "Force Sync Attendance requested by user")
+                                        Toast.makeText(context, "Attendance sync started...", Toast.LENGTH_SHORT).show()
+                                        onForceAttendanceSync()
+                                    }
+                                }
 
                                 Row(modifier = Modifier.fillMaxWidth().clickable { syncDropdownExpanded = true }.padding(horizontal = 24.dp, vertical = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                     Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
