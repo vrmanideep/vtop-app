@@ -426,7 +426,12 @@ class NextClassWidget : GlanceAppWidget() {
                     Text("Ongoing Class", style = TextStyle(color = ColorProvider(day = Color(0xFF4ADE80), night = Color(0xFF4ADE80)), fontSize = 12.sp, fontWeight = FontWeight.Bold))
                     Text(text = "Ends at ${formatDisplayTime(context, course.mergedTimeSlot, getEnd = true)}", style = TextStyle(color = textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold))
                 } else {
-                    Text("Upcoming Class", style = TextStyle(color = ColorProvider(day = Color(0xFFF87171), night = Color(0xFFF87171)), fontSize = 12.sp, fontWeight = FontWeight.Bold))
+                    Text("Upcoming Class", style = TextStyle(color = ColorProvider(day = Color(
+                        0xFF4CAF50
+                    ), night = Color(
+                        0xFF4CAF50
+                    )
+                    ), fontSize = 12.sp, fontWeight = FontWeight.Bold))
                     Text(text = "Starts at ${formatDisplayTime(context, course.mergedTimeSlot)}", style = TextStyle(color = textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold))
                 }
             }

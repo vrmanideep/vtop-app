@@ -386,9 +386,13 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
 
                     if (activeOutings.isEmpty() && pastOutings.isEmpty()) {
                         item {
-                            Column(modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 80.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .fillParentMaxHeight(0.7f), // Forces it to take up most of the screen so dragging works
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
                                 Icon(Icons.Default.CalendarMonth, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
                                 Spacer(Modifier.height(16.dp))
                                 Text("No outings yet this semester", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, fontSize = 16.sp)

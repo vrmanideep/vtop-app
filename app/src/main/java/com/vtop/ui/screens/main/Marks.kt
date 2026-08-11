@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -56,6 +57,8 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.zip.GZIPOutputStream
 import kotlin.math.roundToInt
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.platform.LocalConfiguration
 
 private val MarksPrimaryAccent = Color(0xFF0090FF)
 private val MarksColorSuccess = Color(0xFF4ADE80)
@@ -310,7 +313,14 @@ fun Marks(
 @Composable
 fun CurrentSemesterMarksView(marksData: List<CourseMark>, mergeMarks: Boolean) {
     if (marksData.isEmpty()) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(screenHeight)
+                .verticalScroll(rememberScrollState()),
+            contentAlignment = Alignment.Center
+        ) {
             Text("No Marks Data Available", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
         }
     } else {

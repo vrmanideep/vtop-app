@@ -227,7 +227,16 @@ fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> U
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     if (attendanceData.isEmpty()) {
-        Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No Attendance Data Found", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(screenHeight)
+                .verticalScroll(rememberScrollState()),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("No Attendance Data Found", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         return
     }
 

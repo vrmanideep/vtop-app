@@ -26,6 +26,9 @@ import java.text.SimpleDateFormat
 import java.util.*
 import com.composables.icons.lucide.*
 import com.vtop.utils.AnalyticsManager
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 
 private fun getSafeStartTime(exam: ExamScheduleModel): String {
     val eTime = exam.examTime.trim()
@@ -46,7 +49,15 @@ fun Exams(exams: List<ExamScheduleModel>) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     if (exams.isEmpty()) {
-        Box(Modifier.fillMaxSize().padding(bottom = 92.dp), Alignment.Center) {
+        val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(screenHeight)
+                .padding(bottom = 92.dp)
+                .verticalScroll(rememberScrollState()),
+            contentAlignment = Alignment.Center
+        ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Lucide.CalendarDays, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(16.dp))

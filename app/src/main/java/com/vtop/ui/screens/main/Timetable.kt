@@ -480,14 +480,14 @@ fun Timetable(
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
+                // Measure the height from the very top before any padding is applied
+                .onGloballyPositioned { coordinates ->
+                    pinnedBottomPx = coordinates.size.height
+                }
                 .padding(top = 80.dp)
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.background)
-                .padding(top = 16.dp, bottom = 12.dp)
-                .onGloballyPositioned { coordinates ->
-                    pinnedBottomPx =
-                        (coordinates.positionInRoot().y + coordinates.size.height).toInt()
-                },
+                .padding(top = 16.dp, bottom = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             NextClassCard(
@@ -835,7 +835,7 @@ fun TimetableRow(
                 }
                 Spacer(Modifier.height(12.dp))
                 if (mergedCourses.isEmpty()) {
-                    Text("No Classes 🎉", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp, horizontal = 12.dp))
+                    Text("No Classes", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp, horizontal = 12.dp))
                 } else {
                     LazyRow(
                         modifier = Modifier.fillMaxWidth(),
