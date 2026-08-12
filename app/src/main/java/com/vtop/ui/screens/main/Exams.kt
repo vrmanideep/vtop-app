@@ -35,7 +35,7 @@ private fun getSafeStartTime(exam: ExamScheduleModel): String {
     if (eTime.isNotBlank() && eTime != "-") return eTime.split("-")[0].trim()
     val rTime = exam.reportingTime.trim()
     if (rTime.isNotBlank() && rTime != "-") return rTime.split("-")[0].trim()
-    return "12:00 AM"
+    return "TBC"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -58,12 +58,34 @@ fun Exams(exams: List<ExamScheduleModel>) {
                 .verticalScroll(rememberScrollState()),
             contentAlignment = Alignment.Center
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Lucide.CalendarDays, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 60.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    Lucide.CalendarDays,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.size(64.dp)
+                )
+
                 Spacer(Modifier.height(16.dp))
-                Text("No exams found for this semester", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(8.dp))
-                Text("Sync to load exams", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), fontSize = 12.sp)
+
+                Text(
+                    "No Exams data available",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(Modifier.height(6.dp))
+
+                Text(
+                    "Pull down to refresh",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
         return
@@ -156,7 +178,7 @@ private fun ExamListScreen(exams: List<ExamScheduleModel>, onExamClick: (ExamSch
             if (selectedFilter == "All" && nextExam != null) {
                 item {
                     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-                        Text("NEXT UP", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp, modifier = Modifier.padding(bottom = 4.dp))
+                        Text("Next Up", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp, modifier = Modifier.padding(bottom = 4.dp))
                         NextUpCard(exam = nextExam, currentTime = currentTime, onClick = { onExamClick(nextExam) })
                         Spacer(modifier = Modifier.height(16.dp))
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha=0.1f))
@@ -270,12 +292,12 @@ private fun StandardExamCard(exam: ExamScheduleModel, urgencyColor: Color, isCla
 private fun ExamDetailsGrid(exam: ExamScheduleModel) {
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(modifier = Modifier.fillMaxWidth()) {
-            DetailBlock(label = "DATE", value = exam.examDate, modifier = Modifier.weight(1f))
-            DetailBlock(label = "TIME", value = getSafeStartTime(exam), modifier = Modifier.weight(1f))
+            DetailBlock(label = "Date", value = exam.examDate, modifier = Modifier.weight(1f))
+            DetailBlock(label = "Time", value = getSafeStartTime(exam), modifier = Modifier.weight(1f))
         }
         Row(modifier = Modifier.fillMaxWidth()) {
-            DetailBlock(label = "VENUE", value = exam.venue, modifier = Modifier.weight(1f))
-            DetailBlock(label = "SEAT", value = "${exam.seatLocation} (${exam.seatNumber})", modifier = Modifier.weight(1f))
+            DetailBlock(label = "Venue", value = exam.venue, modifier = Modifier.weight(1f))
+            DetailBlock(label = "Seat", value = "${exam.seatLocation} (${exam.seatNumber})", modifier = Modifier.weight(1f))
         }
     }
 }

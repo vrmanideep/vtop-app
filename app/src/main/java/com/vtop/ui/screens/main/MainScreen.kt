@@ -208,7 +208,9 @@ fun MainScreen(
                     "MARKS" -> { Marks(marksData = marksData, historySummary = historySummary, historyData = historyItems, onHistoryLoad = {}) }
                     "OUTINGS" -> { VtopOutingsTab(outingsData = outingsData, handler = outingHandler) }
                     "PROFILE" -> {
-                        val profileMap = remember(profileStateValue) { profileStateValue?.takeIf { it.isNotEmpty() } ?: Vault.getProfile(context) }
+                        //  Removed `remember` to prevent caching stale/empty flow states.
+                        // Directly evaluates the flow on every recomposition, falling back to Vault instantly.
+                        val profileMap = profileStateValue?.takeIf { it.isNotEmpty() } ?: Vault.getProfile(context)
                         val vtopClient = SessionManager.getSyncClient()
 
                         Profile(

@@ -513,7 +513,8 @@ fun Profile(
                             modifier = Modifier.fillMaxWidth().clickable { isMoreExpanded = !isMoreExpanded }.padding(16.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        )
+                        {
                             Column {
                                 Text("More", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                                 Spacer(Modifier.height(2.dp))
@@ -524,32 +525,45 @@ fun Profile(
 
                         if (isMoreExpanded) {
                             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                            SettingRow(
-                                label = "Export to Google Calendar",
-                                value = "Add classes & exams to your calendar",
-                                actionText = "Sync",
-                                onClick = {
-                                    calendarPermissionLauncher.launch(arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR))
-                                }
+                            // Keep PORTAL Responsive During Sync
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             )
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                            SettingRow(
-                                label = "Force sync attendance",
-                                value = if (isForceAttendanceSyncing) {
-                                    "Fetching complete attendance history..."
-                                } else {
-                                    "Fetch complete attendance history"
-                                },
-                                actionText = if (isForceAttendanceSyncing) "Syncing..." else "Sync",
-                                onClick = {
-                                    if (!isForceAttendanceSyncing) {
-                                        android.util.Log.d("PROFILE_SYNC", "Force Sync Attendance requested by user")
-                                        Toast.makeText(context, "Attendance sync started...", Toast.LENGTH_SHORT).show()
-                                        onForceAttendanceSync()
+                            {
+                                Column(
+                                    modifier = Modifier.weight(1f)
+                                )
+                                {
+                                    Text(
+                                        "Keep Portal Responsive During Sync",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+
+                                    Spacer(Modifier.height(2.dp))
+
+                                    Text(
+                                        "Uses a separate session so the Portal remains usable while background sync is running.",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
+                                Switch(
+                                    checked = keepPortalResponsiveDuringSync,
+                                    onCheckedChange = { enabled ->
+                                        keepPortalResponsiveDuringSync = enabled
+                                        sharedPrefs.edit().putBoolean("PARALLEL_PORTAL_SESSION", enabled).apply()
                                     }
-                                }
-                            )
+                                )
+                            }
                             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                            // Background AutoSync
                             Row(
                                 modifier = Modifier.fillMaxWidth().clickable { syncDropdownExpanded = true }.padding(16.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -601,46 +615,35 @@ fun Profile(
                                     }
                                 }
                             }
-
-                            HorizontalDivider(
-                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
-                            )
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text(
-                                        "Keep Portal Responsive During Sync",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-
-                                    Spacer(Modifier.height(2.dp))
-
-                                    Text(
-                                        "Uses a separate session so the Portal remains usable while background sync is running.",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-
-                                Switch(
-                                    checked = keepPortalResponsiveDuringSync,
-                                    onCheckedChange = { enabled ->
-                                        keepPortalResponsiveDuringSync = enabled
-                                        sharedPrefs.edit().putBoolean("PARALLEL_PORTAL_SESSION", enabled).apply()
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                            SettingRow(
+                                label = "Force sync attendance",
+                                value = if (isForceAttendanceSyncing) {
+                                    "Fetching complete attendance history..."
+                                } else {
+                                    "Fetch complete attendance history"
+                                },
+                                actionText = if (isForceAttendanceSyncing) "Syncing..." else "Sync",
+                                onClick = {
+                                    if (!isForceAttendanceSyncing) {
+                                        android.util.Log.d("PROFILE_SYNC", "Force Sync Attendance requested by user")
+                                        Toast.makeText(context, "Attendance sync started...", Toast.LENGTH_SHORT).show()
+                                        onForceAttendanceSync()
                                     }
-                                )
-                            }
+                                }
+                            )
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
 
+                            // Export to Google Calendar
+                            SettingRow(
+                                label = "Export to Google Calendar",
+                                value = "Add classes & exams to your calendar",
+                                actionText = "Sync",
+                                onClick = {
+                                    calendarPermissionLauncher.launch(arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR))
+                                }
+                            )
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
 
                         }
                     }

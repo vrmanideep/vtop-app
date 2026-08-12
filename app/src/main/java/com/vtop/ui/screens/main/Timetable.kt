@@ -110,6 +110,7 @@ import java.util.Locale
 import java.util.TimeZone
 import java.util.UUID
 import kotlin.math.abs
+import androidx.compose.foundation.gestures.scrollBy
 
 val ColorDanger = Color(0xFFC91818)
 
@@ -332,18 +333,22 @@ fun Timetable(
                         val isSunday = cal.get(Calendar.DAY_OF_WEEK) == Calendar.SUNDAY
                         val isMonday = cal.get(Calendar.DAY_OF_WEEK) == Calendar.MONDAY
 
-                        val isGenericPlaceholder = title.equals("Holiday", ignoreCase = true) ||
-                                title.equals("Holiday (Holiday)", ignoreCase = true) ||
-                                title.contains("Sunday", ignoreCase = true) ||
-                                title.contains("Instructional Day (Holiday)", ignoreCase = true) ||
-                                title.contains("No Instructional", ignoreCase = true)
-
-                        val dropGenericMonday = isMonday && (
-                                title.equals("No Instructional Day (Non Instructional Day)", ignoreCase = true) ||
+                        val isGenericSunday = isSunday && (
+                                title.equals("Holiday", ignoreCase = true) ||
+                                        title.equals("Holiday (Holiday)", ignoreCase = true) ||
+                                        title.contains("Sunday", ignoreCase = true) ||
+                                        title.equals("No Instructional Day (Non Instructional Day)", ignoreCase = true) ||
                                         title.equals("No Instructional Day (No Instructional Day)", ignoreCase = true)
                                 )
 
-                        if (!(isSunday && isGenericPlaceholder) && !dropGenericMonday) {
+                        val isGenericMonday = isMonday && (
+                                title.equals("Holiday", ignoreCase = true) ||
+                                        title.equals("Holiday (Holiday)", ignoreCase = true) ||
+                                        title.equals("No Instructional Day (Non Instructional Day)", ignoreCase = true) ||
+                                        title.equals("No Instructional Day (No Instructional Day)", ignoreCase = true)
+                                )
+
+                        if (!isGenericSunday && !isGenericMonday) {
                             var cleanTitle = title.replace(" - General (Semester)", "")
                                 .replace(" - Combined", "")
                                 .replace(" (Holiday)", "", ignoreCase = true)
@@ -815,6 +820,42 @@ fun TimetableRow(
             status
         }
     }
+    val ongoingIndex = courseStatuses.indexOfFirst {
+        it == TimeStatus.ONGOING
+    }
+
+    val classListState = rememberLazyListState()
+
+    LaunchedEffect(isToday, isExpanded, ongoingIndex, mergedCourses.size) {
+        if (
+            isToday &&
+            isExpanded &&
+            ongoingIndex >= 0
+        ) {
+            // First bring the ongoing tile into the visible area.
+            classListState.animateScrollToItem(ongoingIndex)
+
+            // Wait for LazyRow layout to update.
+            kotlinx.coroutines.yield()
+
+            val item = classListState.layoutInfo.visibleItemsInfo
+                .firstOrNull { it.index == ongoingIndex }
+
+            if (item != null) {
+                val viewportCenter =
+                    (classListState.layoutInfo.viewportStartOffset +
+                            classListState.layoutInfo.viewportEndOffset) / 2
+
+                val itemCenter = item.offset + item.size / 2
+
+                val adjustment = itemCenter - viewportCenter
+
+                if (adjustment != 0) {
+                    classListState.scrollBy(adjustment.toFloat())
+                }
+            }
+        }
+    }
 
     Box(
         modifier = Modifier.fillMaxWidth(0.94f).alpha(alpha).clip(RoundedCornerShape(14.dp))
@@ -838,9 +879,10 @@ fun TimetableRow(
                     Text("No Classes", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp, horizontal = 12.dp))
                 } else {
                     LazyRow(
+                        state = classListState,
                         modifier = Modifier.fillMaxWidth(),
                         contentPadding = PaddingValues(horizontal = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         itemsIndexed(mergedCourses) { index, course ->
                             val reminder = allReminders.find { it.classId == course.classId }
