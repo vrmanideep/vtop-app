@@ -60,7 +60,8 @@ data class BunkOccurrence(
     val courseCode: String,
     val courseType: String,
     val slot: String,
-    val weight: Int
+    val weight: Int,
+    val isDefaultBunk: Boolean = true
 ) {
     val key: String
         get() = "$date|$courseCode|$courseType|$slot"
@@ -443,7 +444,10 @@ fun BunkSimulatorTab(
 
                             remaining += weight
 
-                            if (selectedDates.contains(curr)) {
+                            val isSelected = selectedDates.contains(curr)
+                            val isGapDay = !curr.isAfter(today) // Any unposted date up to today
+
+                            if (isSelected || isGapDay) {
                                 matchingClasses.forEach { session ->
                                     val sessionWeight = getSlotWeight(session.slot)
 
@@ -453,12 +457,20 @@ fun BunkSimulatorTab(
                                             courseCode = code,
                                             courseType = att.courseType ?: "",
                                             slot = session.slot ?: "",
-                                            weight = sessionWeight
+                                            weight = sessionWeight,
+                                            isDefaultBunk = isSelected
                                         )
 
                                         selectedOccurrences += occurrence
 
-                                        if (occurrence.key !in attendanceOverrides) {
+                                        // If explicitly selected -> Default Bunk. If Gap Day -> Default Attend.
+                                        val isBunking = if (occurrence.isDefaultBunk) {
+                                            occurrence.key !in attendanceOverrides
+                                        } else {
+                                            occurrence.key in attendanceOverrides
+                                        }
+
+                                        if (isBunking) {
                                             plannedBunks += sessionWeight
                                         }
                                     }
@@ -895,7 +907,10 @@ fun CourseBunkCard(
                         if (bunksExpanded) {
                             Spacer(Modifier.height(8.dp))
                             activeComponent.selectedOccurrences.forEach { occurrence ->
-                                val isAttending = occurrence.key in attendanceOverrides
+                                val hasOverride = occurrence.key in attendanceOverrides
+                                val isBunking = if (occurrence.isDefaultBunk) !hasOverride else hasOverride
+                                val isAttending = !isBunking
+
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp, horizontal = 4.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -903,13 +918,22 @@ fun CourseBunkCard(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         val dFormatter = DateTimeFormatter.ofPattern("dd MMM · EEEE", Locale.ENGLISH)
-                                        Text(occurrence.date.format(dFormatter), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            occurrence.date.format(dFormatter),
+                                            fontSize = 12.sp,
+                                            color = if (!occurrence.isDefaultBunk) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                                            fontWeight = FontWeight.Bold
+                                        )
                                         val slotStr = if (occurrence.weight == 1) occurrence.slot else "${occurrence.slot} · ${occurrence.weight} classes"
-                                        Text(slotStr, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(
+                                            if (!occurrence.isDefaultBunk) "$slotStr (Not posted)" else slotStr,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
                                     }
 
                                     Button(
-                                        onClick = { onAttendanceOverrideChange(occurrence, !isAttending) },
+                                        onClick = { onAttendanceOverrideChange(occurrence, !hasOverride) },
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = if (isAttending) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
                                             contentColor = if (isAttending) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
