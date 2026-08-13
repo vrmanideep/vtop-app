@@ -1,28 +1,36 @@
+@file:Suppress("SpellCheckingInspection", "DEPRECATION")
+
 package com.vtop.ui
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.border
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -45,18 +53,18 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
-import androidx.work.OneTimeWorkRequestBuilder
-import com.vtop.models.TimetableModel
-import com.vtop.network.VtopClient
-import com.vtop.core.EventBus
+import com.google.firebase.FirebaseApp
 import com.vtop.core.AppEvent
 import com.vtop.core.AppRepositories
 import com.vtop.core.AppState
-import com.vtop.core.TimetableRepository
 import com.vtop.core.AttendanceRepository
-import com.vtop.core.ExamsRepository
+import com.vtop.core.EventBus
+import com.vtop.core.TimetableRepository
+import com.vtop.models.TimetableModel
+import com.vtop.network.VtopClient
 import com.vtop.sync.SyncManager
 import com.vtop.ui.screens.auth.GoogleSignInDialog
 import com.vtop.ui.screens.main.*
@@ -71,6 +79,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.concurrent.TimeUnit
+import kotlin.time.Duration.Companion.seconds
 
 class MainActivity : ComponentActivity() {
 
@@ -89,7 +98,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
+        this.intent = intent
         if (intent.getBooleanExtra("SHOW_UPDATE", false) || intent.action == "SHOW_UPDATE") {
             updateTriggerFlow.value = true
         }
@@ -101,18 +110,18 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
-        if (android.os.Build.VERSION.SDK_INT >= 29) {
+        if (Build.VERSION.SDK_INT >= 29) {
             window.isNavigationBarContrastEnforced = false
         }
 
-        com.google.firebase.FirebaseApp.initializeApp(this)
+        FirebaseApp.initializeApp(this)
 
         val sharedPrefs = getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
         val vaultPrefs = getSharedPreferences("VTOP_VAULT", Context.MODE_PRIVATE)
 
         val currentAppVersion = try {
             packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.0"
-        } catch (e: Exception) { "1.0.0" }
+        } catch (_: Exception) { "1.0.0" }
 
         val savedAppVersion = sharedPrefs.getString("SAVED_APP_VERSION", "0.0.0") ?: "0.0.0"
 
@@ -129,7 +138,7 @@ class MainActivity : ComponentActivity() {
         }
 
         val savedThemeString = sharedPrefs.getString("APP_THEME", AppThemeMode.SYSTEM.name) ?: AppThemeMode.SYSTEM.name
-        ThemeManager.themeMode.value = try { AppThemeMode.valueOf(savedThemeString) } catch (e: IllegalArgumentException) { AppThemeMode.DARK }
+        ThemeManager.themeMode.value = try { AppThemeMode.valueOf(savedThemeString) } catch (_: IllegalArgumentException) { AppThemeMode.DARK }
 
         ThemeManager.useDynamicColor.value = sharedPrefs.getBoolean("USE_DYNAMIC_COLOR", true)
         val defaultAccentInt = VtopPrimaryBlue.toArgb()
@@ -182,7 +191,7 @@ class MainActivity : ComponentActivity() {
                                 val deferredOtp = CompletableDeferred<String?>()
                                 AppState.pendingOtpDeferred = deferredOtp
                                 NotificationHelper.showOtpNotification(this@MainActivity)
-                                val userOtp = withTimeoutOrNull(180_000L) { deferredOtp.await() }
+                                val userOtp = withTimeoutOrNull(180.seconds) { deferredOtp.await() }
                                 if (userOtp != null) resolver.submit(userOtp)
                                 else {
                                     resolver.cancel()
@@ -227,7 +236,7 @@ class MainActivity : ComponentActivity() {
                     try {
                         val info = UpdateManager.checkForUpdates()
                         if (info.isUpdateAvailable) updateInfo = info
-                    } catch (e: Exception) { e.printStackTrace() }
+                    } catch (_: Exception) { }
                     updateTriggerFlow.value = false
                 }
             }
@@ -236,7 +245,7 @@ class MainActivity : ComponentActivity() {
                 try {
                     val info = UpdateManager.checkForUpdates()
                     if (info.isUpdateAvailable) updateInfo = info
-                } catch (e: Exception) { e.printStackTrace() }
+                } catch (_: Exception) { }
             }
 
             val triggerInitialSync = remember { intent.getBooleanExtra("TRIGGER_INITIAL_SYNC", false) }
@@ -254,31 +263,24 @@ class MainActivity : ComponentActivity() {
                         if (loaded) {
                             val navController = rememberNavController()
 
-                            val timetable by TimetableRepository.timetable.collectAsState()
-                            val attendanceData by AttendanceRepository.attendance.collectAsState()
-                            val examsData by ExamsRepository.exams.collectAsState()
-
                             NavHost(navController = navController, startDestination = "main") {
                                 composable(
                                     route = "main",
-                                    enterTransition = { androidx.compose.animation.EnterTransition.None },
-                                    exitTransition = { androidx.compose.animation.ExitTransition.None },
-                                    popEnterTransition = { androidx.compose.animation.EnterTransition.None },
-                                    popExitTransition = { androidx.compose.animation.ExitTransition.None }
+                                    enterTransition = { EnterTransition.None },
+                                    exitTransition = { ExitTransition.None },
+                                    popEnterTransition = { EnterTransition.None },
+                                    popExitTransition = { ExitTransition.None }
                                 ) {
                                     MainScreen(
                                         navController = navController,
                                         initialShortcutAction = shortcutAction,
-                                        timetable = timetable ?: TimetableModel(),
-                                        attendanceData = attendanceData,
-                                        examsData = examsData,
                                         onSyncClick = { activeTab, forceNewSession ->
                                             lifecycleScope.launch { SyncManager.performSync(this@MainActivity, activeTab, forceNewSession) }
                                         },
                                         onLogoutClick = {
                                             sharedPrefs.edit { putBoolean("IS_EXPLICITLY_LOGGED_OUT", true) }
                                             Vault.clearAll(this@MainActivity)
-                                            startActivity(Intent(this@MainActivity, com.vtop.ui.LoginActivity::class.java))
+                                            startActivity(Intent(this@MainActivity, LoginActivity::class.java))
                                             finish()
                                         },
                                         outingHandler = object : OutingActionHandler {
@@ -307,18 +309,17 @@ class MainActivity : ComponentActivity() {
                                                         if (success && tempFile.exists()) {
                                                             val resolver = contentResolver
                                                             val fileName = "outpass_$id.pdf"
-                                                            val values = android.content.ContentValues().apply {
-                                                                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                                                                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
-                                                                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                                                            val values = ContentValues().apply {
+                                                                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                                                                put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+                                                                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
                                                             }
-                                                            val collection = if (android.os.Build.VERSION.SDK_INT >= 29) {
-                                                                android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+                                                            val collection = if (Build.VERSION.SDK_INT >= 29) {
+                                                                MediaStore.Downloads.EXTERNAL_CONTENT_URI
                                                             } else {
-                                                                android.provider.MediaStore.Files.getContentUri("external")
+                                                                MediaStore.Files.getContentUri("external")
                                                             }
-                                                            val uri = resolver.insert(collection, values)
-                                                            if (uri == null) throw Exception("Failed creating MediaStore entry")
+                                                            val uri = resolver.insert(collection, values) ?: throw Exception("Failed creating MediaStore entry")
                                                             resolver.openOutputStream(uri)?.use { output ->
                                                                 tempFile.inputStream().use { input -> input.copyTo(output) }
                                                             }
@@ -401,7 +402,15 @@ class MainActivity : ComponentActivity() {
                                 composable("simulator") {
                                     val semInfo = Vault.getSelectedSemester(this@MainActivity)
                                     val currentSemName = semInfo[1] ?: semInfo[0] ?: "Unknown Semester"
-                                    BunkSimulatorTab(timetable = timetable ?: TimetableModel(), attendanceData = attendanceData, selectedSemester = currentSemName, onBack = { navController.popBackStack() })
+                                    val timetable by TimetableRepository.timetable.collectAsState()
+                                    val attendanceData by AttendanceRepository.attendance.collectAsState()
+
+                                    BunkSimulatorTab(
+                                        timetable = timetable ?: TimetableModel(),
+                                        attendanceData = attendanceData,
+                                        selectedSemester = currentSemName,
+                                        onBack = { navController.popBackStack() }
+                                    )
                                 }
                             }
                         } else {
