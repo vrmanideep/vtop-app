@@ -257,6 +257,7 @@ public class VtopClient {
             String resp = res.body() != null ? res.body().string() : "";
             String finalUrl = res.request().url().toString();
 
+            // 1. Check for a successful login
             if (finalUrl.contains("/content") || resp.contains("Sign out")) {
                 if (resp.contains("Unable to process") || resp.length() < 1500) throw new VtopException.WafBlocked("Session blocked by VTOP Firewall");
                 persistCsrf(context, extractToken(resp));
@@ -265,8 +266,31 @@ public class VtopClient {
                 return true;
             }
 
-            if (resp.contains("Invalid Login") || resp.contains("User Id Not Available")) throw new VtopException.InvalidCredentials("Invalid username or password");
-            if (resp.contains("maximum invalid log-in") || resp.contains("locked")) throw new VtopException.AuthenticationFailed("Account locked");
+            String lowerResp = resp
+                    .toLowerCase(Locale.ENGLISH)
+                    .replaceAll("\\s+", " ")
+                    .trim();
+
+            if (lowerResp.contains("invalid username/password")) {
+                throw new VtopException.InvalidCredentials(
+                        "Invalid username or password."
+                );
+            }
+
+            if (lowerResp.contains("invalid captcha")) {
+                throw new VtopException.CaptchaFailed(
+                        "Invalid captcha."
+                );
+            }
+
+            if (lowerResp.contains("maximum invalid log-in") ||
+                    lowerResp.contains("locked") ||
+                    lowerResp.contains("suspended")) {
+
+                throw new VtopException.AuthenticationFailed(
+                        "Account locked or suspended."
+                );
+            }
 
             boolean isOtpActive = Pattern.compile("var\\s+securityOtpPending\\s*=\\s*'?true'?").matcher(resp).find();
             if (isOtpActive) {
@@ -301,7 +325,8 @@ public class VtopClient {
                     }
                 }
             }
-            throw new VtopException.CaptchaFailed("Captcha incorrect or session expired");
+            // If it wasn't a success, wasn't an invalid cred, and wasn't OTP... it must be the Captcha.
+            throw new VtopException.CaptchaFailed("Captcha incorrect or session expired.");
         }
     }
 

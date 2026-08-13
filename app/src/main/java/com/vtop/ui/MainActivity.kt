@@ -5,10 +5,12 @@ package com.vtop.ui
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -82,9 +84,9 @@ import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.seconds
 
 class MainActivity : ComponentActivity() {
-
-    private val isDataLoaded = mutableStateOf(false)
-    private val updateTriggerFlow = MutableStateFlow(false)
+        private lateinit var sharedPrefs: SharedPreferences
+        private val isDataLoaded = mutableStateOf(false)
+        private val updateTriggerFlow = MutableStateFlow(false)
 
     override fun onResume() {
         super.onResume()
@@ -107,6 +109,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        sharedPrefs = getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
@@ -115,8 +118,6 @@ class MainActivity : ComponentActivity() {
         }
 
         FirebaseApp.initializeApp(this)
-
-        val sharedPrefs = getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
         val vaultPrefs = getSharedPreferences("VTOP_VAULT", Context.MODE_PRIVATE)
 
         val currentAppVersion = try {

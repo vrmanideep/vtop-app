@@ -32,6 +32,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.Manifest
+import android.os.Build
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.ViewCarousel
+import androidx.compose.material.icons.filled.Web
+import androidx.compose.ui.text.style.TextAlign
 import com.vtop.core.AuthStateManager
 import com.vtop.core.AppState
 import com.vtop.ui.components.OtpForm
@@ -409,5 +415,176 @@ private fun loadSemestersFromCache(context: Context): List<Map<String, String>> 
             "name" to it.name,
             "isCurrent" to (it.id == selected).toString()
         )
+    }
+}
+
+@Composable
+fun OnboardingFlow(onComplete: () -> Unit) {
+    val context = LocalContext.current
+    val sharedPrefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
+
+    // Controls which screen is currently visible in the sequence
+    var currentStep by remember { mutableIntStateOf(0) }
+
+    // Launcher for Android 13+ Notifications
+    val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        currentStep++ // Move to the next step regardless of grant/deny
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .systemBarsPadding(),
+        contentAlignment = Alignment.Center
+    ) {
+        AnimatedContent(
+            targetState = currentStep,
+            transitionSpec = {
+                slideInHorizontally { width -> width } + fadeIn() togetherWith slideOutHorizontally { width -> -width } + fadeOut()
+            }, label = "Onboarding"
+        ) { step ->
+            when (step) {
+                0 -> {
+                    val currentStyle = sharedPrefs.getString("NAV_STYLE", "DOCK") ?: "DOCK"
+
+                    NavStylePickerStep(
+                        initialSelection = currentStyle,
+                        onContinue = { selectedStyle ->
+                            sharedPrefs.edit().putString("NAV_STYLE", selectedStyle).apply()
+                            currentStep++
+                        }
+                    )
+                }
+                1 -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        PermissionStep(
+                            title = "Stay in the Loop",
+                            description = "Allow notifications so we can alert you about upcoming classes, exams, and critical attendance drops.",
+                            icon = Icons.Default.Notifications,
+                            onGrant = { notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) },
+                            onSkip = { currentStep++ }
+                        )
+                    } else {
+                        LaunchedEffect(Unit) { currentStep++ } // Skip if not needed on older Androids
+                    }
+                }
+                // Add more steps (like Battery Optimization prompts) here as case 2, 3, etc.
+                2 -> {
+                    LaunchedEffect(Unit) { onComplete() }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun NavStylePickerStep(initialSelection: String, onContinue: (String) -> Unit) {
+    var selectedStyle by remember { mutableStateOf(initialSelection) }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(0.85f),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("Make it yours.", color = MaterialTheme.colorScheme.primary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Text("Choose your Nav Style", color = MaterialTheme.colorScheme.onBackground, fontSize = 24.sp, fontWeight = FontWeight.Black)
+        Spacer(Modifier.height(32.dp))
+
+        // Modern Pill Option
+        NavStyleCard(
+            title = "Floating Pill",
+            description = "Modern, compact, and completely immersive.",
+            icon = Icons.Default.ViewCarousel,
+            isSelected = selectedStyle == "DOCK",
+            onClick = { selectedStyle = "DOCK" }
+        )
+
+        Spacer(Modifier.height(16.dp))
+
+        // Classic Bar Option
+        NavStyleCard(
+            title = "Classic Bar",
+            description = "Traditional full-width bottom navigation.",
+            icon = Icons.Default.Web,
+            isSelected = selectedStyle == "STATIC",
+            onClick = { selectedStyle = "STATIC" }
+        )
+
+        Spacer(Modifier.height(48.dp))
+
+        Button(
+            onClick = { onContinue(selectedStyle) },
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+            shape = RoundedCornerShape(10.dp)
+        ) {
+            Text(text = "Continue", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        }
+    }
+}
+
+@Composable
+fun NavStyleCard(title: String, description: String, icon: androidx.compose.ui.graphics.vector.ImageVector, isSelected: Boolean, onClick: () -> Unit) {
+    val borderColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+    val bgColor = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable { onClick() },
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = bgColor),
+        border = BorderStroke(1.dp, borderColor)
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier.size(48.dp).background(if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, color = MaterialTheme.colorScheme.onBackground, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, lineHeight = 16.sp)
+            }
+        }
+    }
+}
+
+@Composable
+fun PermissionStep(title: String, description: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onGrant: () -> Unit, onSkip: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth(0.85f),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier.size(80.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
+        }
+        Spacer(Modifier.height(24.dp))
+        Text(title, color = MaterialTheme.colorScheme.onBackground, fontSize = 24.sp, fontWeight = FontWeight.Black)
+        Spacer(Modifier.height(12.dp))
+        Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp, textAlign = TextAlign.Center, lineHeight = 20.sp)
+
+        Spacer(Modifier.height(48.dp))
+
+        Button(
+            onClick = onGrant,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+            shape = RoundedCornerShape(10.dp)
+        ) {
+            Text(text = "Allow Permission", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        }
+        Spacer(Modifier.height(16.dp))
+        TextButton(onClick = onSkip) {
+            Text("Skip for now", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }

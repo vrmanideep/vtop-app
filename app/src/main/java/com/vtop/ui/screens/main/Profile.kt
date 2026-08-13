@@ -344,19 +344,8 @@ fun Profile(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     shape = RoundedCornerShape(16.dp),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            heroTapCount++
-                            if (heroTapCount >= 5) {
-                                val newStyle = if (currentNavStyle == "DOCK") "STATIC" else "DOCK"
-                                sharedPrefs.edit().putString("NAV_STYLE", newStyle).apply()
-                                onNavStyleChange(newStyle)
-                                Toast.makeText(context, "Nav style set to $newStyle", Toast.LENGTH_SHORT).show()
-                                heroTapCount = 0
-                            }
-                        }
-                ) {
+                    modifier = Modifier.fillMaxWidth() // Removed the 5-tap clickable logic here
+                )  {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -648,7 +637,6 @@ fun Profile(
                         }
                     }
                 }
-
                 // --- PREFERENCES & APPEARANCE ACCORDION ---
                 Card(
                     shape = RoundedCornerShape(16.dp),
@@ -791,6 +779,27 @@ fun Profile(
                                     }
                                 }
                             }
+                            // Navigation Style Toggle
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Classic Navigation Bar", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                    Spacer(Modifier.height(2.dp))
+                                    Text("Use traditional full-width bottom navigation", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Switch(
+                                    checked = currentNavStyle == "STATIC",
+                                    onCheckedChange = { isClassic ->
+                                        val newStyle = if (isClassic) "STATIC" else "DOCK"
+                                        sharedPrefs.edit().putString("NAV_STYLE", newStyle).apply()
+                                        onNavStyleChange(newStyle)
+                                    }
+                                )
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
                         }
                     }
                 }

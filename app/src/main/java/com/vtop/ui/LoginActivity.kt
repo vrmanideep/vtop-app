@@ -8,12 +8,14 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.*
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import com.vtop.network.VtopClient
 import com.vtop.core.AppState
 import com.vtop.core.AuthStateManager
 import com.vtop.ui.screens.auth.LoginScreen
+import com.vtop.ui.screens.auth.OnboardingFlow
 import com.vtop.ui.theme.AppTheme
 import com.vtop.ui.theme.AppThemeMode
 import com.vtop.ui.theme.AuthActionCallback
@@ -40,7 +42,10 @@ class LoginActivity : ComponentActivity() {
         val savedReg = credentials[0]
         val savedPass = credentials[1]
 
-        if (!isExplicitlyLoggedOut && !savedReg.isNullOrEmpty() && !savedPass.isNullOrEmpty()) {
+        if (!isExplicitlyLoggedOut &&
+            !savedReg.isNullOrEmpty() &&
+            !savedPass.isNullOrEmpty()
+        ) {
             startActivity(Intent(this, MainActivity::class.java))
             finish()
             return
@@ -54,92 +59,110 @@ class LoginActivity : ComponentActivity() {
         AuthStateManager.currentState.value = AuthState.FORM
 
         setContent {
+            var showOnboarding by remember { mutableStateOf(false) }
+
             AppTheme(themeMode = savedTheme) {
-                LoginScreen(
-                    savedReg = savedReg,
-                    savedPass = savedPass,
-                    callback = object : AuthActionCallback {
+                if (showOnboarding) {
+                    // Triggers sequential onboarding instead of jumping straight to Main
+                    OnboardingFlow(onComplete = {
+                        val intent = Intent(this@LoginActivity, MainActivity::class.java).apply {
+                            putExtra("TRIGGER_INITIAL_SYNC", true)
+                        }
+                        startActivity(intent)
+                        finish()
+                    })
+                } else {
+                    LoginScreen(
+                        savedReg = savedReg,
+                        savedPass = savedPass,
+                        callback = object : AuthActionCallback {
 
-                        override fun onLoginSubmit(regNo: String, pass: String) {
-                            Vault.saveCredentials(this@LoginActivity, regNo, pass)
-                            sharedPrefs.edit().putBoolean("IS_EXPLICITLY_LOGGED_OUT", false).apply()
+                            override fun onLoginSubmit(regNo: String, pass: String) {
+                                Vault.saveCredentials(this@LoginActivity, regNo, pass)
+                                sharedPrefs.edit().putBoolean("IS_EXPLICITLY_LOGGED_OUT", false).apply()
 
-                            AuthStateManager.currentState.value = AuthState.LOADING_SEMESTERS
+                                AuthStateManager.currentState.value = AuthState.LOADING_SEMESTERS
 
-                            lifecycleScope.launch(Dispatchers.IO) {
-                                try {
-                                    val client = VtopClient(this@LoginActivity, regNo, pass)
-                                    client.reinitializeSession(this@LoginActivity)
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    try {
+                                        val client = VtopClient(this@LoginActivity, regNo, pass)
+                                        client.reinitializeSession(this@LoginActivity)
 
-                                    var loginSuccess = false
-                                    var attempts = 0
-                                    val maxAttempts = 3
+                                        var loginSuccess = false
+                                        var attempts = 0
+                                        val maxAttempts = 3
 
-                                    while (!loginSuccess && attempts < maxAttempts) {
-                                        attempts++
-                                        if (attempts > 1) {
-                                            withContext(Dispatchers.Main) { AuthStateManager.loginError.value = "Retrying login ($attempts/$maxAttempts)..." }
-                                            delay(1000)
-                                        }
-
-                                        loginSuccess = client.autoLogin(this@LoginActivity, object : VtopClient.LoginListener {
-                                            override fun onStatusUpdate(message: String) { Log.d("VTOP_LOGIN", message) }
-                                            override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
-                                                lifecycleScope.launch(Dispatchers.Main) { AppState.currentOtpResolver.value = resolver }
+                                        while (!loginSuccess && attempts < maxAttempts) {
+                                            attempts++
+                                            if (attempts > 1) {
+                                                withContext(Dispatchers.Main) { AuthStateManager.loginError.value = "Retrying login ($attempts/$maxAttempts)..." }
+                                                delay(1000)
                                             }
-                                        })
-                                    }
 
-                                    if (loginSuccess) {
-                                        if (client.authorizedId != null && !client.authorizedId.isEmpty() && !client.authorizedId.equals(regNo)) {
-                                            Vault.saveRegNo(this@LoginActivity, client.authorizedId)
+                                            loginSuccess = client.autoLogin(this@LoginActivity, object : VtopClient.LoginListener {
+                                                override fun onStatusUpdate(message: String) { Log.d("VTOP_LOGIN", message) }
+                                                override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
+                                                    lifecycleScope.launch(Dispatchers.Main) { AppState.currentOtpResolver.value = resolver }
+                                                }
+                                            })
                                         }
 
-                                        val semestersList = client.fetchSemesters()
-                                        val firstSemName = semestersList.firstOrNull()?.get("name") ?: ""
-                                        val currentIndex = getActiveSemesterIndex(this@LoginActivity, firstSemName)
+                                        if (loginSuccess) {
+                                            if (client.authorizedId != null && !client.authorizedId.isEmpty() && !client.authorizedId.equals(regNo)) {
+                                                Vault.saveRegNo(this@LoginActivity, client.authorizedId)
+                                            }
 
-                                        val processedSemesters = semestersList.mapIndexed { index, map ->
-                                            map.toMutableMap().apply { this["isCurrent"] = (index == currentIndex).toString() }
+                                            val semestersList = client.fetchSemesters()
+                                            val firstSemName = semestersList.firstOrNull()?.get("name") ?: ""
+                                            val currentIndex = getActiveSemesterIndex(this@LoginActivity, firstSemName)
+
+                                            val processedSemesters = semestersList.mapIndexed { index, map ->
+                                                map.toMutableMap().apply { this["isCurrent"] = (index == currentIndex).toString() }
+                                            }
+
+                                            withContext(Dispatchers.Main) {
+                                                AuthStateManager.loginError.value = null
+                                                AuthStateManager.fetchedSemesters.value = processedSemesters
+                                                AuthStateManager.currentState.value = AuthState.SELECT_SEMESTER
+                                            }
+                                        } else {
+                                            withContext(Dispatchers.Main) {
+                                                // Fallback if autoLogin returns false without throwing
+                                                AuthStateManager.loginError.value = "Login failed. VTOP might be unresponsive."
+                                                AuthStateManager.currentState.value = AuthState.FORM
+                                            }
                                         }
-
+                                    } catch (e: com.vtop.network.VtopException) {
+                                        // Properly catches your custom VtopExceptions and displays their exact messages
                                         withContext(Dispatchers.Main) {
-                                            AuthStateManager.loginError.value = null
-                                            AuthStateManager.fetchedSemesters.value = processedSemesters
-                                            AuthStateManager.currentState.value = AuthState.SELECT_SEMESTER
+                                            AuthStateManager.loginError.value = e.message
+                                            AuthStateManager.currentState.value = AuthState.FORM
                                         }
-                                    } else {
+                                    } catch (e: Exception) {
+                                        // Generic fallback for actual network/crash issues
                                         withContext(Dispatchers.Main) {
-                                            AuthStateManager.loginError.value = "Invalid Credentials or VTOP is down."
+                                            AuthStateManager.loginError.value = "Network error: ${e.message}"
                                             AuthStateManager.currentState.value = AuthState.FORM
                                         }
                                     }
-                                } catch (e: Exception) {
+                                }
+                            }
+
+                            override fun onSemesterSelect(semId: String, semName: String) {
+                                AuthStateManager.currentState.value = AuthState.DOWNLOADING_DATA
+
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    Vault.saveSelectedSemester(this@LoginActivity, semId, semName)
+
                                     withContext(Dispatchers.Main) {
-                                        AuthStateManager.loginError.value = "Network error: ${e.message}"
-                                        AuthStateManager.currentState.value = AuthState.FORM
+                                        // Trigger the onboarding flow here
+                                        showOnboarding = true
                                     }
                                 }
                             }
                         }
-
-                        override fun onSemesterSelect(semId: String, semName: String) {
-                            AuthStateManager.currentState.value = AuthState.DOWNLOADING_DATA
-
-                            lifecycleScope.launch(Dispatchers.IO) {
-                                Vault.saveSelectedSemester(this@LoginActivity, semId, semName)
-
-                                withContext(Dispatchers.Main) {
-                                    val intent = Intent(this@LoginActivity, MainActivity::class.java).apply {
-                                        putExtra("TRIGGER_INITIAL_SYNC", true)
-                                    }
-                                    startActivity(intent)
-                                    finish()
-                                }
-                            }
-                        }
-                    }
-                )
+                    )
+                }
             }
         }
     }
