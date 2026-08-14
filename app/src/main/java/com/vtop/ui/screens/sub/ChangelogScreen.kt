@@ -35,6 +35,28 @@ data class ReleaseLog(
 
 val releaseHistory = listOf(
     ReleaseLog(
+        version = "Version 1.1.15",
+        tag = "v1.1.15",
+        date = "14 Aug 2026",
+        features = listOf(
+            "Added onboarding flow with improved authentication and security lock support.",
+            "Added independent portal sessions with isolated authentication and a portal parallel session setting.",
+            "Added multi-session VTOP support with isolated cookie storage for sync and portal sessions.",
+            "Added Bunk Simulator support for unposted gap days.",
+            "Added shared optimized and force-full attendance synchronization.",
+            "Added a modern Academic History screen and redesigned Profile screen with a settings dashboard and sheets."
+        ),
+        fixes = listOf(
+            "Fixed login error handling for invalid username/password and invalid captcha responses.",
+            "Fixed profile state caching issues that could prevent profile data from being displayed.",
+            "Fixed timetable padding and improved timetable layout behavior.",
+            "Improved empty-state refresh behavior for Marks and Exams.",
+            "Prevented attendance data loss when VTOP returns a failed or invalid response.",
+            "Stabilized synchronization pipelines and improved VTOP session isolation.",
+            "Improved Portal sub-screen and UI component stability."
+        )
+    ),
+    ReleaseLog(
         version = "Version 1.1.14",
         tag = "v1.1.14",
         date = "25 Jul 2026",
