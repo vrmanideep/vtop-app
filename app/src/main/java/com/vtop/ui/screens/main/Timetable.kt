@@ -421,10 +421,12 @@ fun Timetable(
                 val isToday = dateStr == todayDateStr
                 val isWeekend = dayName == "Saturday" || dayName == "Sunday"
 
-                val examToday = sortedExams.find { it.first == dateStr }?.second
+                // 1. USE FILTER INSTEAD OF FIND
+                val examsToday = sortedExams.filter { it.first == dateStr }.map { it.second }
                 val holidayToday = normalizedHolidays[dateStr]
 
-                val rawCourses = if (examToday != null || holidayToday != null) emptyList() else timetable.scheduleMap.entries.firstOrNull { it.key.trim().equals(dayName, ignoreCase = true) }?.value ?: emptyList()
+                // 2. CHECK IF LIST IS NOT EMPTY
+                val rawCourses = if (examsToday.isNotEmpty() || holidayToday != null) emptyList() else timetable.scheduleMap.entries.firstOrNull { it.key.trim().equals(dayName, ignoreCase = true) }?.value ?: emptyList()
                 val isExpanded = expandedDateStr == dateStr
                 val daysOffset = abs(index - todayIndex)
                 val rowAlpha = when (daysOffset) { 0 -> 1f; 1, 2 -> 0.85f; in 3..5 -> 0.6f; in 6..14 -> 0.35f; else -> 0.15f }
@@ -457,8 +459,29 @@ fun Timetable(
                     }
                 }
 
-                if (examToday != null) {
-                    ExamRow(timetable, dateCal, examToday, isToday, isExpanded, rowAlpha, onExpandToggle = { expandedDateStr = if (isExpanded) "" else dateStr })
+                // 3. LOOP THROUGH EXAMS AND RENDER
+                if (examsToday.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp) // Adds spacing between multiple exams
+                    ) {
+                        examsToday.forEachIndexed { eIndex, exam ->
+                            // Create a unique expansion key so they can be expanded independently
+                            val expandKey = "${dateStr}_$eIndex"
+                            val isExamExpanded = expandedDateStr == expandKey
+
+                            ExamRow(
+                                timetable = timetable,
+                                dateCal = dateCal,
+                                exam = exam,
+                                isToday = isToday,
+                                isExpanded = isExamExpanded,
+                                alpha = rowAlpha,
+                                onExpandToggle = { expandedDateStr = if (isExamExpanded) "" else expandKey }
+                            )
+                        }
+                    }
                 } else if (isPrepDay && nextExamForPrep != null) {
                     NextExamGapRow(dateCal, nextExamForPrep, isToday, rowAlpha)
                 } else if (holidayToday != null) {
