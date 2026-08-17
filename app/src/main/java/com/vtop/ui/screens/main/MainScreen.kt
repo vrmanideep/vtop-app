@@ -281,13 +281,46 @@ fun MainScreen(
             }
             PullRefreshIndicator(refreshing = isRefreshing, state = pullRefreshState, modifier = Modifier.align(Alignment.TopCenter).padding(top = 80.dp), backgroundColor = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.primary)
         }
-
         Box(modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().zIndex(10f)) {
             GlobalTopBar(
                 currentScreen = uiState.currentTab,
                 onProfileClick = { viewModel.updateTab("PROFILE") },
                 isProfileSubPage = uiState.isProfileSubPage,
-                onOpenPortal = { viewModel.updatePortalVisibility(true) }
+                onOpenPortal = { viewModel.updatePortalVisibility(true) },
+                onExportTimetable = {
+                    val vtopClient = SessionManager.getSyncClient()
+                    if (vtopClient == null) {
+                        Toast.makeText(context, "Session expired. Please sync first.", Toast.LENGTH_SHORT).show()
+                        return@GlobalTopBar
+                    }
+
+                    Toast.makeText(context, "Generating Timetable Image...", Toast.LENGTH_SHORT).show()
+
+                    coroutineScope.launch(Dispatchers.Main) {
+                        val result = com.vtop.services.TTExport.exportCurrentSemesterTimetable(context, vtopClient)
+
+                        if (result.isSuccess) {
+                            Toast.makeText(context, "Saved to Downloads folder!", Toast.LENGTH_SHORT).show()
+
+                            // Extract the Uri and open it in the Gallery
+                            val imageUri = result.getOrNull()
+                            if (imageUri != null) {
+                                try {
+                                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                                        setDataAndType(imageUri, "image/png")
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(intent)
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "No app found to open images.", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        } else {
+                            val error = result.exceptionOrNull()?.message ?: "Unknown error"
+                            Toast.makeText(context, "Export failed: $error", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
             )
         }
 
