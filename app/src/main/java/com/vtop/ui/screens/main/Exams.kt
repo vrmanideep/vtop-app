@@ -116,19 +116,27 @@ private fun ExamListScreen(exams: List<ExamScheduleModel>, onExamClick: (ExamSch
         exams.filter { it.examDate.isNotBlank() && it.examDate != "-" }
             .mapNotNull { exam ->
                 try {
-                    val date = sdfFull.parse("${exam.examDate} ${getSafeStartTime(exam)}")
+                    val safeTime = getSafeStartTime(exam)
+                    val parseableTime = if (safeTime == "TBC") "11:59 PM" else safeTime
+                    val date = sdfFull.parse("${exam.examDate} $parseableTime")
+
                     if (date != null && date.after(currentTime)) Pair(exam, date) else null
                 } catch (_: Exception) { null }
             }.minByOrNull { it.second }?.first
     }
 
     val clashingExams = remember(exams) {
-        exams.filter { it.examDate.isNotBlank() && it.examDate != "-" && getSafeStartTime(it) != "12:00 AM" }
+        exams.filter {
+            it.examDate.isNotBlank() &&
+                    it.examDate != "-" &&
+                    getSafeStartTime(it) != "12:00 AM" &&
+                    getSafeStartTime(it) != "TBC" // FIX: Prevent phantom clashes for unannounced times
+        }
             .groupBy { "${it.examDate} ${getSafeStartTime(it)}" }
             .filter { it.value.size > 1 }.flatMap { it.value }.toSet()
     }
 
-    val coreFilters = listOf("All", "FAT")
+    val coreFilters = listOf("All")
     val dynamicFilters = remember(exams) { (coreFilters + exams.map { it.examType }).distinct() }
     var selectedFilter by remember { mutableStateOf("All") }
 
@@ -138,7 +146,7 @@ private fun ExamListScreen(exams: List<ExamScheduleModel>, onExamClick: (ExamSch
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 96.dp, bottom = 120.dp), // Inner padding for glassmorphism
+        contentPadding = PaddingValues(top = 96.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
@@ -192,14 +200,16 @@ private fun ExamListScreen(exams: List<ExamScheduleModel>, onExamClick: (ExamSch
                     Color.Transparent
                 } else {
                     val targetDate = try {
-                        sdfFull.parse("${exam.examDate} ${getSafeStartTime(exam)}") ?: currentTime
+                        val safeTime = getSafeStartTime(exam)
+                        val parseableTime = if (safeTime == "TBC") "11:59 PM" else safeTime
+                        sdfFull.parse("${exam.examDate} $parseableTime") ?: currentTime
                     } catch (e: Exception) { currentTime }
 
                     val diffDays = ((targetDate.time - currentTime.time) / (1000 * 60 * 60 * 24)).toInt()
                     when {
                         diffDays < 0 -> Color.Transparent
-                        diffDays <= 3 -> Color(0xFFF59E0B)
-                        diffDays <= 7 -> Color(0xFF60A5FA)
+                        diffDays <= 3 -> Color(0xFFF59E0B) // Amber
+                        diffDays <= 7 -> Color(0xFF60A5FA) // Blue
                         else -> Color.Transparent
                     }
                 }
@@ -222,36 +232,88 @@ private fun NextUpCard(exam: ExamScheduleModel, currentTime: Date, onClick: () -
     val mins = (diffMs % (1000 * 60 * 60)) / (1000 * 60)
 
     Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.1f)),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
         modifier = Modifier.fillMaxWidth().clickable { onClick() }
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(20.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
                 Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                    Text(text = "${exam.examType} · ${exam.courseCode}", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Text(text = exam.courseTitle, color = MaterialTheme.colorScheme.onSurface, fontSize = 18.sp, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp, bottom = 16.dp))
+                    Text(
+                        text = "${exam.examType} · ${exam.courseCode}",
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = exam.courseTitle,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    CountdownBox(value = days.toString(), label = "days")
-                    CountdownBox(value = hours.toString(), label = "hrs")
-                    CountdownBox(value = mins.toString(), label = "min")
+                    NextUpCountdownBox(value = days.toString(), label = "DAYS")
+                    NextUpCountdownBox(value = hours.toString(), label = "HRS")
+                    NextUpCountdownBox(value = mins.toString(), label = "MINS")
                 }
             }
-            ExamDetailsGrid(exam)
+            NextUpExamDetailsGrid(exam)
         }
     }
 }
 
 @Composable
-private fun CountdownBox(value: String, label: String) {
+private fun NextUpCountdownBox(value: String, label: String) {
     Column(
-        modifier = Modifier.background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp)).border(1.dp, MaterialTheme.colorScheme.outline.copy(0.1f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 8.dp),
+        modifier = Modifier
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(text = value, color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Black)
-        Text(text = label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
+        Text(text = value, color = MaterialTheme.colorScheme.onPrimaryContainer, fontSize = 16.sp, fontWeight = FontWeight.Black)
+        Text(text = label, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun NextUpExamDetailsGrid(exam: ExamScheduleModel) {
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(modifier = Modifier.fillMaxWidth()) {
+            NextUpDetailBlock(label = "DATE", value = exam.examDate, modifier = Modifier.weight(1f))
+            NextUpDetailBlock(label = "TIME", value = getSafeStartTime(exam), modifier = Modifier.weight(1f))
+        }
+        Row(modifier = Modifier.fillMaxWidth()) {
+            NextUpDetailBlock(label = "VENUE", value = exam.venue, modifier = Modifier.weight(1f))
+            NextUpDetailBlock(label = "SEAT", value = "${exam.seatLocation} (${exam.seatNumber})", modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun NextUpDetailBlock(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Text(
+            text = label,
+            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.sp
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = value,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 
