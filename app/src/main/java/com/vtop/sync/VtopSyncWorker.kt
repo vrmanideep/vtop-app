@@ -81,7 +81,14 @@ class VtopSyncWorker(
                                 val savedEmail = Vault.getGoogleEmail(context)
 
                                 if (savedEmail.isNotBlank()) {
-                                    val extractedOtp = GmailOtpExtractor.getLatestVtopOtp(context, savedEmail, otpRequestedTime)
+                                    var extractedOtp: String? = null
+                                    // Polling loop: Check every 3 seconds, up to 6 times (18s total)
+                                    for (i in 1..6) {
+                                        delay(3000)
+                                        extractedOtp = GmailOtpExtractor.getLatestVtopOtp(context, savedEmail, otpRequestedTime)
+                                        if (extractedOtp != null) break
+                                    }
+
                                     if (extractedOtp != null) {
                                         resolver.submit(extractedOtp)
                                         return@launch
@@ -89,7 +96,20 @@ class VtopSyncWorker(
                                 }
 
                                 otpTriggered = true
-                                EventBus.emit(AppEvent.AuthOtpRequested(resolver))
+
+                                // Check if the UI is actually alive to catch the EventBus
+                                if (com.vtop.core.AppState.isAppInForeground) {
+                                    EventBus.emit(AppEvent.AuthOtpRequested(resolver))
+                                } else {
+                                    // If the app is killed/backgrounded. Push a standard notification to wake the user.
+                                    NotificationHelper.showNotification(
+                                        context = context,
+                                        title = "VTOP Sync Paused",
+                                        message = "VTOP requires an OTP. Tap to open the app and resume syncing.",
+                                        notificationId = NotificationHelper.OTP_NOTIFICATION_ID
+                                    )
+                                    resolver.cancel()
+                                }
                             }
                         }
                     })

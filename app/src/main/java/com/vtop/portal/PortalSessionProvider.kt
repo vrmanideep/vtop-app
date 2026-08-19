@@ -8,6 +8,7 @@ import com.vtop.network.VtopClient
 import com.vtop.logic.GmailOtpExtractor
 import com.vtop.utils.Vault
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -62,33 +63,30 @@ object PortalSessionProvider {
                                 }
 
                                 override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
-                                    Log.i(TAG, "OTP requested")
-
-                                    kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+                                    CoroutineScope(Dispatchers.IO).launch {
                                         val otpRequestedTime = System.currentTimeMillis()
-                                        val googleEmail = Vault.getGoogleEmail(context)
-                                        var autoExtractedOtp: String? = null
+                                        val savedEmail = Vault.getGoogleEmail(context)
 
-                                        if (googleEmail.isNotBlank()) {
-                                            onStatusUpdate("Reading OTP from Gmail...")
-                                            try {
-                                                delay(3000)
-                                                autoExtractedOtp = GmailOtpExtractor.getLatestVtopOtp(
-                                                    context, googleEmail, otpRequestedTime
-                                                )
-                                            } catch (e: Exception) {
-                                                e.printStackTrace()
+                                        if (savedEmail.isNotBlank()) {
+                                            withContext(Dispatchers.Main) { onStatusUpdate("Fetching OTP from Gmail...") }
+
+                                            var extractedOtp: String? = null
+                                            // Polling loop: Check every 3 seconds, up to 6 times (18s total)
+                                            for (i in 1..6) {
+                                                kotlinx.coroutines.delay(3000)
+                                                extractedOtp = GmailOtpExtractor.getLatestVtopOtp(context, savedEmail, otpRequestedTime)
+                                                if (extractedOtp != null) break
+                                            }
+
+                                            if (extractedOtp != null) {
+                                                withContext(Dispatchers.Main) { onStatusUpdate("Verifying OTP...") }
+                                                resolver.submit(extractedOtp)
+                                                return@launch
                                             }
                                         }
 
-                                        if (!autoExtractedOtp.isNullOrBlank()) {
-                                            Log.i(TAG, "OTP auto-filled")
-                                            onStatusUpdate("OTP Auto-filled! Resuming...")
-                                            resolver.submit(autoExtractedOtp)
-                                        } else {
-                                            Log.i(TAG, "Waiting for manual OTP")
-                                            onOtpRequested(resolver)
-                                        }
+                                        withContext(Dispatchers.Main) { onStatusUpdate("Awaiting manual OTP...") }
+                                        onOtpRequested(resolver)
                                     }
                                 }
                             }

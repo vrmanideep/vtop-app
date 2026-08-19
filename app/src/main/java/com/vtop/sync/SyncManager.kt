@@ -82,7 +82,15 @@ object SyncManager {
 
                                         if (savedEmail.isNotBlank()) {
                                             EventBus.emit(AppEvent.SyncStatusChanged("Fetching OTP from Gmail..."))
-                                            val extractedOtp = GmailOtpExtractor.getLatestVtopOtp(context, savedEmail, otpRequestedTime)
+
+                                            var extractedOtp: String? = null
+                                            // Polling loop: Check every 3 seconds, up to 6 times (18s total)
+                                            for (i in 1..6) {
+                                                kotlinx.coroutines.delay(3000)
+                                                extractedOtp = GmailOtpExtractor.getLatestVtopOtp(context, savedEmail, otpRequestedTime)
+                                                if (extractedOtp != null) break
+                                            }
+
                                             if (extractedOtp != null) {
                                                 EventBus.emit(AppEvent.SyncStatusChanged("Verifying OTP..."))
                                                 resolver.submit(extractedOtp)
