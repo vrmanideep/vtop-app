@@ -83,10 +83,17 @@ public class VtopClient {
 
         public SharedPrefsCookieJar(Context ctx, String preferenceName) {
             prefs = ctx.getSharedPreferences(preferenceName, Context.MODE_PRIVATE);
+            SharedPreferences.Editor ed = prefs.edit();
+            boolean needsCleanup = false;
+
             for (Map.Entry<String, ?> entry : prefs.getAll().entrySet()) {
                 try {
                     String val = (String) entry.getValue();
-                    if (val == null) continue;
+                    if (val == null) {
+                        ed.remove(entry.getKey());
+                        needsCleanup = true;
+                        continue;
+                    }
                     String[] p = val.split(Pattern.quote(SEP));
                     if (p.length >= 8) {
                         Cookie.Builder builder = new Cookie.Builder().name(p[0]).value(p[1]).path(p[3]);
@@ -96,19 +103,46 @@ public class VtopClient {
                         long expiresAt = Long.parseLong(p[6]);
                         if (expiresAt != Long.MIN_VALUE) builder.expiresAt(expiresAt);
                         Cookie c = builder.build();
-                        if (expiresAt == Long.MIN_VALUE || expiresAt >= System.currentTimeMillis()) memory.put(cookieKey(c), c);
+
+                        if (expiresAt == Long.MIN_VALUE || expiresAt >= System.currentTimeMillis()) {
+                            memory.put(cookieKey(c), c);
+                        } else {
+                            ed.remove(entry.getKey()); // Clean up expired on load
+                            needsCleanup = true;
+                        }
+                    } else {
+                        ed.remove(entry.getKey()); // Clean up corrupted data
+                        needsCleanup = true;
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) {
+                    ed.remove(entry.getKey());
+                    needsCleanup = true;
+                }
             }
+            if (needsCleanup) ed.apply();
         }
 
         @Override
         public void saveFromResponse(@NonNull HttpUrl url, @NonNull List<Cookie> cookies) {
             SharedPreferences.Editor ed = prefs.edit();
+            long now = System.currentTimeMillis();
+
+            // 1. Save new cookies
             for (Cookie c : cookies) {
                 memory.put(cookieKey(c), c);
                 String s = c.name() + SEP + c.value() + SEP + c.domain() + SEP + c.path() + SEP + c.secure() + SEP + c.httpOnly() + SEP + c.expiresAt() + SEP + c.hostOnly();
                 ed.putString(cookieKey(c), s);
+            }
+
+            // 2. Sweep and remove expired cookies from both memory and disk
+            java.util.Iterator<Map.Entry<String, Cookie>> iterator = memory.entrySet().iterator();
+            while (iterator.hasNext()) {
+                Map.Entry<String, Cookie> entry = iterator.next();
+                Cookie c = entry.getValue();
+                if (c.expiresAt() != Long.MIN_VALUE && c.expiresAt() < now) {
+                    ed.remove(entry.getKey());
+                    iterator.remove();
+                }
             }
             ed.apply();
         }
@@ -323,7 +357,7 @@ public class VtopClient {
                     try (Response finalRes = client.newCall(new Request.Builder().url(redirectUrl).get().build()).execute()) {
                         String contentHtml = finalRes.body() != null ? finalRes.body().string() : "";
 
-                        // FIX: VTOP sometimes redirects back to /login even though OTP succeeded.
+                        // VTOP sometimes redirects back to /login even though OTP succeeded.
                         // Force a manual fetch to /content to double-check if the session is alive.
                         if (!contentHtml.contains("Sign out")) {
                             try (Response fallbackRes = client.newCall(new Request.Builder().url(BASE_URL + "/content").get().build()).execute()) {
