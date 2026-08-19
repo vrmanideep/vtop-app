@@ -67,7 +67,7 @@ import com.vtop.core.EventBus
 import com.vtop.core.TimetableRepository
 import com.vtop.models.TimetableModel
 import com.vtop.network.VtopClient
-import com.vtop.sync.SyncManager
+import com.vtop.sync.*
 import com.vtop.ui.screens.auth.GoogleSignInDialog
 import com.vtop.ui.screens.main.*
 import com.vtop.ui.screens.sub.*
@@ -127,14 +127,14 @@ class MainActivity : ComponentActivity() {
         val savedAppVersion = sharedPrefs.getString("SAVED_APP_VERSION", "0.0.0") ?: "0.0.0"
 
         if (savedAppVersion != currentAppVersion) {
-            val vaultEditor = vaultPrefs.edit()
-            vaultEditor.remove("OFFLINE_SEM_OPTIONS")
-            vaultEditor.remove("OFFLINE_CAL_SEM_OPTIONS")
-            vaultPrefs.all.keys.forEach { key ->
-                if (key.startsWith("OFFLINE_ACADEMIC_CALENDAR_")) vaultEditor.remove(key)
+            vaultPrefs.edit {
+                remove("OFFLINE_SEM_OPTIONS")
+                remove("OFFLINE_CAL_SEM_OPTIONS")
+                vaultPrefs.all.keys.forEach { key ->
+                    if (key.startsWith("OFFLINE_ACADEMIC_CALENDAR_")) remove(key)
+                }
             }
-            vaultEditor.apply()
-            sharedPrefs.edit().putString("SAVED_APP_VERSION", currentAppVersion).apply()
+            sharedPrefs.edit { putString("SAVED_APP_VERSION", currentAppVersion) } // FIX: KTX Extension
             intent.putExtra("TRIGGER_INITIAL_SYNC", true)
         }
 
@@ -153,12 +153,12 @@ class MainActivity : ComponentActivity() {
 
         val autoSyncInterval = try { sharedPrefs.getInt("AUTO_SYNC_INTERVAL", 8) } catch (_: ClassCastException) {
             val legacy = sharedPrefs.getLong("AUTO_SYNC_INTERVAL", 8L).toInt()
-            sharedPrefs.edit().putInt("AUTO_SYNC_INTERVAL", legacy).apply()
+            sharedPrefs.edit { putInt("AUTO_SYNC_INTERVAL", legacy) } // FIX: KTX Extension
             legacy
         }
 
         if (autoSyncInterval > 0) {
-            val syncRequest = PeriodicWorkRequestBuilder<com.vtop.sync.VtopSyncWorker>(
+            val syncRequest = PeriodicWorkRequestBuilder<VtopSyncWorker>( // FIX: Removed redundant qualifier
                 autoSyncInterval.toLong(), TimeUnit.HOURS
             ).build()
 
@@ -167,7 +167,7 @@ class MainActivity : ComponentActivity() {
             WorkManager.getInstance(this).cancelUniqueWork("VTOP_BACKGROUND_SYNC")
         }
 
-        val testAttendanceWorker = OneTimeWorkRequestBuilder<com.vtop.sync.VtopSyncWorker>().build()
+        val testAttendanceWorker = OneTimeWorkRequestBuilder<VtopSyncWorker>().build() // FIX: Removed redundant qualifier
         WorkManager.getInstance(this).enqueue(testAttendanceWorker)
 
         lifecycleScope.launch(Dispatchers.IO) {
@@ -297,13 +297,14 @@ class MainActivity : ComponentActivity() {
                                                 callback.onResult(dummyData)
                                             }
 
+
                                             override fun onViewPass(id: String, isWeekend: Boolean, onReady: (File?) -> Unit) {
                                                 lifecycleScope.launch(Dispatchers.IO) {
                                                     try {
                                                         val creds = Vault.getCredentials(this@MainActivity)
                                                         val regNo = Vault.getRegNo(this@MainActivity)
                                                         val client = VtopClient(this@MainActivity, creds[0]!!, creds[1]!!)
-                                                        client.setAuthorizedId(regNo)
+                                                        client.authorizedId = regNo // FIX: Property access syntax
                                                         val tempFile = File(cacheDir, "outpass_$id.pdf")
                                                         val success = client.downloadAndCacheOutpass(id, isWeekend, regNo, tempFile)
 
@@ -326,8 +327,12 @@ class MainActivity : ComponentActivity() {
                                                             }
                                                             withContext(Dispatchers.Main) {
                                                                 NotificationHelper.showDownloadNotificationFromUri(
-                                                                    context = this@MainActivity, uri = uri, fileName = fileName,
-                                                                    title = "Outpass Downloaded", description = "Tap to open $fileName"
+                                                                    context = this@MainActivity,
+                                                                    uri = uri,
+                                                                    fileName = fileName,
+                                                                    mimeType = "application/pdf", // FIX: Added missing mimeType
+                                                                    title = "Outpass Downloaded",
+                                                                    description = "Tap to open $fileName"
                                                                 )
                                                                 Toast.makeText(this@MainActivity, "Outpass saved to Downloads", Toast.LENGTH_SHORT).show()
                                                                 onReady(tempFile)

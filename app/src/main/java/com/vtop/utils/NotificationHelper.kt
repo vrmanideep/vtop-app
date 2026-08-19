@@ -187,11 +187,18 @@ object NotificationHelper {
             e.printStackTrace()
         }
     }
-    // Paste this inside NotificationHelper object
-    fun showDownloadNotificationFromUri(context: Context, uri: Uri, fileName: String, title: String, description: String) {
+
+    // 6. Fire Download Notification From Uri with proper MIME type support
+    fun showDownloadNotificationFromUri(
+        context: Context,
+        uri: Uri,
+        fileName: String,
+        mimeType: String,
+        title: String,
+        description: String
+    ) {
         val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/pdf")
-            // Crucial: Grants the PDF viewer permission to read this specific URI
+            setDataAndType(uri, mimeType)
             flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK
         }
 
@@ -223,7 +230,7 @@ object NotificationHelper {
         }
     }
 
-    // 6. Fire Exam Seat Notification (Sticky until +30 mins)
+    // 7. Fire Exam Seat Notification (Sticky until +30 mins)
     fun showExamSeatNotification(context: Context, title: String, message: String, examStartTimeMillis: Long) {
         val clearTimeMillis = examStartTimeMillis + (30 * 60 * 1000) // +30 mins
         val timeUntilClear = clearTimeMillis - System.currentTimeMillis()

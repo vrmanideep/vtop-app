@@ -47,6 +47,7 @@ fun VtopPortalScreen(
     var isLoading by remember { mutableStateOf(true) }
     var sessionError by remember { mutableStateOf<String?>(null) }
     var activeClient by remember { mutableStateOf<VtopClient?>(null) }
+    var sessionKey by remember { mutableIntStateOf(0) }
 
     val portalPreferences = remember { context.getSharedPreferences("vtop_portal_preferences", Context.MODE_PRIVATE) }
     val isParallel = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE).getBoolean("PARALLEL_PORTAL_SESSION", false) }
@@ -71,7 +72,10 @@ fun VtopPortalScreen(
         )
 
         result.onSuccess { client ->
-            withContext(Dispatchers.Main) { activeClient = client }
+            withContext(Dispatchers.Main) {
+                activeClient = client
+                sessionKey++
+            }
         }.onFailure { error ->
             withContext(Dispatchers.Main) { sessionError = error.message ?: "Unknown error occurred" }
         }
@@ -136,6 +140,7 @@ fun VtopPortalScreen(
 
             PortalHost(
                 activeClient = activeClient!!,
+                sessionKey = sessionKey,
                 desktopMode = desktopMode,
                 onPageLoading = { isLoading = it },
                 onTitleUpdate = { pageTitle = it },
