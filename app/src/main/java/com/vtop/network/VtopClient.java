@@ -143,10 +143,14 @@ public class VtopClient {
         this.cookieJarInstance = new SharedPrefsCookieJar(context.getApplicationContext(), prefsName);
 
         if (sharedClient == null) {
-            sharedClient = getUnsafeOkHttpClientBuilder()
-                    .connectTimeout(30, TimeUnit.SECONDS)
-                    .readTimeout(30, TimeUnit.SECONDS)
-                    .build();
+            synchronized (VtopClient.class) {
+                if (sharedClient == null) {
+                    sharedClient = getUnsafeOkHttpClientBuilder()
+                            .connectTimeout(30, TimeUnit.SECONDS)
+                            .readTimeout(30, TimeUnit.SECONDS)
+                            .build();
+                }
+            }
         }
 
         // Isolate the CookieJar per instance while sharing network resources[cite: 24]
@@ -315,9 +319,20 @@ public class VtopClient {
                     if (!"SUCCESS".equals(json.optString("status"))) throw new VtopException.LoginOtpIncorrect("OTP failed: " + json.optString("message"));
                     String redirectUrl = json.optString("redirectUrl");
                     if (redirectUrl.startsWith("/")) redirectUrl = redirectUrl.startsWith("/vtop/") ? "https://vtop.vitap.ac.in" + redirectUrl : BASE_URL + redirectUrl;
+
                     try (Response finalRes = client.newCall(new Request.Builder().url(redirectUrl).get().build()).execute()) {
                         String contentHtml = finalRes.body() != null ? finalRes.body().string() : "";
+
+                        // FIX: VTOP sometimes redirects back to /login even though OTP succeeded.
+                        // Force a manual fetch to /content to double-check if the session is alive.
+                        if (!contentHtml.contains("Sign out")) {
+                            try (Response fallbackRes = client.newCall(new Request.Builder().url(BASE_URL + "/content").get().build()).execute()) {
+                                contentHtml = fallbackRes.body() != null ? fallbackRes.body().string() : "";
+                            }
+                        }
+
                         if (!contentHtml.contains("Sign out")) throw new VtopException.SessionExpired("Session not established after OTP");
+
                         persistCsrf(context, extractToken(contentHtml));
                         extractAndSetAuthorizedId(contentHtml);
                         if (listener != null) listener.onStatusUpdate("LOGIN_SUCCESS");
