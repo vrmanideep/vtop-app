@@ -35,21 +35,7 @@ object ExamSeatScheduler {
                 val safeExamType = exam.examType.replace(" ", "_")
                 val baseId = "${exam.courseCode}_$safeExamType"
 
-                // 2. FIX: Schedule the 2-day reminder using ExamCheckWorker
-                val reminderTarget = Calendar.getInstance().apply {
-                    time = examDate
-                    add(Calendar.DAY_OF_YEAR, -2) // 2 days before the exam
-                    set(Calendar.HOUR_OF_DAY, 9)  // At 9:00 AM
-                    set(Calendar.MINUTE, 0)
-                    set(Calendar.SECOND, 0)
-                }
-
-                if (reminderTarget.after(now)) {
-                    val delay = reminderTarget.timeInMillis - now.timeInMillis
-                    queueReminderWorker(workManager, "REMINDER_$baseId", delay, exam.examType)
-                }
-
-                // 3. Calculate actual 7:01 AM Sync
+                // 2. Calculate actual 7:01 AM Sync
                 val morningTarget = Calendar.getInstance().apply {
                     time = examDate
                     set(Calendar.HOUR_OF_DAY, 7)
@@ -62,7 +48,7 @@ object ExamSeatScheduler {
                     queueSyncWorker(workManager, "EXAM_MORNING_$baseId", delay)
                 }
 
-                // 4. Calculate actual 12:01 PM Sync (Only if it's a CAT)
+                // 3. Calculate actual 12:01 PM Sync (Only if it's a CAT)
                 if (!isFat) {
                     val afternoonTarget = Calendar.getInstance().apply {
                         time = examDate
@@ -98,23 +84,5 @@ object ExamSeatScheduler {
             syncRequest
         )
         Log.d(TAG, "SYNC QUEUE: $uniqueId scheduled to fire in ${actualDelayInMillis / 1000 / 60} minutes.")
-    }
-
-    private fun queueReminderWorker(workManager: WorkManager, uniqueId: String, actualDelayInMillis: Long, examType: String) {
-        val inputData = Data.Builder()
-            .putString("EXAM_TYPE", examType)
-            .build()
-
-        val reminderRequest = OneTimeWorkRequestBuilder<ExamCheckWorker>()
-            .setInitialDelay(actualDelayInMillis, TimeUnit.MILLISECONDS)
-            .setInputData(inputData)
-            .build()
-
-        workManager.enqueueUniqueWork(
-            uniqueId,
-            ExistingWorkPolicy.REPLACE,
-            reminderRequest
-        )
-        Log.d(TAG, "REMINDER QUEUE: $uniqueId scheduled to fire in ${actualDelayInMillis / 1000 / 60} minutes.")
     }
 }
