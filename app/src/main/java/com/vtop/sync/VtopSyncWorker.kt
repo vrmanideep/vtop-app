@@ -27,6 +27,7 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import kotlin.time.Duration.Companion.seconds
 
 class VtopSyncWorker(
     private val context: Context,
@@ -82,9 +83,8 @@ class VtopSyncWorker(
 
                                 if (savedEmail.isNotBlank()) {
                                     var extractedOtp: String? = null
-                                    // Polling loop: Check every 3 seconds, up to 6 times (18s total)
-                                    for (i in 1..6) {
-                                        delay(3000)
+                                    for (_i in 1..6) {
+                                        delay(3.seconds)
                                         extractedOtp = GmailOtpExtractor.getLatestVtopOtp(context, savedEmail, otpRequestedTime)
                                         if (extractedOtp != null) break
                                     }
@@ -97,11 +97,9 @@ class VtopSyncWorker(
 
                                 otpTriggered = true
 
-                                // Check if the UI is actually alive to catch the EventBus
                                 if (com.vtop.core.AppState.isAppInForeground) {
                                     EventBus.emit(AppEvent.AuthOtpRequested(resolver))
                                 } else {
-                                    // If the app is killed/backgrounded. Push a standard notification to wake the user.
                                     NotificationHelper.showNotification(
                                         context = context,
                                         title = "VTOP Sync Paused",
@@ -139,7 +137,7 @@ class VtopSyncWorker(
             var authorizedId = Vault.getRegNo(context)
             if (authorizedId.isBlank() || authorizedId == "-") authorizedId = username
 
-            client.setAuthorizedId(authorizedId)
+            client.authorizedId = authorizedId
             val semInfo = Vault.getSelectedSemester(context)
             val semId = semInfo[0] ?: ""
 
@@ -180,9 +178,33 @@ class VtopSyncWorker(
                             message = "${exam.venue} | Seat ${exam.seatLocation} (${exam.seatNumber}) | ${exam.courseCode} ${exam.examType}",
                             examStartTimeMillis = examStartTimeMillis
                         )
-                        delay(1000)
+                        delay(1.seconds)
                     }
                     ExamsRepository.update(context, newExams)
+
+                    // --- LOCAL BACKGROUND CALENDAR SYNC ---
+                    val prefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
+                    val savedCalId = prefs.getLong("CALENDAR_ID", -1L)
+
+                    if (savedCalId != -1L) {
+                        CalendarSync.clearSyncedEvents(context, savedCalId)
+                        val timetable = Vault.getTimetable(context)
+
+                        if (timetable != null) {
+                            CalendarSync.syncToCalendar(
+                                context = context,
+                                timetable = timetable,
+                                exams = newExams,
+                                mergeLabs = prefs.getBoolean("MERGE_LABS", true),
+                                calendarId = savedCalId,
+                                reminderMinutes = prefs.getInt("CALENDAR_REMINDER", 15),
+                                endDateString = CalendarSync.getDefaultEndDate(context),
+                                titleTemplate = prefs.getString("CALENDAR_TITLE", "{courseCode} - {courseType}") ?: "{courseCode} - {courseType}",
+                                descTemplate = prefs.getString("CALENDAR_DESC", "{courseTitle}\n{faculty}") ?: "{courseTitle}\n{faculty}",
+                                locTemplate = prefs.getString("CALENDAR_LOC", "{venue}") ?: "{venue}"
+                            )
+                        }
+                    }
                 }
             }
 
@@ -200,7 +222,7 @@ class VtopSyncWorker(
                         if (validScore && (oldMark == null || oldMark.scoredMark != newMark.scoredMark)) {
                             NotificationHelper.showNotification(context, "New Marks Uploaded", "Your ${newMark.title} marks of ${newCourse.courseCode} - ${newCourse.courseType} have been updated.", 301 + notificationCount)
                             notificationCount++
-                            delay(1000)
+                            delay(1.seconds)
                         }
                     }
                 }
