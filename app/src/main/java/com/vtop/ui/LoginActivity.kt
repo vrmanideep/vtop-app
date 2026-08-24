@@ -14,6 +14,8 @@ import androidx.lifecycle.lifecycleScope
 import com.vtop.network.VtopClient
 import com.vtop.core.AppState
 import com.vtop.core.AuthStateManager
+import com.vtop.core.SessionManager
+import com.vtop.sync.SyncManager
 import com.vtop.ui.screens.auth.LoginScreen
 import com.vtop.ui.screens.auth.OnboardingFlow
 import com.vtop.ui.theme.AppTheme
@@ -63,11 +65,8 @@ class LoginActivity : ComponentActivity() {
 
             AppTheme(themeMode = savedTheme) {
                 if (showOnboarding) {
-                    // Triggers sequential onboarding instead of jumping straight to Main
                     OnboardingFlow(onComplete = {
-                        val intent = Intent(this@LoginActivity, MainActivity::class.java).apply {
-                            putExtra("TRIGGER_INITIAL_SYNC", true)
-                        }
+                        val intent = Intent(this@LoginActivity, MainActivity::class.java)
                         startActivity(intent)
                         finish()
                     })
@@ -108,6 +107,9 @@ class LoginActivity : ComponentActivity() {
                                         }
 
                                         if (loginSuccess) {
+                                            // Inject the authorized client into the App Session
+                                            SessionManager.setSyncClient(client)
+
                                             if (client.authorizedId != null && !client.authorizedId.isEmpty() && !client.authorizedId.equals(regNo)) {
                                                 Vault.saveRegNo(this@LoginActivity, client.authorizedId)
                                             }
@@ -127,19 +129,16 @@ class LoginActivity : ComponentActivity() {
                                             }
                                         } else {
                                             withContext(Dispatchers.Main) {
-                                                // Fallback if autoLogin returns false without throwing
                                                 AuthStateManager.loginError.value = "Login failed. VTOP might be unresponsive."
                                                 AuthStateManager.currentState.value = AuthState.FORM
                                             }
                                         }
                                     } catch (e: com.vtop.network.VtopException) {
-                                        // Properly catches your custom VtopExceptions and displays their exact messages
                                         withContext(Dispatchers.Main) {
                                             AuthStateManager.loginError.value = e.message
                                             AuthStateManager.currentState.value = AuthState.FORM
                                         }
                                     } catch (e: Exception) {
-                                        // Generic fallback for actual network/crash issues
                                         withContext(Dispatchers.Main) {
                                             AuthStateManager.loginError.value = "Network error: ${e.message}"
                                             AuthStateManager.currentState.value = AuthState.FORM
@@ -149,16 +148,20 @@ class LoginActivity : ComponentActivity() {
                             }
 
                             override fun onSemesterSelect(semId: String, semName: String) {
-                                AuthStateManager.currentState.value = AuthState.DOWNLOADING_DATA
+                                Vault.saveSelectedSemester(this@LoginActivity, semId, semName)
 
+                                // Trigger sync instantly without blocking the UI
                                 lifecycleScope.launch(Dispatchers.IO) {
-                                    Vault.saveSelectedSemester(this@LoginActivity, semId, semName)
-
-                                    withContext(Dispatchers.Main) {
-                                        // Trigger the onboarding flow here
-                                        showOnboarding = true
-                                    }
+                                    SyncManager.performSync(
+                                        context = this@LoginActivity,
+                                        priorityTab = "HOME",
+                                        forceNewSession = false,
+                                        targetSemId = semId,
+                                        skipLogin = true // Use the cookies we just established!
+                                    )
                                 }
+
+                                showOnboarding = true
                             }
                         }
                     )

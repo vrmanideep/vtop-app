@@ -9,6 +9,7 @@ import com.vtop.widget.NextClassWidget
 import com.vtop.core.*
 import com.vtop.network.VtopClient
 import com.vtop.network.VtopException
+import com.vtop.network.FacultyScraper
 import com.vtop.utils.*
 import com.vtop.logic.*
 import com.vtop.telemetry.model.TelemetryModule
@@ -38,7 +39,7 @@ object SyncManager {
         EventBus.tryEmit(AppEvent.SyncStatusChanged("IDLE"))
     }
 
-    suspend fun performSync(context: Context, priorityTab: String? = null, forceNewSession: Boolean = false, targetSemId: String? = null) {
+    suspend fun performSync(context: Context, priorityTab: String? = null, forceNewSession: Boolean = false, targetSemId: String? = null, skipLogin: Boolean = false) {
         if (_isSyncing.value) {
             Log.w(TAG, "performSync ignored: already syncing")
             return
@@ -47,7 +48,7 @@ object SyncManager {
         activeSyncJob = syncScope.launch {
             try {
                 _isSyncing.value = true
-                EventBus.emit(AppEvent.SyncStatusChanged("Logging in..."))
+                EventBus.emit(AppEvent.SyncStatusChanged("Initializing..."))
 
                 val existingClient = SessionManager.getSyncClient()
                 val client: VtopClient
@@ -67,58 +68,61 @@ object SyncManager {
                     client.reinitializeSession(context)
                 }
 
-                var loginSuccess = false
+                var loginSuccess = skipLogin
                 var attempts = 0
 
-                TelemetryTracer.trace("Login", TelemetryModule.AUTH) {
-                    while (attempts < MAX_RETRY && !loginSuccess) {
-                        try {
-                            loginSuccess = client.autoLogin(context, object : VtopClient.LoginListener {
-                                override fun onStatusUpdate(message: String) { }
-                                override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
-                                    syncScope.launch(Dispatchers.IO) {
-                                        val otpRequestedTime = System.currentTimeMillis()
-                                        val savedEmail = Vault.getGoogleEmail(context)
+                if (!loginSuccess) {
+                    EventBus.emit(AppEvent.SyncStatusChanged("Logging in..."))
+                    TelemetryTracer.trace("Login", TelemetryModule.AUTH) {
+                        while (attempts < MAX_RETRY && !loginSuccess) {
+                            try {
+                                loginSuccess = client.autoLogin(context, object : VtopClient.LoginListener {
+                                    override fun onStatusUpdate(message: String) { }
+                                    override fun onOtpRequired(resolver: VtopClient.OtpResolver) {
+                                        syncScope.launch(Dispatchers.IO) {
+                                            val otpRequestedTime = System.currentTimeMillis()
+                                            val savedEmail = Vault.getGoogleEmail(context)
 
-                                        if (savedEmail.isNotBlank()) {
-                                            EventBus.emit(AppEvent.SyncStatusChanged("Fetching OTP from Gmail..."))
+                                            if (savedEmail.isNotBlank()) {
+                                                EventBus.emit(AppEvent.SyncStatusChanged("Fetching OTP from Gmail..."))
 
-                                            var extractedOtp: String? = null
-                                            // Polling loop: Check every 3 seconds, up to 6 times (18s total)
-                                            for (i in 1..6) {
-                                                kotlinx.coroutines.delay(3000)
-                                                extractedOtp = GmailOtpExtractor.getLatestVtopOtp(context, savedEmail, otpRequestedTime)
-                                                if (extractedOtp != null) break
+                                                var extractedOtp: String? = null
+                                                for (i in 1..6) {
+                                                    kotlinx.coroutines.delay(3000)
+                                                    extractedOtp = GmailOtpExtractor.getLatestVtopOtp(context, savedEmail, otpRequestedTime)
+                                                    if (extractedOtp != null) break
+                                                }
+
+                                                if (extractedOtp != null) {
+                                                    EventBus.emit(AppEvent.SyncStatusChanged("Verifying OTP..."))
+                                                    resolver.submit(extractedOtp)
+                                                    return@launch
+                                                }
                                             }
 
-                                            if (extractedOtp != null) {
-                                                EventBus.emit(AppEvent.SyncStatusChanged("Verifying OTP..."))
-                                                resolver.submit(extractedOtp)
-                                                return@launch
-                                            }
+                                            EventBus.emit(AppEvent.SyncStatusChanged("Awaiting manual OTP..."))
+                                            EventBus.emit(AppEvent.AuthOtpRequested(resolver))
                                         }
-
-                                        EventBus.emit(AppEvent.SyncStatusChanged("Awaiting manual OTP..."))
-                                        EventBus.emit(AppEvent.AuthOtpRequested(resolver))
                                     }
-                                }
-                            })
-                        } catch (e: VtopException.InvalidCredentials) {
-                            SessionManager.invalidateSync()
-                            throw e
-                        } catch (e: VtopException.AuthenticationFailed) {
-                            SessionManager.invalidateSync()
-                            throw e
-                        } catch (e: Exception) {
-                            if (e is CancellationException) throw e
-                            loginSuccess = false
-                        }
+                                })
+                            } catch (e: VtopException.InvalidCredentials) {
+                                SessionManager.invalidateSync()
+                                throw e
+                            } catch (e: VtopException.AuthenticationFailed) {
+                                SessionManager.invalidateSync()
+                                throw e
+                            } catch (e: Exception) {
+                                if (e is CancellationException) throw e
+                                loginSuccess = false
+                            }
 
-                        if (!loginSuccess) {
-                            attempts++
-                            if (attempts < MAX_RETRY) {
-                                EventBus.emit(AppEvent.ToastMessage("Login failed. Retrying..."))
-                                client.reinitializeSession(context)
+                            if (!loginSuccess) {
+                                attempts++
+                                if (attempts < MAX_RETRY) {
+                                    EventBus.emit(AppEvent.ToastMessage("Login failed. Retrying..."))
+                                    client.reinitializeSession(context)
+                                    kotlinx.coroutines.delay(2000L)
+                                }
                             }
                         }
                     }
@@ -174,7 +178,7 @@ object SyncManager {
                             val profileHtml = client.fetchProfileRawHtml(null)
                             ProfileRepository.update(context, ProfileParser.parse(profileHtml))
                         }
-                        "CALENDAR" -> { updateStatus("Syncing Calendar..."); syncCalendar(context, client, semId) }
+                        "CALENDAR" -> { syncCalendar(context, client, semId) } // Silent
                     }
                 }
 
@@ -192,15 +196,25 @@ object SyncManager {
                         val profileHtml = client.fetchProfileRawHtml(null)
                         ProfileRepository.update(context, ProfileParser.parse(profileHtml))
                     }
+
                     if (priority != "CALENDAR") {
                         val existingCalendar = Vault.getAcademicCalendar(context, semId)
                         if (existingCalendar.isEmpty()) {
-                            updateStatus("Fetching Academic Calendar...")
-                            syncCalendar(context, client, semId)
+                            syncCalendar(context, client, semId) // Silent
+                        }
+                    }
+
+                    TelemetryTracer.trace("Faculty", TelemetryModule.SYNC) {
+                        try {
+                            val downloadedFaculty = FacultyScraper.download(client)
+                            if (downloadedFaculty.isNotEmpty()) {
+                                FacultyStorage.saveFaculty(context, downloadedFaculty)
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Faculty sync failed", e)
                         }
                     }
                 }
-
 
                 updateStatus("Finishing up...")
                 Vault.saveLastSyncTime(context)
@@ -281,8 +295,7 @@ object SyncManager {
 
             if (availableDates.isNotEmpty()) {
                 val allEvents = mutableListOf<com.vtop.models.AcademicCalendarEvent>()
-                availableDates.forEachIndexed { index, dateStr ->
-                    EventBus.emit(AppEvent.SyncStatusChanged("Syncing Calendar (Month ${index + 1} of ${availableDates.size})..."))
+                availableDates.forEachIndexed { _, dateStr ->
                     val html = client.fetchCalendarRawHtml(semId, dateStr, "ALL")
                     if (!html.isNullOrBlank()) {
                         val monthlyEvents = CalendarParser.parseCalendarHtml(html)
