@@ -274,10 +274,8 @@ fun Profile(
     val basicInfo = profileData["basic"] ?: emptyMap()
     val name = basicInfo["name"]?.takeIf { it != "-" && it.isNotBlank() } ?: "Student Name"
     val regNo = basicInfo["regno"]?.takeIf { it != "-" && it.isNotBlank() } ?: "Fetching details..."
-    val branch = basicInfo["program"]?.takeIf { it != "-" && it.isNotBlank() } ?: "Programme"
     val initial = name.firstOrNull()?.uppercase() ?: ""
 
-    var heroTapCount by remember { mutableIntStateOf(0) }
     var isMoreExpanded by remember { mutableStateOf(false) }
     var isPreferencesExpanded by remember { mutableStateOf(false) }
 
@@ -1227,11 +1225,14 @@ fun Profile(
         }
 
         ProfilePage.FACULTY -> {
-            FacultyScreen(
-                onBack = {
-                    currentPage = ProfilePage.MAIN
-                }
-            )
+            vtopClient?.let { client ->
+                FacultyScreen(
+                    vtopClient = client,
+                    onBack = {
+                        currentPage = ProfilePage.MAIN
+                    }
+                )
+            }
         }
 
         ProfilePage.ACADEMIC_CALENDAR -> {

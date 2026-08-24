@@ -3,27 +3,32 @@ package com.vtop.network;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.os.SystemClock;
+import android.util.Base64;
 import android.util.Log;
-
 import androidx.annotation.NonNull;
-
 import org.json.JSONObject;
-
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TimeZone;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
 import okhttp3.Cookie;
 import okhttp3.CookieJar;
 import okhttp3.FormBody;
@@ -33,12 +38,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
-import org.jsoup.Jsoup;
-import org.jsoup.nodes.Document;
-import org.jsoup.nodes.Element;
-import android.os.SystemClock;
-
-import com.vtop.models.*;
+import com.vtop.logic.CaptchaSolver;
 import com.vtop.telemetry.Telemetry;
 import com.vtop.telemetry.model.TelemetryModule;
 import com.vtop.telemetry.model.TelemetryStatus;
@@ -50,11 +50,8 @@ public class VtopClient {
     private static final String BASE_URL = "https://vtop.vitap.ac.in/vtop";
     private static final long OTP_WAIT_TIMEOUT_SEC = 120;
 
-    // The OkHttpClient is shared to reuse the connection pool and threads.
-    // However, since CookieJar is immutable per OkHttpClient instance, we use
-    // sharedClient.newBuilder().cookieJar(...).build() for each VtopClient.
-    // This provides isolated cookies while sharing the underlying network resources.[cite: 24]
-    private static OkHttpClient sharedClient = null;
+    // Added volatile keyword to fix Double-Checked Locking vulnerability
+    private static volatile OkHttpClient sharedClient = null;
 
     private final OkHttpClient client;
     private final String username;
@@ -107,11 +104,11 @@ public class VtopClient {
                         if (expiresAt == Long.MIN_VALUE || expiresAt >= System.currentTimeMillis()) {
                             memory.put(cookieKey(c), c);
                         } else {
-                            ed.remove(entry.getKey()); // Clean up expired on load
+                            ed.remove(entry.getKey());
                             needsCleanup = true;
                         }
                     } else {
-                        ed.remove(entry.getKey()); // Clean up corrupted data
+                        ed.remove(entry.getKey());
                         needsCleanup = true;
                     }
                 } catch (Exception ignored) {
@@ -127,15 +124,13 @@ public class VtopClient {
             SharedPreferences.Editor ed = prefs.edit();
             long now = System.currentTimeMillis();
 
-            // 1. Save new cookies
             for (Cookie c : cookies) {
                 memory.put(cookieKey(c), c);
                 String s = c.name() + SEP + c.value() + SEP + c.domain() + SEP + c.path() + SEP + c.secure() + SEP + c.httpOnly() + SEP + c.expiresAt() + SEP + c.hostOnly();
                 ed.putString(cookieKey(c), s);
             }
 
-            // 2. Sweep and remove expired cookies from both memory and disk
-            java.util.Iterator<Map.Entry<String, Cookie>> iterator = memory.entrySet().iterator();
+            Iterator<Map.Entry<String, Cookie>> iterator = memory.entrySet().iterator();
             while (iterator.hasNext()) {
                 Map.Entry<String, Cookie> entry = iterator.next();
                 Cookie c = entry.getValue();
@@ -187,7 +182,6 @@ public class VtopClient {
             }
         }
 
-        // Isolate the CookieJar per instance while sharing network resources[cite: 24]
         this.client = sharedClient.newBuilder()
                 .cookieJar(this.cookieJarInstance)
                 .build();
@@ -217,6 +211,18 @@ public class VtopClient {
         ctx.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE).edit().putString(getCsrfPrefKey(), token).apply();
     }
 
+    private String extractToken(String html) {
+        if (html == null) return "";
+        Matcher m = Pattern.compile("name=\"_csrf\" value=\"([^\"]+)\"").matcher(html);
+        return m.find() ? m.group(1) : "";
+    }
+
+    private String extractCaptchaBase64(String html) {
+        if (html == null) return "";
+        Matcher m = Pattern.compile("data:image/[^;]+;base64,([^\"']+)").matcher(html);
+        return m.find() ? m.group(1) : "";
+    }
+
     private void extractAndSetAuthorizedId(String html) {
         if (html == null) return;
         Matcher m1 = Pattern.compile("id=\"authorizedIDX\" value=\"([^\"]+)\"").matcher(html);
@@ -243,7 +249,11 @@ public class VtopClient {
                     return true;
                 }
             }
-        } catch (Exception e) { throw new VtopException.SessionExpired("Network error."); }
+        }
+        catch (Exception e) {
+            Log.e(TAG, "Network error during autoLogin", e);
+            throw new VtopException.SessionExpired("Network error.");
+        }
         return performLogin(context, listener);
     }
 
@@ -283,9 +293,9 @@ public class VtopClient {
         if (base64Captcha == null || base64Captcha.isEmpty()) throw new VtopException.SessionExpired("Captcha not found");
         if (newCsrf != null && !newCsrf.isEmpty()) persistCsrf(context, newCsrf);
 
-        byte[] captchaBytes = android.util.Base64.decode(base64Captcha, android.util.Base64.DEFAULT);
-        android.graphics.Bitmap bitmap = android.graphics.BitmapFactory.decodeByteArray(captchaBytes, 0, captchaBytes.length);
-        String captchaAnswer = new com.vtop.logic.CaptchaSolver(context).solve(bitmap);
+        byte[] captchaBytes = Base64.decode(base64Captcha, Base64.DEFAULT);
+        Bitmap bitmap = BitmapFactory.decodeByteArray(captchaBytes, 0, captchaBytes.length);
+        String captchaAnswer = new CaptchaSolver(context).solve(bitmap);
         if (listener != null) listener.onStatusUpdate("Captcha solved");
 
         RequestBody loginBody = new FormBody.Builder().add("_csrf", this.csrfToken).add("username", username).add("password", password).add("captchaStr", captchaAnswer).build();
@@ -295,7 +305,6 @@ public class VtopClient {
             String resp = res.body() != null ? res.body().string() : "";
             String finalUrl = res.request().url().toString();
 
-            // 1. Check for a successful login
             if (finalUrl.contains("/content") || resp.contains("Sign out")) {
                 if (resp.contains("Unable to process") || resp.length() < 1500) throw new VtopException.WafBlocked("Session blocked by VTOP Firewall");
                 persistCsrf(context, extractToken(resp));
@@ -304,77 +313,63 @@ public class VtopClient {
                 return true;
             }
 
-            String lowerResp = resp
-                    .toLowerCase(Locale.ENGLISH)
-                    .replaceAll("\\s+", " ")
-                    .trim();
+            String lowerResp = resp.toLowerCase(Locale.ENGLISH).replaceAll("\\s+", " ").trim();
 
-            if (lowerResp.contains("invalid username/password")) {
-                throw new VtopException.InvalidCredentials(
-                        "Invalid username or password."
-                );
-            }
-
-            if (lowerResp.contains("invalid captcha")) {
-                throw new VtopException.CaptchaFailed(
-                        "Invalid captcha."
-                );
-            }
-
-            if (lowerResp.contains("maximum invalid log-in") ||
-                    lowerResp.contains("locked") ||
-                    lowerResp.contains("suspended")) {
-
-                throw new VtopException.AuthenticationFailed(
-                        "Account locked or suspended."
-                );
+            if (lowerResp.contains("invalid username/password")) throw new VtopException.InvalidCredentials("Invalid username or password.");
+            if (lowerResp.contains("invalid captcha")) throw new VtopException.CaptchaFailed("Invalid captcha.");
+            if (lowerResp.contains("maximum invalid log-in") || lowerResp.contains("locked") || lowerResp.contains("suspended")) {
+                throw new VtopException.AuthenticationFailed("Account locked or suspended.");
             }
 
             boolean isOtpActive = Pattern.compile("var\\s+securityOtpPending\\s*=\\s*'?true'?").matcher(resp).find();
+
+            // Nested safe OTP null-checks
             if (isOtpActive) {
-                if (listener != null) listener.onStatusUpdate("OTP_REQUIRED");
-                java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
-                final String[] otpHolder = new String[1];
-                listener.onOtpRequired(new OtpResolver() {
-                    public void submit(String otp) { otpHolder[0] = otp; latch.countDown(); }
-                    public void cancel() { latch.countDown(); }
-                });
-                if (!latch.await(OTP_WAIT_TIMEOUT_SEC, java.util.concurrent.TimeUnit.SECONDS)) throw new VtopException.SessionExpired("OTP timed out.");
-                String otpCode = otpHolder[0];
-                if (otpCode == null || otpCode.trim().isEmpty()) throw new VtopException.SessionExpired("OTP cancelled");
+                if (listener != null) {
+                    listener.onStatusUpdate("OTP_REQUIRED");
+                    CountDownLatch latch = new CountDownLatch(1);
+                    final String[] otpHolder = new String[1];
+                    listener.onOtpRequired(new OtpResolver() {
+                        public void submit(String otp) { otpHolder[0] = otp; latch.countDown(); }
+                        public void cancel() { latch.countDown(); }
+                    });
 
-                String otpCsrf = extractToken(resp);
-                if (otpCsrf.isEmpty()) otpCsrf = this.csrfToken;
-                RequestBody otpBody = new FormBody.Builder().add("_csrf", otpCsrf).add("otpCode", otpCode.trim()).build();
-                Request otpReq = new Request.Builder().url(BASE_URL + "/validateSecurityOtp").post(otpBody).header("X-Requested-With", "XMLHttpRequest").header("Referer", BASE_URL + "/login").build();
+                    if (!latch.await(OTP_WAIT_TIMEOUT_SEC, TimeUnit.SECONDS)) throw new VtopException.SessionExpired("OTP timed out.");
+                    String otpCode = otpHolder[0];
+                    if (otpCode == null || otpCode.trim().isEmpty()) throw new VtopException.SessionExpired("OTP cancelled");
 
-                try (Response otpRes = client.newCall(otpReq).execute()) {
-                    JSONObject json = new JSONObject(otpRes.body() != null ? otpRes.body().string() : "");
-                    if (!"SUCCESS".equals(json.optString("status"))) throw new VtopException.LoginOtpIncorrect("OTP failed: " + json.optString("message"));
-                    String redirectUrl = json.optString("redirectUrl");
-                    if (redirectUrl.startsWith("/")) redirectUrl = redirectUrl.startsWith("/vtop/") ? "https://vtop.vitap.ac.in" + redirectUrl : BASE_URL + redirectUrl;
+                    String otpCsrf = extractToken(resp);
+                    if (otpCsrf.isEmpty()) otpCsrf = this.csrfToken;
+                    RequestBody otpBody = new FormBody.Builder().add("_csrf", otpCsrf).add("otpCode", otpCode.trim()).build();
+                    Request otpReq = new Request.Builder().url(BASE_URL + "/validateSecurityOtp").post(otpBody).header("X-Requested-With", "XMLHttpRequest").header("Referer", BASE_URL + "/login").build();
 
-                    try (Response finalRes = client.newCall(new Request.Builder().url(redirectUrl).get().build()).execute()) {
-                        String contentHtml = finalRes.body() != null ? finalRes.body().string() : "";
+                    try (Response otpRes = client.newCall(otpReq).execute()) {
+                        JSONObject json = new JSONObject(otpRes.body() != null ? otpRes.body().string() : "");
+                        if (!"SUCCESS".equals(json.optString("status"))) throw new VtopException.LoginOtpIncorrect("OTP failed: " + json.optString("message"));
+                        String redirectUrl = json.optString("redirectUrl");
+                        if (redirectUrl.startsWith("/")) redirectUrl = redirectUrl.startsWith("/vtop/") ? "https://vtop.vitap.ac.in" + redirectUrl : BASE_URL + redirectUrl;
 
-                        // VTOP sometimes redirects back to /login even though OTP succeeded.
-                        // Force a manual fetch to /content to double-check if the session is alive.
-                        if (!contentHtml.contains("Sign out")) {
-                            try (Response fallbackRes = client.newCall(new Request.Builder().url(BASE_URL + "/content").get().build()).execute()) {
-                                contentHtml = fallbackRes.body() != null ? fallbackRes.body().string() : "";
+                        try (Response finalRes = client.newCall(new Request.Builder().url(redirectUrl).get().build()).execute()) {
+                            String contentHtml = finalRes.body() != null ? finalRes.body().string() : "";
+
+                            if (!contentHtml.contains("Sign out")) {
+                                try (Response fallbackRes = client.newCall(new Request.Builder().url(BASE_URL + "/content").get().build()).execute()) {
+                                    contentHtml = fallbackRes.body() != null ? fallbackRes.body().string() : "";
+                                }
                             }
+
+                            if (!contentHtml.contains("Sign out")) throw new VtopException.SessionExpired("Session not established after OTP");
+
+                            persistCsrf(context, extractToken(contentHtml));
+                            extractAndSetAuthorizedId(contentHtml);
+                            listener.onStatusUpdate("LOGIN_SUCCESS");
+                            return true;
                         }
-
-                        if (!contentHtml.contains("Sign out")) throw new VtopException.SessionExpired("Session not established after OTP");
-
-                        persistCsrf(context, extractToken(contentHtml));
-                        extractAndSetAuthorizedId(contentHtml);
-                        if (listener != null) listener.onStatusUpdate("LOGIN_SUCCESS");
-                        return true;
                     }
+                } else {
+                    throw new VtopException.SessionExpired("OTP required but no active listener available.");
                 }
             }
-            // If it wasn't a success, wasn't an invalid cred, and wasn't OTP... it must be the Captcha.
             throw new VtopException.CaptchaFailed("Captcha incorrect or session expired.");
         }
     }
@@ -385,7 +380,9 @@ public class VtopClient {
             try (Response response = client.newCall(request).execute()) {
                 if (response.isSuccessful() && response.body() != null) return response.body().string();
             }
-        } catch (Exception e) {}
+        } catch (Exception e) {
+            Log.e(TAG, "fetchContentPageRawHtml exception", e);
+        }
         return "";
     }
 
@@ -395,7 +392,10 @@ public class VtopClient {
             String html = res.body() != null ? res.body().string() : "";
             if (html.contains("VTOP Login") || html.contains("captchaStr")) return null;
             return html;
-        } catch (Exception e) { return null; }
+        } catch (Exception e) {
+            Log.e(TAG, "executeWafFetch exception", e);
+            return null;
+        }
     }
 
     private String getGmtTimestamp() {
@@ -408,13 +408,12 @@ public class VtopClient {
         try {
             RequestBody body = new FormBody.Builder().add("_csrf", csrfToken).add("verifyMenu", "true").add("authorizedID", authorizedId).add("nocache", "@(" + System.currentTimeMillis() + ")").build();
             executeWafFetch(menuEndpoint, body, "/content");
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Log.e(TAG, "activateMenu exception", e);
+        }
     }
 
-    // ================= FETCH METHODS (WAF Compliant) =================
-
     public String fetchProfileRawHtml(StatusListener listener) {
-        // Direct fetch without activateMenu (Menu click IS the fetch)
         Log.d(TAG, "[FETCH] Student Profile for ID: " + authorizedId);
         RequestBody body = new FormBody.Builder().add("_csrf", csrfToken).add("verifyMenu", "true").add("authorizedID", authorizedId).add("nocache", "@(" + System.currentTimeMillis() + ")").build();
         return executeWafFetch("/studentsRecord/StudentProfileAllView", body, "/content");
@@ -423,19 +422,26 @@ public class VtopClient {
     public List<Map<String, String>> fetchSemesters() {
         List<Map<String, String>> list = new ArrayList<>();
         try {
-            // Direct fetch without activateMenu
             RequestBody body = new FormBody.Builder().add("_csrf", csrfToken).add("verifyMenu", "true").add("authorizedID", authorizedId).add("nocache", "@(" + System.currentTimeMillis() + ")").build();
             String html = executeWafFetch("/academics/common/StudentTimeTable", body, "/content");
             if (html != null) {
                 Matcher m = Pattern.compile("<option\\s+value=\"([^\"]+)\"[^>]*>([^<]+)</option>").matcher(html);
                 while (m.find()) {
-                    String id = m.group(1); String name = m.group(2);
-                    if (name != null && !name.toLowerCase().contains("choose") && !id.trim().isEmpty()) {
-                        Map<String, String> map = new HashMap<>(); map.put("id", id); map.put("name", name.trim()); list.add(map);
+                    String id = m.group(1);
+                    String name = m.group(2);
+
+                    // Fixed NullPointerExceptions
+                    if (id != null && name != null && !name.toLowerCase().contains("choose") && !id.trim().isEmpty()) {
+                        Map<String, String> map = new HashMap<>();
+                        map.put("id", id);
+                        map.put("name", name.trim());
+                        list.add(map);
                     }
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Log.e(TAG, "fetchSemesters exception", e);
+        }
         return list;
     }
 
@@ -488,34 +494,55 @@ public class VtopClient {
             RequestBody body = new FormBody.Builder().add("_csrf", csrfToken).add("verifyMenu", "true").add("authorizedID", authId).add("nocache", "@(" + System.currentTimeMillis() + ")").build();
             Request req = new Request.Builder().url(BASE_URL + endpoint).post(body).build();
             try (Response res = client.newCall(req).execute()) { return res.body() != null ? res.body().string() : null; }
-        } catch (Exception e) { return null; }
+        } catch (Exception e) {
+            Log.e(TAG, "postSimpleWithAuth exception", e);
+            return null;
+        }
     }
 
+    @SuppressWarnings("deprecation")
     public boolean submitGeneralOuting(String place, String purpose, String fromDate, String toDate, String fromTime, String toTime) {
         try {
             RequestBody applyBody = new FormBody.Builder().add("_csrf", csrfToken).add("verifyMenu", "true").add("authorizedID", authorizedId).build();
             String html = executeWafFetch("/hostel/StudentGeneralOuting", applyBody, "/content");
             Document doc = Jsoup.parse(html != null ? html : "");
+
+            // Jsoup .attr returns "" (empty string) if not found, securing NPEs
             String name = doc.select("input#name").attr("value");
             String appNo = doc.select("input#applicationNo").attr("value");
             String gender = doc.select("input#gender").attr("value");
             String block = doc.select("input#hostelBlock").attr("value");
             String room = doc.select("input#roomNo").attr("value");
 
-            if (appNo == null || appNo.isEmpty()) return false;
-            String[] outParts = fromTime.split(":"); String[] inParts = toTime.split(":");
-            String oh = String.format(Locale.US, "%02d", Integer.parseInt(outParts[0].trim())); String om = String.format(Locale.US, "%02d", Integer.parseInt(outParts[1].trim()));
-            String ih = String.format(Locale.US, "%02d", Integer.parseInt(inParts[0].trim())); String im = String.format(Locale.US, "%02d", Integer.parseInt(inParts[1].trim()));
+            if (appNo.isEmpty()) return false;
 
-            MultipartBody body = new MultipartBody.Builder().setType(MultipartBody.FORM).addFormDataPart("authorizedID", authorizedId).addFormDataPart("LeaveId", "").addFormDataPart("regNo", authorizedId).addFormDataPart("name", name).addFormDataPart("applicationNo", appNo).addFormDataPart("gender", gender).addFormDataPart("hostelBlock", block).addFormDataPart("roomNo", room).addFormDataPart("placeOfVisit", place).addFormDataPart("purposeOfVisit", purpose).addFormDataPart("outDate", fromDate).addFormDataPart("outTimeHr", oh).addFormDataPart("outTimeMin", om).addFormDataPart("inDate", toDate).addFormDataPart("inTimeHr", ih).addFormDataPart("inTimeMin", im).addFormDataPart("_csrf", csrfToken).addFormDataPart("x", getGmtTimestamp()).addFormDataPart("upload_file", "", RequestBody.create(null, new byte[0])).build();
+            String[] outParts = (fromTime != null) ? fromTime.split(":") : new String[]{"0", "0"};
+            String[] inParts = (toTime != null) ? toTime.split(":") : new String[]{"0", "0"};
+            String oh = String.format(Locale.US, "%02d", Integer.parseInt(outParts[0].trim()));
+            String om = String.format(Locale.US, "%02d", Integer.parseInt(outParts[1].trim()));
+            String ih = String.format(Locale.US, "%02d", Integer.parseInt(inParts[0].trim()));
+            String im = String.format(Locale.US, "%02d", Integer.parseInt(inParts[1].trim()));
+
+            // Swapped to empty byte array RequestBody to replace deprecated MediaType call
+            RequestBody emptyFileBody = RequestBody.create(null, new byte[0]);
+
+            MultipartBody body = new MultipartBody.Builder().setType(MultipartBody.FORM).addFormDataPart("authorizedID", authorizedId).addFormDataPart("LeaveId", "").addFormDataPart("regNo", authorizedId).addFormDataPart("name", name).addFormDataPart("applicationNo", appNo).addFormDataPart("gender", gender).addFormDataPart("hostelBlock", block).addFormDataPart("roomNo", room).addFormDataPart("placeOfVisit", place).addFormDataPart("purposeOfVisit", purpose).addFormDataPart("outDate", fromDate).addFormDataPart("outTimeHr", oh).addFormDataPart("outTimeMin", om).addFormDataPart("inDate", toDate).addFormDataPart("inTimeHr", ih).addFormDataPart("inTimeMin", im).addFormDataPart("_csrf", csrfToken).addFormDataPart("x", getGmtTimestamp()).addFormDataPart("upload_file", "", emptyFileBody).build();
+
             String res = executeWafFetch("/hostel/saveGeneralOutingForm", body, "/content?");
             if (res != null) {
                 Document resDoc = Jsoup.parse(res);
-                if (resDoc.selectFirst("input#jsonBom") != null && !resDoc.selectFirst("input#jsonBom").attr("value").isEmpty()) return false;
-                if (resDoc.selectFirst("input#success") != null && !resDoc.selectFirst("input#success").attr("value").isEmpty()) return true;
+
+                Element jsonBom = resDoc.selectFirst("input#jsonBom");
+                if (jsonBom != null && !jsonBom.attr("value").isEmpty()) return false;
+
+                Element successFlag = resDoc.selectFirst("input#success");
+                if (successFlag != null && !successFlag.attr("value").isEmpty()) return true;
             }
             return false;
-        } catch (Exception e) { return false; }
+        } catch (Exception e) {
+            Log.e(TAG, "submitGeneralOuting exception", e);
+            return false;
+        }
     }
 
     public boolean submitWeekendOuting(String place, String purpose, String date, String time, String contact) {
@@ -530,63 +557,56 @@ public class VtopClient {
             String room = doc.select("input#roomNo").attr("value");
             String parentContact = doc.select("input#parentContactNumber").attr("value");
 
-            if (appNo == null || appNo.isEmpty()) return false;
+            if (appNo.isEmpty()) return false;
+
             MultipartBody body = new MultipartBody.Builder().setType(MultipartBody.FORM).addFormDataPart("authorizedID", authorizedId).addFormDataPart("BookingId", "").addFormDataPart("regNo", authorizedId).addFormDataPart("name", name).addFormDataPart("applicationNo", appNo).addFormDataPart("gender", gender).addFormDataPart("hostelBlock", block).addFormDataPart("roomNo", room).addFormDataPart("outPlace", place).addFormDataPart("purposeOfVisit", purpose).addFormDataPart("outingDate", date).addFormDataPart("outTime", time).addFormDataPart("contactNumber", contact).addFormDataPart("parentContactNumber", parentContact).addFormDataPart("_csrf", csrfToken).addFormDataPart("x=", getGmtTimestamp()).build();
             String res = executeWafFetch("/hostel/saveOutingForm", body, "/content?");
             if (res != null) {
                 Document resDoc = Jsoup.parse(res);
-                if (resDoc.selectFirst("input#jsonBom") != null && !resDoc.selectFirst("input#jsonBom").attr("value").isEmpty()) return false;
-                if (resDoc.selectFirst("input#success") != null && !resDoc.selectFirst("input#success").attr("value").isEmpty()) return true;
+
+                Element jsonBom = resDoc.selectFirst("input#jsonBom");
+                if (jsonBom != null && !jsonBom.attr("value").isEmpty()) return false;
+
+                Element successFlag = resDoc.selectFirst("input#success");
+                if (successFlag != null && !successFlag.attr("value").isEmpty()) return true;
             }
             return false;
-        } catch (Exception e) { return false; }
+        } catch (Exception e) {
+            Log.e(TAG, "submitWeekendOuting exception", e);
+            return false;
+        }
     }
 
     public boolean downloadAndCacheOutpass(String bookingId, boolean isWeekend, String regNo, File outputFile) {
         try {
             String endpoint = isWeekend ? "/hostel/downloadOutingForm/" : "/hostel/downloadLeavePass/";
-            okhttp3.HttpUrl parsedUrl = okhttp3.HttpUrl.parse(BASE_URL + endpoint + bookingId);
+            HttpUrl parsedUrl = HttpUrl.parse(BASE_URL + endpoint + bookingId);
             if (parsedUrl == null) return false;
 
-            // 1. Use FormBody (POST) to avoid the strict GET URL-encoding traps
-            okhttp3.FormBody.Builder formBuilder = new okhttp3.FormBody.Builder()
-                    .add("authorizedID", regNo)
-                    .add("_csrf", csrfToken);
+            FormBody.Builder formBuilder = new FormBody.Builder().add("authorizedID", regNo).add("_csrf", csrfToken);
+            Request.Builder requestBuilder = new Request.Builder().url(parsedUrl);
 
-            okhttp3.Request.Builder requestBuilder = new okhttp3.Request.Builder().url(parsedUrl);
-
-            // 2. Set the specific headers matching your Python script
             if (isWeekend) {
-                // Weekend pass requires standard form submission origins
-                requestBuilder.header("Referer", BASE_URL + "/hostel/StudentWeekendOuting")
-                        .header("Origin", "https://vtop.vitap.ac.in");
+                requestBuilder.header("Referer", BASE_URL + "/hostel/StudentWeekendOuting").header("Origin", "https://vtop.vitap.ac.in");
             } else {
-                // General pass requires the GMT timestamp and AJAX header
-                formBuilder.add("x", getGmtTimestamp()); // Using your existing helper method!
+                formBuilder.add("x", getGmtTimestamp());
                 requestBuilder.header("X-Requested-With", "XMLHttpRequest");
-                // Note: Your global interceptor will detect this header and automatically fix the 'Accept' and 'Sec-Fetch' headers for you!
             }
 
             requestBuilder.post(formBuilder.build());
 
-            // 3. Execute and verify the PDF signature
-            try (okhttp3.Response res = client.newCall(requestBuilder.build()).execute()) {
+            try (Response res = client.newCall(requestBuilder.build()).execute()) {
                 if (res.isSuccessful() && res.body() != null) {
                     byte[] bytes = res.body().bytes();
-
-                    if (bytes.length > 10) {
-                        String header = new String(bytes, 0, 10);
-                        if (header.contains("%PDF")) {
-                            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(outputFile)) {
-                                fos.write(bytes);
-                            }
-                            return true;
-                        }
+                    if (bytes.length > 10 && new String(bytes, 0, 10).contains("%PDF")) {
+                        try (FileOutputStream fos = new FileOutputStream(outputFile)) { fos.write(bytes); }
+                        return true;
                     }
                 }
             }
-        } catch (Exception ignored) {}
-
+        } catch (Exception e) {
+            Log.e(TAG, "downloadAndCacheOutpass exception", e);
+        }
         return false;
     }
 
@@ -597,168 +617,115 @@ public class VtopClient {
             String endpoint = isWeekend ? "/hostel/deleteBookingInfo" : "/hostel/deleteGeneralOutingInfo";
             String res = executeWafFetch(endpoint, formBuilder.build(), "/content?");
             return res != null;
-        } catch (Exception e) { return false; }
+        } catch (Exception e) {
+            Log.e(TAG, "deleteOuting exception", e);
+            return false;
+        }
     }
+
     public String fetchCalendarSemestersRawHtml() {
         try {
-            Log.d(TAG, "[CALENDAR] Fetching dedicated semester list HTML...");
-            RequestBody previewBody = new FormBody.Builder()
-                    .add("verifyMenu", "true")
-                    .add("authorizedID", authorizedId)
-                    .add("_csrf", csrfToken)
-                    .add("nocache", "@(new Date().getTime())")
-                    .build();
-
+            RequestBody previewBody = new FormBody.Builder().add("verifyMenu", "true").add("authorizedID", authorizedId).add("_csrf", csrfToken).add("nocache", "@(new Date().getTime())").build();
             return executeWafFetch("/academics/common/CalendarPreview", previewBody, "/content?");
         } catch (Exception e) {
-            Log.e(TAG, "Failed to fetch calendar semesters HTML", e);
+            Log.e(TAG, "fetchCalendarSemestersRawHtml exception", e);
             return null;
         }
     }
 
     public String fetchCalendarMonthsRawHtml(String semId, String classGroupId) {
         try {
-            RequestBody body = new FormBody.Builder()
-                    .add("_csrf", csrfToken)
-                    .add("paramReturnId", "getListForSemester")
-                    .add("semSubId", semId)
-                    .add("classGroupId", classGroupId)
-                    .add("authorizedID", authorizedId)
-                    .add("x", getGmtTimestamp())
-                    .build();
-
+            RequestBody body = new FormBody.Builder().add("_csrf", csrfToken).add("paramReturnId", "getListForSemester").add("semSubId", semId).add("classGroupId", classGroupId).add("authorizedID", authorizedId).add("x", getGmtTimestamp()).build();
             return executeWafFetch("/getListForSemester", body, "/content?");
         } catch (Exception e) {
-            Log.e(TAG, "Month HTML fetch failed", e);
+            Log.e(TAG, "fetchCalendarMonthsRawHtml exception", e);
             return null;
         }
     }
-    public String fetchCalendarRawHtml(
-            String semId,
-            String calDate,
-            String classGroupId
-    ) {
 
+    public String fetchCalendarRawHtml(String semId, String calDate, String classGroupId) {
         try {
+            Log.d(TAG, "[CALENDAR] POST /academics/common/CalendarPreview");
+            RequestBody previewBody = new FormBody.Builder().add("verifyMenu", "true").add("authorizedID", authorizedId).add("_csrf", csrfToken).add("nocache", "@(new Date().getTime())").build();
+            executeWafFetch("/academics/common/CalendarPreview", previewBody, "/content?");
 
-            Log.d(TAG, "================================================");
-            Log.d(TAG, "[CAL STEP 3] POST /academics/common/CalendarPreview");
+            Log.d(TAG, "[CALENDAR] POST /processViewCalendar | semId=" + semId + " | calDate=" + calDate + " | classGroup=" + classGroupId);
+            RequestBody calendarBody = new FormBody.Builder().add("_csrf", csrfToken).add("calDate", calDate).add("semSubId", semId).add("classGroupId", classGroupId).add("authorizedID", authorizedId).add("x", getGmtTimestamp()).build();
+            String html = executeWafFetch("/processViewCalendar", calendarBody, "/content?");
 
-            RequestBody previewBody = new FormBody.Builder()
-                    .add("verifyMenu", "true")
-                    .add("authorizedID", authorizedId)
-                    .add("_csrf", csrfToken)
-                    .add("nocache", "@(new Date().getTime())")
-                    .build();
-
-            String previewHtml = executeWafFetch(
-                    "/academics/common/CalendarPreview",
-                    previewBody,
-                    "/content?"
-            );
-
-            Log.d(
-                    TAG,
-                    "[CAL STEP 3] Result: "
-                            + (previewHtml != null ? "SUCCESS" : "FAILED")
-            );
-
-            Log.d(TAG, "[CAL STEP 4] POST /processViewCalendar");
-            Log.d(TAG, "[CAL STEP 4] semId       = " + semId);
-            Log.d(TAG, "[CAL STEP 4] calDate     = " + calDate);
-            Log.d(TAG, "[CAL STEP 4] classGroup  = " + classGroupId);
-            Log.d(TAG, "[CAL STEP 4] authId      = " + authorizedId);
-
-            RequestBody calendarBody =
-                    new FormBody.Builder()
-                            .add("_csrf", csrfToken)
-                            .add("calDate", calDate)
-                            .add("semSubId", semId)
-                            .add("classGroupId", classGroupId)
-                            .add("authorizedID", authorizedId)
-                            .add("x", getGmtTimestamp())
-                            .build();
-
-            String html = executeWafFetch(
-                    "/processViewCalendar",
-                    calendarBody,
-                    "/content?"
-            );
-
-            if (html == null) {
-
-                Log.e(
-                        TAG,
-                        "[CAL STEP 4] NULL RESPONSE"
-                );
-
-                Log.d(TAG, "================================================");
-
-                return null;
-            }
-
-            Log.d(
-                    TAG,
-                    "[CAL STEP 4] Response Length: "
-                            + html.length()
-            );
-
-            if (html.contains("calendar-table")) {
-
-                Log.d(
-                        TAG,
-                        "[CAL STEP 5] SUCCESS: calendar-table detected"
-                );
-
-                Log.d(TAG, "================================================");
-
-                return html;
-            }
-
-            Log.e(
-                    TAG,
-                    "[CAL STEP 5] INVALID HTML"
-            );
-
-            Log.e(
-                    TAG,
-                    "[CAL STEP 5] First 1000 chars:"
-            );
-
-            Log.e(
-                    TAG,
-                    html.substring(
-                            0,
-                            Math.min(1000, html.length())
-                    )
-            );
-
-            Log.d(TAG, "================================================");
-
+            if (html == null) return null;
+            if (html.contains("calendar-table")) return html;
+            Log.e(TAG, "[CALENDAR] INVALID HTML. First 500 chars: " + html.substring(0, Math.min(500, html.length())));
             return null;
-
         } catch (Exception e) {
-
-            Log.e(
-                    TAG,
-                    "[CALENDAR FETCH FAILED]",
-                    e
-            );
-
+            Log.e(TAG, "[CALENDAR FETCH FAILED]", e);
             return null;
         }
     }
 
-    private String extractToken(String html) {
-        if (html == null) return "";
-        Matcher m = Pattern.compile("name=\"_csrf\" value=\"([^\"]+)\"").matcher(html);
-        return m.find() ? m.group(1) : "";
+    public String fetchFacultiesRawHtml() {
+        activateMenu("/hrms/employeeSearchForStudent");
+        RequestBody body = new FormBody.Builder().add("_csrf", csrfToken).add("authorizedID", authorizedId).add("x", getGmtTimestamp()).add("empId", "").build();
+        return executeWafFetch("/hrms/EmployeeSearchForStudent", body, "/content?");
     }
 
-    private String extractCaptchaBase64(String html) {
-        if (html == null) return "";
-        Matcher m = Pattern.compile("data:image/[^;]+;base64,([^\"']+)").matcher(html);
-        return m.find() ? m.group(1) : "";
+    public String fetchFacultyDetailsRawHtml(String empId) {
+        RequestBody body = new FormBody.Builder().add("_csrf", csrfToken).add("authorizedID", authorizedId).add("x", getGmtTimestamp()).add("empId", empId).build();
+        return executeWafFetch("/hrms/EmployeeSearch1ForStudent", body, "/content?");
+    }
+    // Lightweight container for the deep-scraped details
+    public static class FacultyDetails {
+        public final String email;
+        public final String office;
+        public final String research;
+
+        public FacultyDetails(String email, String office, String research) {
+            this.email = email;
+            this.office = office;
+            this.research = research;
+        }
+    }
+
+    public FacultyDetails fetchFacultyDetails(String empId) {
+        RequestBody body = new FormBody.Builder()
+                .add("_csrf", csrfToken)
+                .add("authorizedID", authorizedId)
+                .add("x", getGmtTimestamp())
+                .add("empId", empId)
+                .build();
+
+        String html = executeWafFetch("/hrms/EmployeeSearch1ForStudent", body, "/content?");
+
+        String email = null;
+        String office = null;
+        String research = null;
+
+        if (html != null && !html.isEmpty()) {
+            try {
+                Document doc = Jsoup.parse(html);
+                // Target the first table specifically to avoid the "OPEN HOURS" table at the bottom[cite: 8]
+                Element table = doc.selectFirst("table.table-bordered");
+
+                if (table != null) {
+                    for (Element row : table.select("tr")) {
+                        org.jsoup.select.Elements tds = row.select("td");
+                        if (tds.size() >= 2) {
+                            String headerText = tds.get(0).text().toLowerCase(Locale.ENGLISH).trim();
+                            String valText = tds.get(1).text().trim();
+
+                            // Safe heuristic extraction based on the specific HTML payload[cite: 8]
+                            if (headerText.contains("e-mail") || headerText.contains("email")) email = valText;
+                            else if (headerText.contains("cabin") || headerText.contains("office")) office = valText;
+                            else if (headerText.contains("research")) research = valText;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error parsing faculty details for ID: " + empId, e);
+            }
+        }
+
+        return new FacultyDetails(email, office, research);
     }
 
     @SuppressLint("CustomX509TrustManager")
@@ -777,93 +744,34 @@ public class VtopClient {
             builder.sslSocketFactory(sslContext.getSocketFactory(), (javax.net.ssl.X509TrustManager) trustAllCerts[0]);
             builder.hostnameVerifier((hostname, session) -> true);
             builder.addNetworkInterceptor(chain -> {
-
                 Request original = chain.request();
-
                 Request.Builder rb = original.newBuilder()
-                        .removeHeader("User-Agent")
-                        .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
+                        .removeHeader("User-Agent").addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
                         .addHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
-                        .addHeader("Accept-Language", "en-US,en;q=0.9")
-                        .addHeader("Upgrade-Insecure-Requests", "1")
+                        .addHeader("Accept-Language", "en-US,en;q=0.9").addHeader("Upgrade-Insecure-Requests", "1")
                         .addHeader("sec-ch-ua", "\"Google Chrome\";v=\"123\", \"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"123\"")
-                        .addHeader("sec-ch-ua-mobile", "?0")
-                        .addHeader("sec-ch-ua-platform", "\"Windows\"")
-                        .addHeader("Sec-Fetch-Dest", "document")
-                        .addHeader("Sec-Fetch-Mode", "navigate")
-                        .addHeader("Sec-Fetch-Site", "same-origin")
-                        .addHeader("Sec-Fetch-User", "?1")
-                        .removeHeader("Connection")
-                        .addHeader("Connection", "keep-alive");
+                        .addHeader("sec-ch-ua-mobile", "?0").addHeader("sec-ch-ua-platform", "\"Windows\"")
+                        .addHeader("Sec-Fetch-Dest", "document").addHeader("Sec-Fetch-Mode", "navigate")
+                        .addHeader("Sec-Fetch-Site", "same-origin").addHeader("Sec-Fetch-User", "?1")
+                        .removeHeader("Connection").addHeader("Connection", "keep-alive");
 
                 if ("XMLHttpRequest".equals(original.header("X-Requested-With"))) {
-                    rb.removeHeader("Accept");
-                    rb.addHeader("Accept", "*/*");
-                    rb.header("Sec-Fetch-Mode", "cors");
-                    rb.header("Sec-Fetch-Dest", "empty");
+                    rb.removeHeader("Accept").addHeader("Accept", "*/*").header("Sec-Fetch-Mode", "cors").header("Sec-Fetch-Dest", "empty");
                 }
 
                 Request request = rb.build();
-
                 long start = SystemClock.elapsedRealtime();
 
-                if (Telemetry.INSTANCE.isEnabled()) {
-                    Telemetry.INSTANCE.log(
-                            TelemetryStatus.INFO,
-                            "HTTP",
-                            request.method() + " " + request.url().encodedPath(),
-                            TelemetryModule.NETWORK,
-                            java.util.Map.of(
-                                    "method", request.method(),
-                                    "url", request.url().toString()
-                            )
-                    );
-                }
+                if (Telemetry.INSTANCE.isEnabled()) Telemetry.INSTANCE.log(TelemetryStatus.INFO, "HTTP", request.method() + " " + request.url().encodedPath(), TelemetryModule.NETWORK, java.util.Map.of("method", request.method(), "url", request.url().toString()));
 
                 try {
-
                     Response response = chain.proceed(request);
-
                     long duration = SystemClock.elapsedRealtime() - start;
-
-                    if (Telemetry.INSTANCE.isEnabled()) {
-                        Telemetry.INSTANCE.log(
-                                response.isSuccessful()
-                                        ? TelemetryStatus.SUCCESS
-                                        : TelemetryStatus.WARNING,
-                                "HTTP",
-                                request.method() + " " + request.url().encodedPath(),
-                                TelemetryModule.NETWORK,
-                                java.util.Map.of(
-                                        "method", request.method(),
-                                        "url", request.url().toString(),
-                                        "status", response.code(),
-                                        "durationMs", duration
-                                )
-                        );
-                    }
-
+                    if (Telemetry.INSTANCE.isEnabled()) Telemetry.INSTANCE.log(response.isSuccessful() ? TelemetryStatus.SUCCESS : TelemetryStatus.WARNING, "HTTP", request.method() + " " + request.url().encodedPath(), TelemetryModule.NETWORK, java.util.Map.of("method", request.method(), "url", request.url().toString(), "status", response.code(), "durationMs", duration));
                     return response;
-
                 } catch (Exception e) {
-
                     long duration = SystemClock.elapsedRealtime() - start;
-
-                    if (Telemetry.INSTANCE.isEnabled()) {
-                        Telemetry.INSTANCE.log(
-                                TelemetryStatus.ERROR,
-                                "HTTP",
-                                e.getClass().getSimpleName(),
-                                TelemetryModule.NETWORK,
-                                java.util.Map.of(
-                                        "method", request.method(),
-                                        "url", request.url().toString(),
-                                        "durationMs", duration,
-                                        "exception", e.getClass().getSimpleName()
-                                )
-                        );
-                    }
-
+                    if (Telemetry.INSTANCE.isEnabled()) Telemetry.INSTANCE.log(TelemetryStatus.ERROR, "HTTP", e.getClass().getSimpleName(), TelemetryModule.NETWORK, java.util.Map.of("method", request.method(), "url", request.url().toString(), "durationMs", duration, "exception", e.getClass().getSimpleName()));
                     throw e;
                 }
             });

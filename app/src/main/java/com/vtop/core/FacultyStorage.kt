@@ -4,33 +4,27 @@ import android.content.Context
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.vtop.models.FacultyEntity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 
 object FacultyStorage {
 
     private const val FILE_NAME = "faculty.json"
 
-    /**
-     * Returns the app's working faculty.json file.
-     */
     private fun facultyFile(context: Context): File {
         return File(context.filesDir, FILE_NAME)
     }
 
-
-
-    /**
-     * Reads the working faculty.json from internal storage.
-     */
-    fun loadFaculty(context: Context): List<FacultyEntity> {
-        return try {
+    suspend fun loadFaculty(context: Context): List<FacultyEntity> = withContext(Dispatchers.IO) {
+        try {
             val file = facultyFile(context)
             if (!file.exists()) {
-                return emptyList()
+                return@withContext emptyList()
             }
             val json = file.readText(Charsets.UTF_8)
             if (json.isBlank()) {
-                return emptyList()
+                return@withContext emptyList()
             }
             Gson().fromJson(
                 json,
@@ -42,29 +36,16 @@ object FacultyStorage {
         }
     }
 
-    /**
-     * Saves a freshly scraped faculty list.
-     */
-    fun saveFaculty(
-        context: Context,
-        faculty: List<FacultyEntity>
-    ) {
+    suspend fun saveFaculty(context: Context, faculty: List<FacultyEntity>) = withContext(Dispatchers.IO) {
         val json = Gson().toJson(faculty)
         facultyFile(context).writeText(json, Charsets.UTF_8)
     }
 
-    /**
-     * Deletes the cached faculty file.
-     * Mainly useful during development/testing.
-     */
-    fun clearFaculty(context: Context) {
+    suspend fun clearFaculty(context: Context) = withContext(Dispatchers.IO) {
         facultyFile(context).delete()
     }
 
-    /**
-     * Returns true if a cached faculty.json already exists.
-     */
-    fun hasFaculty(context: Context): Boolean {
-        return facultyFile(context).exists()
+    suspend fun hasFaculty(context: Context): Boolean = withContext(Dispatchers.IO) {
+        facultyFile(context).exists()
     }
 }

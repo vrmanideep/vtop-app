@@ -12,8 +12,14 @@ import com.vtop.core.SessionType
 import com.vtop.core.ExamsRepository
 import com.vtop.core.MarksRepository
 import com.vtop.core.OutingsRepository
+import com.vtop.core.CalendarRepository
+import com.vtop.core.FacultyStorage
+import com.vtop.models.AcademicCalendarEvent
+import com.vtop.models.ExamScheduleModel
+import com.vtop.models.OutingModel
 import com.vtop.network.VtopClient
 import com.vtop.network.VtopException
+import com.vtop.network.FacultyScraper
 import com.vtop.utils.*
 import com.vtop.logic.*
 import com.vtop.telemetry.Telemetry
@@ -83,7 +89,7 @@ class VtopSyncWorker(
 
                                 if (savedEmail.isNotBlank()) {
                                     var extractedOtp: String? = null
-                                    for (_i in 1..6) {
+                                    for (i in 1..6) {
                                         delay(3.seconds)
                                         extractedOtp = GmailOtpExtractor.getLatestVtopOtp(context, savedEmail, otpRequestedTime)
                                         if (extractedOtp != null) break
@@ -117,6 +123,7 @@ class VtopSyncWorker(
                     if (!loginSuccess) {
                         attempts++
                         client.reinitializeSession(context)
+                        delay(2000L)
                     }
                 } catch (_: VtopException.InvalidCredentials) {
                     Vault.saveCredentials(context, "", "")
@@ -128,6 +135,7 @@ class VtopSyncWorker(
                 } catch (_: Exception) {
                     attempts++
                     client.reinitializeSession(context)
+                    delay(2000L) // <-- 2-second back-off added here
                 }
             }
 
@@ -151,7 +159,7 @@ class VtopSyncWorker(
             )
 
             if (inputData.getBoolean("IS_EXAM_SYNC", false)) {
-                val oldExams = Vault.getExamSchedule(context) ?: emptyList()
+                val oldExams: List<ExamScheduleModel> = Vault.getExamSchedule(context) ?: emptyList()
                 val examHtml = client.fetchExamScheduleRawHtml(semId, null) ?: ""
                 val newExams = ExamScheduleParser.parse(examHtml)
 
@@ -170,7 +178,7 @@ class VtopSyncWorker(
                         val dateTimeString = "${exam.examDate} ${exam.reportingTime.clean().ifBlank { "09:00 AM" }}"
                         val examStartTimeMillis = try {
                             SimpleDateFormat("dd-MMM-yyyy hh:mm a", Locale.ENGLISH).parse(dateTimeString)?.time ?: System.currentTimeMillis()
-                        } catch (e: Exception) { System.currentTimeMillis() }
+                        } catch (_: Exception) { System.currentTimeMillis() }
 
                         NotificationHelper.showExamSeatNotification(
                             context = context,
@@ -229,7 +237,7 @@ class VtopSyncWorker(
                 MarksRepository.update(context, newMarks)
             }
 
-            val oldOutings = Vault.getOutings(context) ?: emptyList()
+            val oldOutings: List<OutingModel> = Vault.getOutings(context) ?: emptyList()
             val genHtml = client.fetchGeneralOutingRawHtml(authorizedId, null) ?: ""
             val weekHtml = client.fetchWeekendOutingRawHtml(authorizedId, null) ?: ""
             val newOutings = OutingParser.parseGeneral(genHtml) + OutingParser.parseWeekend(weekHtml)
@@ -242,7 +250,7 @@ class VtopSyncWorker(
                         val startDate = sdfOut.parse(newOut.fromDate)
                         val todayMidnight = Calendar.getInstance().apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }.time
                         startDate != null && startDate.before(todayMidnight)
-                    } catch (e: Exception) { false }
+                    } catch (_: Exception) { false }
 
                     if (oldOut != null && oldOut.status != newOut.status && !isExpired) {
                         val s = newOut.status.uppercase(Locale.getDefault())
@@ -260,6 +268,26 @@ class VtopSyncWorker(
                 }
                 OutingsRepository.update(context, newOutings)
             }
+
+            // --- BACKGROUND CALENDAR SYNC ---
+            try {
+                val monthsHtml = client.fetchCalendarMonthsRawHtml(semId, "ALL")
+                val availableDates = AcademicCalendarParser.parseMonths(monthsHtml)
+                if (availableDates.isNotEmpty()) {
+                    val allEvents = mutableListOf<AcademicCalendarEvent>()
+                    availableDates.forEach { dateStr ->
+                        val html = client.fetchCalendarRawHtml(semId, dateStr, "ALL")
+                        if (!html.isNullOrBlank()) allEvents.addAll(CalendarParser.parseCalendarHtml(html))
+                    }
+                    if (allEvents.isNotEmpty()) CalendarRepository.update(context, semId, allEvents)
+                }
+            } catch (e: Exception) { Log.e(tag, "Background Calendar Sync Failed", e) }
+
+
+            try {
+                val faculties = FacultyScraper.download(client)
+                if (faculties.isNotEmpty()) FacultyStorage.saveFaculty(context, faculties)
+            } catch (e: Exception) { Log.e(tag, "Background Faculty Sync Failed", e) }
 
             Vault.saveLastSyncTime(context)
 

@@ -78,7 +78,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
@@ -86,17 +85,15 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vtop.models.*
-import com.vtop.network.FacultyScraper
+import com.vtop.network.VtopClient
 import com.vtop.core.CourseReminder
 import com.vtop.core.FacultyStorage
 import com.vtop.core.ReminderManager
@@ -219,7 +216,7 @@ fun processAndMergeCourses(courses: List<CourseSession>, mergeLabs: Boolean): Li
     }
 
     val merged = mutableListOf<ProcessedCourse>()
-    var activeGroup: MutableList<CourseSession> = mutableListOf()
+    val activeGroup: MutableList<CourseSession> = mutableListOf()
 
     fun flushGroup() {
         if (activeGroup.isEmpty()) return
@@ -264,7 +261,8 @@ fun Timetable(
     timetable: TimetableModel,
     attendanceData: List<AttendanceModel>,
     examsData: List<ExamScheduleModel> = emptyList(),
-    holidays: Map<String, String> = emptyMap() // Left for backwards compatibility, ignored internally
+    holidays: Map<String, String> = emptyMap(),
+    vtopClient: VtopClient? = null
 ) {
     LaunchedEffect(Unit) { AnalyticsManager.logScreenView("Timetable_Screen") }
     val context = LocalContext.current
@@ -373,7 +371,6 @@ fun Timetable(
     var selectedCourse by remember { mutableStateOf<ProcessedCourse?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    // FIX: Removed the + 1 offset here as well
     val showJumpToToday by remember { derivedStateOf { abs(listState.firstVisibleItemIndex - todayIndex) > 3 } }
     var currentTimeStr by remember { mutableStateOf(SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())) }
 
@@ -421,11 +418,9 @@ fun Timetable(
                 val isToday = dateStr == todayDateStr
                 val isWeekend = dayName == "Saturday" || dayName == "Sunday"
 
-                // 1. USE FILTER INSTEAD OF FIND
                 val examsToday = sortedExams.filter { it.first == dateStr }.map { it.second }
                 val holidayToday = normalizedHolidays[dateStr]
 
-                // 2. CHECK IF LIST IS NOT EMPTY
                 val rawCourses = if (examsToday.isNotEmpty() || holidayToday != null) emptyList() else timetable.scheduleMap.entries.firstOrNull { it.key.trim().equals(dayName, ignoreCase = true) }?.value ?: emptyList()
                 val isExpanded = expandedDateStr == dateStr
                 val daysOffset = abs(index - todayIndex)
@@ -459,15 +454,13 @@ fun Timetable(
                     }
                 }
 
-                // 3. LOOP THROUGH EXAMS AND RENDER
                 if (examsToday.isNotEmpty()) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp) // Adds spacing between multiple exams
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         examsToday.forEachIndexed { eIndex, exam ->
-                            // Create a unique expansion key so they can be expanded independently
                             val expandKey = "${dateStr}_$eIndex"
                             val isExamExpanded = expandedDateStr == expandKey
 
@@ -508,7 +501,6 @@ fun Timetable(
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                // Measure the height from the very top before any padding is applied
                 .onGloballyPositioned { coordinates ->
                     pinnedBottomPx = coordinates.size.height
                 }
@@ -701,7 +693,6 @@ fun NextClassCard(
                         val activeReminder = allReminders.find { it.classId == event.classId }
                         Text(event.mergedSlot.clean(), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = themeOnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
 
-                        // FIX: Always render the venue beneath the slot
                         Text(event.venue.clean(), fontSize = 12.sp, color = themeOnSurfaceVariant)
 
                         if (activeReminder != null) {
@@ -855,10 +846,8 @@ fun TimetableRow(
             isExpanded &&
             ongoingIndex >= 0
         ) {
-            // First bring the ongoing tile into the visible area.
             classListState.animateScrollToItem(ongoingIndex)
 
-            // Wait for LazyRow layout to update.
             kotlinx.coroutines.yield()
 
             val item = classListState.layoutInfo.visibleItemsInfo
@@ -959,7 +948,6 @@ fun ClassTile(course: ProcessedCourse, status: TimeStatus, reminderType: String?
 
                 Spacer(modifier = Modifier.weight(1f).heightIn(min = 8.dp))
 
-                // --- Venue text restored here ---
                 Text(course.venue.clean(), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(modifier = Modifier.height(2.dp))
 
@@ -1174,35 +1162,18 @@ fun DetailRow(label: String, value: String) {
         Text(text = value, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium, textAlign = TextAlign.End, modifier = Modifier.weight(1f).padding(start = 16.dp))
     }
 }
+
 @Composable
 fun ExpandableFacultyRow(facultyName: String) {
     var isExpanded by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
     var cabin by remember { mutableStateOf("Loading...") }
     var email by remember { mutableStateOf("Loading...") }
     var isLoaded by remember { mutableStateOf(false) }
 
     LaunchedEffect(isExpanded) {
         if (isExpanded && !isLoaded) {
-            cabin = "Loading..."
-            email = "Loading..."
-
             try {
-                if (!FacultyStorage.hasFaculty(context)) {
-                    Log.d("FACULTY_FETCH", "faculty.json missing — downloading")
-
-                    val downloaded = FacultyScraper.download()
-                    Log.d("FACULTY_FETCH", "Downloaded ${downloaded.size} faculty")
-
-                    if (downloaded.isNotEmpty()) {
-                        FacultyStorage.saveFaculty(context, downloaded)
-                        Log.d("FACULTY_FETCH", "faculty.json saved")
-                    }
-                } else {
-                    Log.d("FACULTY_FETCH", "faculty.json exists — using cache")
-                }
-
                 val facultyList = FacultyStorage.loadFaculty(context)
 
                 if (facultyList.isEmpty()) {
@@ -1223,7 +1194,10 @@ fun ExpandableFacultyRow(facultyName: String) {
                         newCost[0] = i
                         for (j in 1..a.length) {
                             val match = if (a[j - 1] == b[i - 1]) 0 else 1
-                            newCost[j] = minOf(cost[j] + 1, newCost[j - 1] + 1, cost[j - 1] + match)
+                            val replaceCost = cost[j - 1] + match
+                            val insertCost = cost[j] + 1
+                            val deleteCost = newCost[j - 1] + 1
+                            newCost[j] = minOf(insertCost, minOf(deleteCost, replaceCost))
                         }
                         val swap = cost; cost = newCost; newCost = swap
                     }
@@ -1234,21 +1208,13 @@ fun ExpandableFacultyRow(facultyName: String) {
                 val srcSorted = sortClean(facultyName)
 
                 for (faculty in facultyList) {
-
                     val targetName = faculty.name
-
                     val tgtClean = clean(targetName)
                     val tgtSorted = sortClean(targetName)
 
                     if (tgtClean.isEmpty()) continue
 
-                    if (
-                        srcClean.contains(tgtClean) ||
-                        tgtClean.contains(srcClean) ||
-                        srcSorted.contains(tgtSorted) ||
-                        tgtSorted.contains(srcSorted) ||
-                        targetName.contains(facultyName, ignoreCase = true)
-                    ) {
+                    if (srcClean.contains(tgtClean) || tgtClean.contains(srcClean) || srcSorted.contains(tgtSorted) || tgtSorted.contains(srcSorted) || targetName.contains(facultyName, ignoreCase = true)) {
                         bestMatch = faculty
                         bestDistance = 0
                         break
@@ -1267,22 +1233,16 @@ fun ExpandableFacultyRow(facultyName: String) {
                 }
 
                 if (bestMatch != null) {
-                    cabin = bestMatch.office
-                        ?.takeIf { it.isNotBlank() }
-                        ?.replace(";", "-")
-                        ?: "Not Provided"
-
-                    email = bestMatch.email
-                        ?.takeIf { it.isNotBlank() }
-                        ?: "Not Provided"
+                    cabin = bestMatch.office?.takeIf { it.isNotBlank() }?.replace(";", "-") ?: "Not Provided"
+                    email = bestMatch.email?.takeIf { it.isNotBlank() } ?: "Not Provided"
                 } else {
                     cabin = "Not found"
                     email = "N/A"
                 }
                 isLoaded = true
             } catch (e: Exception) {
-                cabin = "Unable to load"
-                email = "Unable to load"
+                cabin = "Error"
+                email = "Error"
                 isLoaded = false
             }
         }
@@ -1306,7 +1266,9 @@ fun ExpandableFacultyRow(facultyName: String) {
                     Icon(
                         imageVector = Icons.Outlined.ContentCopy, contentDescription = "Copy Cabin", tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(16.dp).clickable {
-                            clipboardManager.setText(AnnotatedString(cabin))
+                            val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            val clip = android.content.ClipData.newPlainText("Cabin", cabin)
+                            clipboardManager.setPrimaryClip(clip)
                             android.widget.Toast.makeText(context, "Copied: $cabin", android.widget.Toast.LENGTH_SHORT).show()
                         }
                     )
@@ -1328,7 +1290,9 @@ fun ExpandableFacultyRow(facultyName: String) {
                     Icon(
                         imageVector = Icons.Outlined.ContentCopy, contentDescription = "Copy Email", tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(16.dp).clickable(enabled = email.contains("@")) {
-                            clipboardManager.setText(AnnotatedString(email))
+                            val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            val clip = android.content.ClipData.newPlainText("Email", email)
+                            clipboardManager.setPrimaryClip(clip)
                             android.widget.Toast.makeText(context, "Copied: $email", android.widget.Toast.LENGTH_SHORT).show()
                         }
                     )
