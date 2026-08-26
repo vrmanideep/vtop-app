@@ -3,8 +3,12 @@
 package com.vtop.ui.screens.main
 
 import android.annotation.SuppressLint
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.util.Log
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
@@ -16,6 +20,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,6 +28,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,7 +38,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -49,10 +54,14 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Email
+import androidx.compose.material.icons.outlined.LocationOn
+import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -77,7 +86,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
@@ -85,6 +93,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -92,12 +101,20 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.vtop.models.*
-import com.vtop.network.VtopClient
+import androidx.core.net.toUri
 import com.vtop.core.CourseReminder
 import com.vtop.core.FacultyStorage
 import com.vtop.core.ReminderManager
-import com.vtop.utils.*
+import com.vtop.models.AttendanceModel
+import com.vtop.models.CourseSession
+import com.vtop.models.ExamScheduleModel
+import com.vtop.models.FacultyEntity
+import com.vtop.models.TimetableModel
+import com.vtop.network.FacultyDetails
+import com.vtop.network.FacultyScraper
+import com.vtop.network.VtopClient
+import com.vtop.utils.AnalyticsManager
+import com.vtop.utils.Vault
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -107,7 +124,6 @@ import java.util.Locale
 import java.util.TimeZone
 import java.util.UUID
 import kotlin.math.abs
-import androidx.compose.foundation.gestures.scrollBy
 
 val ColorDanger = Color(0xFFC91818)
 
@@ -171,8 +187,7 @@ data class ProcessedCourse(
     val originalSession: CourseSession,
     val mergedTimeSlot: String,
     val mergedSlot: String
-)
-{
+) {
     val courseCode: String? get() = originalSession.courseCode
     val courseName: String? get() = originalSession.courseName
     val courseType: String? get() = originalSession.courseType
@@ -306,7 +321,7 @@ fun Timetable(
         }
     }
 
-    // --- NEW DYNAMIC HOLIDAY LOGIC ---
+    // --- DYNAMIC HOLIDAY LOGIC ---
     val selectedSemId = remember { Vault.getSelectedSemester(context)[0] }
     val academicEvents = remember(selectedSemId) { Vault.getAcademicCalendar(context, selectedSemId) }
 
@@ -360,12 +375,11 @@ fun Timetable(
                             holidayMap[sdfKey.format(date)] = cleanTitle
                         }
                     }
-                } catch (e: Exception) {}
+                } catch (_: Exception) {}
             }
         }
         holidayMap
     }
-    // ---------------------------------
 
     var expandedDateStr by remember { mutableStateOf(todayDateStr) }
     var selectedCourse by remember { mutableStateOf<ProcessedCourse?>(null) }
@@ -386,7 +400,7 @@ fun Timetable(
                     val sdf = SimpleDateFormat(f, Locale.ENGLISH).apply { isLenient = false }
                     d = sdf.parse(dateStr.trim())
                     if (d != null) break
-                } catch(e: Exception) {}
+                } catch (_: Exception) {}
             }
             if (d != null) Pair(standardSdf.format(d), exam) else null
         }.sortedBy { it.first }
@@ -471,6 +485,7 @@ fun Timetable(
                                 isToday = isToday,
                                 isExpanded = isExamExpanded,
                                 alpha = rowAlpha,
+                                vtopClient = vtopClient,
                                 onExpandToggle = { expandedDateStr = if (isExamExpanded) "" else expandKey }
                             )
                         }
@@ -538,7 +553,13 @@ fun Timetable(
     if (selectedCourse != null) {
         val bottomSheetBg = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF111111) else Color(0xFFFFFFFF)
         ModalBottomSheet(onDismissRequest = { selectedCourse = null }, sheetState = sheetState, containerColor = bottomSheetBg) {
-            CourseDetailsSheet(course = selectedCourse!!, attendanceData = attendanceData, allReminders = allReminders, onRemindersUpdated = { allReminders = it })
+            CourseDetailsSheet(
+                course = selectedCourse!!,
+                attendanceData = attendanceData,
+                allReminders = allReminders,
+                vtopClient = vtopClient,
+                onRemindersUpdated = { allReminders = it }
+            )
         }
     }
 }
@@ -747,7 +768,16 @@ fun HolidayRow(dateCal: Calendar, holidayName: String, isToday: Boolean, alpha: 
 }
 
 @Composable
-fun ExamRow(timetable: TimetableModel, dateCal: Calendar, exam: ExamScheduleModel, isToday: Boolean, isExpanded: Boolean, alpha: Float, onExpandToggle: () -> Unit) {
+fun ExamRow(
+    timetable: TimetableModel,
+    dateCal: Calendar,
+    exam: ExamScheduleModel,
+    isToday: Boolean,
+    isExpanded: Boolean,
+    alpha: Float,
+    vtopClient: VtopClient? = null,
+    onExpandToggle: () -> Unit
+) {
     val sdfDayShort = remember { SimpleDateFormat("EEE", Locale.ENGLISH) }
     val themePrimary = MaterialTheme.colorScheme.primary
 
@@ -807,7 +837,7 @@ fun ExamRow(timetable: TimetableModel, dateCal: Calendar, exam: ExamScheduleMode
                 DetailRow("Seat number", exam.seatNumber.clean())
                 DetailRow("Class ID", exam.classId.clean())
                 val displayFaculty = if (facultyName != "N/A") facultyName else "Unknown Faculty"
-                ExpandableFacultyRow(facultyName = displayFaculty)
+                ExpandableFacultyRow(facultyName = displayFaculty, vtopClient = vtopClient)
             }
         }
     }
@@ -960,7 +990,10 @@ fun ClassTile(course: ProcessedCourse, status: TimeStatus, reminderType: String?
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CourseDetailsSheet(
-    course: ProcessedCourse, attendanceData: List<AttendanceModel>, allReminders: List<CourseReminder>,
+    course: ProcessedCourse,
+    attendanceData: List<AttendanceModel>,
+    allReminders: List<CourseReminder>,
+    vtopClient: VtopClient? = null,
     onRemindersUpdated: (List<CourseReminder>) -> Unit
 ) {
     val context = LocalContext.current
@@ -982,7 +1015,7 @@ fun CourseDetailsSheet(
     var isViewingAttendance by remember(course.classId) { mutableStateOf(false) }
 
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState())
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp).verticalScroll(rememberScrollState())
     ) {
         if (isViewingAttendance && attendance != null) {
             Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1104,7 +1137,7 @@ fun CourseDetailsSheet(
             DetailRow(label = "SLOT", value = course.mergedSlot.clean())
             DetailRow(label = "VENUE", value = course.venue.clean())
 
-            ExpandableFacultyRow(facultyName = course.faculty.clean())
+            ExpandableFacultyRow(facultyName = course.faculty.clean(), vtopClient = vtopClient)
 
             DetailRow(label = "CLASS ID", value = course.classId.clean())
             Spacer(Modifier.height(24.dp))
@@ -1164,86 +1197,31 @@ fun DetailRow(label: String, value: String) {
 }
 
 @Composable
-fun ExpandableFacultyRow(facultyName: String) {
+fun ExpandableFacultyRow(facultyName: String, vtopClient: VtopClient? = null) {
     var isExpanded by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    var cabin by remember { mutableStateOf("Loading...") }
-    var email by remember { mutableStateOf("Loading...") }
+    var matchedFaculty by remember { mutableStateOf<FacultyEntity?>(null) }
+    var failReason by remember { mutableStateOf<String?>(null) }
     var isLoaded by remember { mutableStateOf(false) }
 
     LaunchedEffect(isExpanded) {
         if (isExpanded && !isLoaded) {
             try {
                 val facultyList = FacultyStorage.loadFaculty(context)
-
                 if (facultyList.isEmpty()) {
-                    cabin = "Unable to load"
-                    email = "Unable to load"
-                    return@LaunchedEffect
-                }
-
-                var bestMatch: FacultyEntity? = null
-                var bestDistance = Int.MAX_VALUE
-
-                fun clean(s: String): String = s.replace(Regex("[^a-zA-Z]"), "").lowercase().removePrefix("dr").removePrefix("prof").removePrefix("mr").removePrefix("mrs")
-                fun sortClean(s: String): String = s.lowercase().replace("dr.", "").replace("dr ", "").replace("prof.", "").replace("prof ", "").split(Regex("[\\s.]+")).filter { it.isNotBlank() }.sorted().joinToString("") { it.replace(Regex("[^a-z]"), "") }
-                fun levenshtein(a: String, b: String): Int {
-                    var cost = IntArray(a.length + 1) { it }
-                    var newCost = IntArray(a.length + 1) { 0 }
-                    for (i in 1..b.length) {
-                        newCost[0] = i
-                        for (j in 1..a.length) {
-                            val match = if (a[j - 1] == b[i - 1]) 0 else 1
-                            val replaceCost = cost[j - 1] + match
-                            val insertCost = cost[j] + 1
-                            val deleteCost = newCost[j - 1] + 1
-                            newCost[j] = minOf(insertCost, minOf(deleteCost, replaceCost))
-                        }
-                        val swap = cost; cost = newCost; newCost = swap
-                    }
-                    return cost[a.length]
-                }
-
-                val srcClean = clean(facultyName)
-                val srcSorted = sortClean(facultyName)
-
-                for (faculty in facultyList) {
-                    val targetName = faculty.name
-                    val tgtClean = clean(targetName)
-                    val tgtSorted = sortClean(targetName)
-
-                    if (tgtClean.isEmpty()) continue
-
-                    if (srcClean.contains(tgtClean) || tgtClean.contains(srcClean) || srcSorted.contains(tgtSorted) || tgtSorted.contains(srcSorted) || targetName.contains(facultyName, ignoreCase = true)) {
-                        bestMatch = faculty
-                        bestDistance = 0
-                        break
-                    }
-
-                    val dist1 = levenshtein(srcClean, tgtClean)
-                    val dist2 = levenshtein(srcSorted, tgtSorted)
-                    val dist = minOf(dist1, dist2)
-
-                    val maxAllowed = maxOf(1, srcClean.length / 3)
-
-                    if (dist <= maxAllowed && dist < bestDistance) {
-                        bestDistance = dist
-                        bestMatch = faculty
-                    }
-                }
-
-                if (bestMatch != null) {
-                    cabin = bestMatch.office?.takeIf { it.isNotBlank() }?.replace(";", "-") ?: "Not Provided"
-                    email = bestMatch.email?.takeIf { it.isNotBlank() } ?: "Not Provided"
+                    failReason = "Cache empty. Sync Faculty first."
                 } else {
-                    cabin = "Not found"
-                    email = "N/A"
+                    val bestMatch = FacultyScraper.matchFaculty(facultyName, facultyList)
+                    if (bestMatch != null) {
+                        matchedFaculty = bestMatch
+                    } else {
+                        failReason = "Professor not found in directory."
+                    }
                 }
-                isLoaded = true
             } catch (e: Exception) {
-                cabin = "Error"
-                email = "Error"
-                isLoaded = false
+                failReason = "Error loading profile."
+            } finally {
+                isLoaded = true
             }
         }
     }
@@ -1258,44 +1236,62 @@ fun ExpandableFacultyRow(facultyName: String) {
         }
         if (isExpanded) {
             Spacer(modifier = Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(text = "Cabin", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = cabin, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium, textAlign = TextAlign.End)
-                    Spacer(Modifier.width(8.dp))
-                    Icon(
-                        imageVector = Icons.Outlined.ContentCopy, contentDescription = "Copy Cabin", tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(16.dp).clickable {
-                            val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                            val clip = android.content.ClipData.newPlainText("Cabin", cabin)
-                            clipboardManager.setPrimaryClip(clip)
-                            android.widget.Toast.makeText(context, "Copied: $cabin", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    )
+
+            if (!isLoaded) {
+                Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                 }
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(text = "Email", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = email, fontSize = 14.sp, color = if (email.contains("@")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.Medium, textAlign = TextAlign.End,
-                        modifier = Modifier.clickable(enabled = email.contains("@")) {
-                            val intent = android.content.Intent(android.content.Intent.ACTION_SENDTO, android.net.Uri.parse("mailto:$email"))
-                            context.startActivity(intent)
+            } else if (failReason != null) {
+                Text(text = failReason!!, fontSize = 14.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+            } else if (matchedFaculty != null) {
+                val rawOffice = matchedFaculty?.office?.takeIf { it.isNotBlank() } ?: "N/A"
+                val formattedOffice = rawOffice.replace(";", "-")
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = "Cabin", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(text = formattedOffice, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium, textAlign = TextAlign.End)
+                        if (formattedOffice != "N/A" && formattedOffice != "Not found") {
+                            Spacer(Modifier.width(8.dp))
+                            Icon(
+                                imageVector = Icons.Outlined.ContentCopy, contentDescription = "Copy Cabin", tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp).clickable {
+                                    val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val clip = ClipData.newPlainText("Cabin", formattedOffice)
+                                    clipboardManager.setPrimaryClip(clip)
+                                    Toast.makeText(context, "Copied: $formattedOffice", Toast.LENGTH_SHORT).show()
+                                }
+                            )
                         }
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Icon(
-                        imageVector = Icons.Outlined.ContentCopy, contentDescription = "Copy Email", tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(16.dp).clickable(enabled = email.contains("@")) {
-                            val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                            val clip = android.content.ClipData.newPlainText("Email", email)
-                            clipboardManager.setPrimaryClip(clip)
-                            android.widget.Toast.makeText(context, "Copied: $email", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                val rawEmail = matchedFaculty?.email?.takeIf { it.isNotBlank() } ?: "`N/A"
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = "Email", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = rawEmail, fontSize = 14.sp, color = if (rawEmail.contains("@")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Medium, textAlign = TextAlign.End,
+                            modifier = Modifier.clickable(enabled = rawEmail.contains("@")) {
+                                try { context.startActivity(Intent(Intent.ACTION_SENDTO, android.net.Uri.parse("mailto:$rawEmail"))) } catch (_: Exception) {}
+                            }
+                        )
+                        if (rawEmail.contains("@")) {
+                            Spacer(Modifier.width(8.dp))
+                            Icon(
+                                imageVector = Icons.Outlined.ContentCopy, contentDescription = "Copy Email", tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp).clickable {
+                                    val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val clip = ClipData.newPlainText("Email", rawEmail)
+                                    clipboardManager.setPrimaryClip(clip)
+                                    Toast.makeText(context, "Copied: $rawEmail", Toast.LENGTH_SHORT).show()
+                                }
+                            )
                         }
-                    )
+                    }
                 }
             }
         }

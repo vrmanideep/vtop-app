@@ -258,9 +258,14 @@ fun FacultyCard(faculty: FacultyEntity, vtopClient: VtopClient, isExpanded: Bool
 
     LaunchedEffect(isExpanded) {
         if (isExpanded && details == null) {
-            isLoadingDetails = true
-            details = FacultyScraper.fetchDetails(vtopClient, faculty.id)
-            isLoadingDetails = false
+            // Read from Disk if it was saved during Timetable Sync!
+            if (faculty.office != null || faculty.email != null) {
+                details = FacultyDetails(faculty.email, faculty.office, faculty.research, faculty.openHours ?: emptyList())
+            } else {
+                isLoadingDetails = true
+                details = FacultyScraper.fetchDetails(vtopClient, faculty.id)
+                isLoadingDetails = false
+            }
         }
     }
 
@@ -287,7 +292,6 @@ fun FacultyCard(faculty: FacultyEntity, vtopClient: VtopClient, isExpanded: Bool
 
             if (isExpanded) {
                 Spacer(Modifier.height(16.dp))
-
                 if (isLoadingDetails) {
                     Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp) }
                 } else {
@@ -298,7 +302,7 @@ fun FacultyCard(faculty: FacultyEntity, vtopClient: VtopClient, isExpanded: Bool
                         Spacer(Modifier.width(8.dp))
                         Text(formattedOffice, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
                         Spacer(Modifier.weight(1f))
-                        if (rawOffice != "N/A") {
+                        if (rawOffice != "N/A" && rawOffice.isNotBlank()) {
                             IconButton(onClick = {
                                 val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                 val clip = ClipData.newPlainText("Cabin", formattedOffice)
@@ -317,7 +321,7 @@ fun FacultyCard(faculty: FacultyEntity, vtopClient: VtopClient, isExpanded: Bool
                             Spacer(Modifier.width(8.dp))
                             Text(safeEmail, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        if (safeEmail != "N/A") {
+                        if (safeEmail != "N/A" && safeEmail.isNotBlank()) {
                             IconButton(onClick = {
                                 val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                 val clip = ClipData.newPlainText("Email", safeEmail)
@@ -347,8 +351,8 @@ fun FacultyCard(faculty: FacultyEntity, vtopClient: VtopClient, isExpanded: Bool
                             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
                             details!!.openHours.forEachIndexed { index, oh ->
                                 Row(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
-                                    Text(oh.first, modifier = Modifier.weight(1f), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
-                                    Text(oh.second, modifier = Modifier.weight(1f), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+                                    Text(oh.day, modifier = Modifier.weight(1f), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+                                    Text(oh.time, modifier = Modifier.weight(1f), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
                                 }
                                 if (index < details!!.openHours.size - 1) {
                                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))

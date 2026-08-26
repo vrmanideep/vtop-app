@@ -165,7 +165,15 @@ object SyncManager {
 
                 TelemetryTracer.trace("Priority Fetch", TelemetryModule.SYNC) {
                     when (priority) {
-                        "HOME" -> { updateStatus("Syncing Timetable..."); syncTimetable(context, client, semId) }
+                        "HOME" -> {
+                            updateStatus("Syncing Timetable...")
+                            syncTimetable(context, client, semId)
+                            val tt = Vault.getTimetable(context)
+                            if (tt != null) {
+                                updateStatus("Caching Faculty Details...")
+                                FacultyScraper.syncRegisteredFacultyDetails(context, client, tt)
+                            }
+                        }
                         "ATTENDANCE" -> {
                             updateStatus("Syncing Attendance...")
                             AttendanceSyncEngine.sync(context, client, semId, authorizedId, AttendanceSyncMode.OPTIMIZED, "ATT_OPT")

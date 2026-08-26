@@ -180,7 +180,16 @@ fun MainScreen(
 
             Box(modifier = Modifier.fillMaxSize().padding(tabPadding)) {
                 when (uiState.currentTab) {
-                    "HOME" -> { timetable?.let { Timetable(timetable = it, attendanceData = attendanceData, examsData = examsData) } }
+                    "HOME" -> {
+                        timetable?.let {
+                            Timetable(
+                                timetable = it,
+                                attendanceData = attendanceData,
+                                examsData = examsData,
+                                vtopClient = SessionManager.getSyncClient() // Inject the live session here!
+                            )
+                        }
+                    }
                     "ATTENDANCE" -> { Attendance(attendanceData = attendanceData, onLaunchSimulator = { navController.navigate("simulator") }) }
                     "EXAMS" -> { Exams(examsData) }
                     "MARKS" -> { Marks(marksData = marksData, historySummary = historySummary, historyData = historyItems, onHistoryLoad = {}) }

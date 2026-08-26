@@ -284,9 +284,15 @@ class VtopSyncWorker(
             } catch (e: Exception) { Log.e(tag, "Background Calendar Sync Failed", e) }
 
 
+            // --- BACKGROUND FACULTY SYNC ---
             try {
                 val faculties = FacultyScraper.download(client)
-                if (faculties.isNotEmpty()) FacultyStorage.saveFaculty(context, faculties)
+                if (faculties.isNotEmpty()) {
+                    FacultyStorage.saveFaculty(context, faculties)
+                    // Disk-Save registered faculty details instantly
+                    val tt = Vault.getTimetable(context)
+                    if (tt != null) FacultyScraper.syncRegisteredFacultyDetails(context, client, tt)
+                }
             } catch (e: Exception) { Log.e(tag, "Background Faculty Sync Failed", e) }
 
             Vault.saveLastSyncTime(context)
