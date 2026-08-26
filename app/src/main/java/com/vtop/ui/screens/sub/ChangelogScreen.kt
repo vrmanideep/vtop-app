@@ -35,6 +35,30 @@ data class ReleaseLog(
 
 val releaseHistory = listOf(
     ReleaseLog(
+        version = "Version 1.1.16",
+        tag = "v1.1.16",
+        date = "26 Aug 2026",
+        features = listOf(
+            "Added automatic smart renaming and MIME-type correction for files downloaded from the VTOP portal.",
+            "Added native background calendar syncing with automatic exam seat updates and 30-minute system alarms.",
+            "Added \"Open Hours\" to the faculty directory, along with stealth searching by Employee ID.",
+            "Added a 1-tap export button to save the timetable to the gallery as a PNG image.",
+            "Added instantaneous background sync immediately after login using active session cookies.",
+            "Added an 18-second background polling loop for automated Gmail OTP extraction.",
+            "Transitioned to a 100% local, serverless architecture by removing Firebase dependencies."
+        ),
+        fixes = listOf(
+            "Fixed false-positive faculty matches in the Timetable using a strict word-based intersection algorithm.",
+            "Fixed VTOP firewall IP bans by introducing back-off delays during automatic login retries.",
+            "Fixed SharedPreferences bloat and disk I/O degradation with aggressive cookie garbage collection.",
+            "Fixed the Next Class widget to correctly display multiple exams scheduled on the same day.",
+            "Fixed exam ID collisions, phantom clashes, and TBC parsing errors in the seat scheduler.",
+            "Fixed OkHttpClient race conditions and added background notification fallbacks for blocked background workers.",
+            "Aligned the timetable attendance sheet UI with the main page and restored full history visibility.",
+            "Shifted timetable faculty details to load instantly from an offline disk cache."
+        )
+    ),
+    ReleaseLog(
         version = "Version 1.1.15",
         tag = "v1.1.15",
         date = "14 Aug 2026",
