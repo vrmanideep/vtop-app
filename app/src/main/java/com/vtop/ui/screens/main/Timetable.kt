@@ -7,7 +7,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.util.Log
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -33,6 +32,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -54,8 +54,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.Email
-import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -124,6 +122,7 @@ import java.util.Locale
 import java.util.TimeZone
 import java.util.UUID
 import kotlin.math.abs
+import kotlin.time.Duration.Companion.seconds
 
 val ColorDanger = Color(0xFFC91818)
 
@@ -188,12 +187,12 @@ data class ProcessedCourse(
     val mergedTimeSlot: String,
     val mergedSlot: String
 ) {
-    val courseCode: String? get() = originalSession.courseCode
-    val courseName: String? get() = originalSession.courseName
-    val courseType: String? get() = originalSession.courseType
-    val classId: String? get() = originalSession.classId
-    val venue: String? get() = originalSession.venue
-    val faculty: String? get() = originalSession.faculty
+    val courseCode: String get() = originalSession.courseCode ?: ""
+    val courseName: String get() = originalSession.courseName ?: ""
+    val courseType: String get() = originalSession.courseType ?: ""
+    val classId: String get() = originalSession.classId ?: ""
+    val venue: String get() = originalSession.venue ?: ""
+    val faculty: String get() = originalSession.faculty ?: ""
 }
 
 private fun parseTimeMillis(value: String?): Long {
@@ -408,7 +407,7 @@ fun Timetable(
 
     LaunchedEffect(Unit) {
         while (true) {
-            delay(60000)
+            delay(60.seconds)
             currentTimeStr = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
         }
     }
@@ -621,9 +620,9 @@ fun NextClassCard(
 
         val todayStr = SimpleDateFormat("EEEE", Locale.ENGLISH).format(cal.time)
         val todayCourses = processAndMergeCourses(timetable.scheduleMap.entries.firstOrNull { it.key.trim().equals(todayStr, ignoreCase = true) }?.value ?: emptyList(), mergeLabs)
-        val nextToday = todayCourses.firstOrNull { getCourseTimeStatus(it.mergedTimeSlot, true, true) in listOf(TimeStatus.NEXT, TimeStatus.ONGOING) }
+        val nextToday = todayCourses.firstOrNull { getCourseTimeStatus(timeSlot = it.mergedTimeSlot, isToday = true, isNextInLine = true) in listOf(TimeStatus.NEXT, TimeStatus.ONGOING) }
         if (nextToday != null) {
-            val status = getCourseTimeStatus(nextToday.mergedTimeSlot, true, true)
+            val status = getCourseTimeStatus(timeSlot = nextToday.mergedTimeSlot, isToday = true, isNextInLine = true)
             val title = if (status == TimeStatus.ONGOING) "NOW" else "NEXT UP"
             return@remember Pair(nextToday, title to themePrimary)
         }
@@ -859,7 +858,7 @@ fun TimetableRow(
         var foundNextIndex = -1
         mergedCourses.mapIndexed { index, course ->
             val isNextInLine = foundNextIndex == -1
-            val status = getCourseTimeStatus(course.mergedTimeSlot, isToday, isNextInLine)
+            val status = getCourseTimeStatus(timeSlot = course.mergedTimeSlot, isToday = isToday, isNextInLine = isNextInLine)
             if (status == TimeStatus.NEXT || status == TimeStatus.ONGOING) foundNextIndex = index
             status
         }
@@ -1015,21 +1014,43 @@ fun CourseDetailsSheet(
     var isViewingAttendance by remember(course.classId) { mutableStateOf(false) }
 
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp).verticalScroll(rememberScrollState())
+        modifier = Modifier
+            .fillMaxWidth()
+            .animateContentSize(animationSpec = tween(300)) // Ensures bottom sheet resizes dynamically
+            .padding(horizontal = 24.dp)
+            .padding(bottom = 32.dp)
+            .verticalScroll(rememberScrollState())
     ) {
         if (isViewingAttendance && attendance != null) {
-            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { isViewingAttendance = false }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = MaterialTheme.colorScheme.onSurface) }
-                Text("Attendance Details", fontSize = 18.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+            val cType = course.courseType
+            val categoryLabel = when {
+                cType.contains("TH", ignoreCase = true) || cType.contains("ETH", ignoreCase = true) -> "Theory"
+                cType.contains("LO", ignoreCase = true) || cType.contains("ELA", ignoreCase = true) -> "Lab"
+                cType.contains("PJT", ignoreCase = true) || cType.contains("EPT", ignoreCase = true) -> "Project"
+                else -> cType.ifEmpty { "Theory" }
             }
-            com.vtop.ui.screens.main.AttendanceDetailCore(course = attendance, onSimulateClick = null)
+
+            Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { isViewingAttendance = false }, modifier = Modifier.offset(x = (-12).dp)) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = MaterialTheme.colorScheme.onSurface)
+                    }
+                    Text(text = "${course.courseCode.clean()} · $categoryLabel", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Text(text = course.courseName.clean().ifBlank { "N/A" }, color = MaterialTheme.colorScheme.onSurface, fontSize = 18.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 4.dp))
+                Spacer(Modifier.height(16.dp))
+
+                // Passing {} ensures the Full History UI block renders properly!
+                AttendanceDetailCore(course = attendance, onSimulateClick = {})
+            }
         } else if (isEditingReminder) {
             val reminderToEdit = activeReminders.find { it.id == editingReminderId }
 
             Text(if (editingReminderId == null) "New Reminder" else "Edit Reminder", fontSize = 20.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(16.dp))
 
-            val isLab = course.courseType?.contains("L") == true || course.courseType?.contains("P") == true
+            val isLab = course.courseType.contains("L") || course.courseType.contains("P")
             val predefinedTypes = remember(isLab) { mutableListOf("Quiz", "Assignment").apply { if (isLab) addAll(listOf("Viva", "Record")); add("Others") } }
 
             var selectedType by remember(course.classId, editingReminderId) { mutableStateOf(when { reminderToEdit == null -> "Quiz"; predefinedTypes.contains(reminderToEdit.type) -> reminderToEdit.type; else -> "Others" }) }
@@ -1106,7 +1127,11 @@ fun CourseDetailsSheet(
                         val finalType = if (selectedType == "Others") customType.ifBlank { "Task" } else selectedType
                         val newReminder = CourseReminder(
                             id = editingReminderId ?: UUID.randomUUID().toString(),
-                            courseCode = course.courseCode ?: "", classId = course.classId ?: "", type = finalType, date = selectedDate, syllabus = syllabus
+                            courseCode = course.courseCode,
+                            classId = course.classId,
+                            type = finalType,
+                            date = selectedDate,
+                            syllabus = syllabus
                         )
                         val updatedList = allReminders.toMutableList()
                         if (editingReminderId != null) updatedList.removeAll { it.id == editingReminderId }
@@ -1244,14 +1269,14 @@ fun ExpandableFacultyRow(facultyName: String, vtopClient: VtopClient? = null) {
             } else if (failReason != null) {
                 Text(text = failReason!!, fontSize = 14.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
             } else if (matchedFaculty != null) {
-                val rawOffice = matchedFaculty?.office?.takeIf { it.isNotBlank() } ?: "N/A"
+                val rawOffice = matchedFaculty?.office?.takeIf { it.isNotBlank() } ?: "Not Provided"
                 val formattedOffice = rawOffice.replace(";", "-")
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text(text = "Cabin", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(text = formattedOffice, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium, textAlign = TextAlign.End)
-                        if (formattedOffice != "N/A" && formattedOffice != "Not found") {
+                        if (formattedOffice != "Not Provided" && formattedOffice != "Not found") {
                             Spacer(Modifier.width(8.dp))
                             Icon(
                                 imageVector = Icons.Outlined.ContentCopy, contentDescription = "Copy Cabin", tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1267,7 +1292,7 @@ fun ExpandableFacultyRow(facultyName: String, vtopClient: VtopClient? = null) {
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
-                val rawEmail = matchedFaculty?.email?.takeIf { it.isNotBlank() } ?: "`N/A"
+                val rawEmail = matchedFaculty?.email?.takeIf { it.isNotBlank() } ?: "Not Provided"
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text(text = "Email", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
