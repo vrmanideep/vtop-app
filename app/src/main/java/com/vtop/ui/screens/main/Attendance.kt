@@ -41,8 +41,10 @@ import com.vtop.models.AttendanceModel
 import com.vtop.utils.AnalyticsManager
 import kotlinx.coroutines.launch
 import java.util.Locale
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 
-// --- STRICT PREMIUM COLORS (Bypasses Material You Tint) ---
+
 @Composable
 fun premiumSurfaceColor(): Color = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF141414) else Color(0xFFFFFFFF)
 
@@ -92,6 +94,9 @@ fun calculateBunkBudget(attended: Int, total: Int, target: Float = 0.75f): BunkS
     }
 }
 
+
+// Add the above imports to your existing import block
+
 @Composable
 fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
 
@@ -112,7 +117,9 @@ fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = premiumSurfaceColor()),
         border = BorderStroke(1.dp, premiumBorderColor()),
-        modifier = Modifier.fillMaxWidth().clickable { onClick() }
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
 
@@ -120,7 +127,7 @@ fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Left side: Title + Subtitle (Fraction & Chip)
+                // Left side: Title + Subtitle (Chip)
                 Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                     Text(
                         text = "${item.courseCode ?: ""} - ${item.courseName ?: "Unknown Course"}",
@@ -132,72 +139,55 @@ fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // Grouping the fraction and chip together eliminates the horizontal void
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "$attended/$total",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        BunkPredictorChip(bunkState)
-                    }
+                    BunkPredictorChip(bunkState)
                 }
 
-                // Right side: Percentage
-                Text(
-                    text = "$percentage%",
-                    color = statusColor,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Black
-                )
+                // Right side: Percentage + Fraction
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "$percentage%",
+                        color = statusColor,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "$attended/$total",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
             // Bottom Anchor: Progress Bar
-            Box(modifier = Modifier.fillMaxWidth().height(3.dp).clip(CircleShape).background(premiumBorderColor())) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .clip(CircleShape)
+                    .background(premiumBorderColor())
+            ) {
                 if (progress > 0f) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth(progress)
                             .height(3.dp)
                             .background(
-                                brush = Brush.horizontalGradient(listOf(statusColor.copy(alpha = 0.4f), statusColor)),
+                                brush = Brush.horizontalGradient(
+                                    listOf(
+                                        statusColor.copy(alpha = 0.4f),
+                                        statusColor
+                                    )
+                                ),
                                 shape = CircleShape
                             )
                     )
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun BunkPredictorChip(bunkState: BunkState) {
-    val (statusText, isDangerous) = when (bunkState) {
-        is BunkState.Safe -> {
-            if (bunkState.canMiss == 0) {
-                "Cannot skip anymore" to true
-            } else {
-                "Can bunk ${bunkState.canMiss} more" to false
-            }
-        }
-        is BunkState.AtRisk -> "Must attend ${bunkState.mustAttend} more" to true
-        BunkState.NoData -> "" to false
-    }
-
-    if (statusText.isEmpty()) return
-    val chipStatusColor = if (isDangerous) MaterialTheme.colorScheme.error else Color(0xFF4CAF50)
-
-    Row(
-        modifier = Modifier.background(chipStatusColor.copy(alpha = 0.1f), CircleShape).padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(if (isDangerous) Icons.Default.Warning else Icons.Default.CheckCircle, contentDescription = null, tint = chipStatusColor, modifier = Modifier.size(12.dp))
-        Spacer(Modifier.width(4.dp))
-        Text(text = statusText, color = chipStatusColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -264,109 +254,195 @@ fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> U
     val categories = groupedCourses.keys.toList()
     var selectedTabIndex by remember { mutableIntStateOf(0) }
 
-    // ── Single Scrollable Column handles EVERYTHING cleanly ──
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            start = 20.dp,
-            end = 20.dp,
-            top = 96.dp, // Padding for GlobalTopBar
-            bottom = 120.dp // Padding for BottomNav/Dock
-        )
+    val pagerState = rememberPagerState(pageCount = { categories.size })
+    val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(pagerState.currentPage) {
+        selectedTabIndex = pagerState.currentPage
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = 96.dp, bottom = 120.dp) // Maintain outer container padding
     ) {
         // 1. Header Cards (Bunk Simulator & Risk)
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max).padding(bottom = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Max)
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Card(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clickable { onLaunchSimulator() },
+                colors = CardDefaults.cardColors(containerColor = premiumSurfaceColor()),
+                border = BorderStroke(1.dp, premiumBorderColor()),
+                shape = RoundedCornerShape(16.dp)
             ) {
-                Card(
-                    modifier = Modifier.weight(1f).fillMaxHeight().clickable { onLaunchSimulator() },
-                    colors = CardDefaults.cardColors(containerColor = premiumSurfaceColor()),
-                    border = BorderStroke(1.dp, premiumBorderColor()),
-                    shape = RoundedCornerShape(16.dp)
+                Column(
+                    modifier = Modifier
+                        .padding(16.dp)
+                        .fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp).fillMaxSize(),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Icon(Icons.Default.DateRange, contentDescription = "Simulator", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
-                        Spacer(Modifier.height(8.dp))
-                        Text(text = "Bunk Simulator", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-                    }
+                    Icon(
+                        Icons.Default.DateRange,
+                        contentDescription = "Simulator",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(32.dp)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "Bunk Simulator",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
                 }
-                Card(
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                    colors = CardDefaults.cardColors(containerColor = if (atRiskCount > 0) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else premiumSurfaceColor()),
-                    border = BorderStroke(1.dp, if (atRiskCount > 0) MaterialTheme.colorScheme.error.copy(alpha = 0.3f) else premiumBorderColor()),
-                    shape = RoundedCornerShape(16.dp)
+            }
+            Card(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                colors = CardDefaults.cardColors(containerColor = if (atRiskCount > 0) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else premiumSurfaceColor()),
+                border = BorderStroke(1.dp, if (atRiskCount > 0) MaterialTheme.colorScheme.error.copy(alpha = 0.3f) else premiumBorderColor()),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(16.dp)
+                        .fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp).fillMaxSize(),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(text = atRiskCount.toString(), color = if (atRiskCount > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface, fontSize = 32.sp, fontWeight = FontWeight.Black)
-                        Spacer(Modifier.height(8.dp))
-                        Text(text = "Courses at Risk", color = if (atRiskCount > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-                    }
+                    Text(
+                        text = atRiskCount.toString(),
+                        color = if (atRiskCount > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                        fontSize = 32.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "Courses at Risk",
+                        color = if (atRiskCount > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
                 }
             }
         }
 
         // 2. TabRow (Standard Underline)
-        item {
-            TabRow(
-                selectedTabIndex = selectedTabIndex,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                containerColor = Color.Transparent, // Inherit background
-                divider = { HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)) },
-                indicator = { tabPositions ->
-                    TabRowDefaults.SecondaryIndicator(
-                        modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
-                        color = MaterialTheme.colorScheme.primary,
-                        height = 3.dp
-                    )
-                }
-            ) {
-                categories.forEachIndexed { index, title ->
-                    val isSelected = selectedTabIndex == index
-                    Tab(
-                        selected = isSelected,
-                        onClick = { selectedTabIndex = index },
-                        text = {
-                            Text(
-                                text = title,
-                                fontSize = 15.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                            )
-                        },
-                        selectedContentColor = MaterialTheme.colorScheme.onSurface,
-                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+        TabRow(
+            selectedTabIndex = selectedTabIndex,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 16.dp),
+            containerColor = Color.Transparent, // Inherit background
+            divider = { HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)) },
+            indicator = { tabPositions ->
+                TabRowDefaults.SecondaryIndicator(
+                    modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
+                    color = MaterialTheme.colorScheme.primary,
+                    height = 3.dp
+                )
+            }
+        ) {
+            categories.forEachIndexed { index, title ->
+                val isSelected = selectedTabIndex == index
+                Tab(
+                    selected = isSelected,
+                    onClick = {
+                        selectedTabIndex = index
+                        coroutineScope.launch {
+                            pagerState.animateScrollToPage(index)
+                        }
+                    },
+                    text = {
+                        Text(
+                            text = title,
+                            fontSize = 15.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        )
+                    },
+                    selectedContentColor = MaterialTheme.colorScheme.onSurface,
+                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
-        // 3. Dynamic Native List (No Pager Fixed Height Constraints!)
-        val currentCategory = categories.getOrNull(selectedTabIndex) ?: categories.first()
-        val coursesToDisplay = groupedCourses[currentCategory] ?: emptyList()
+        // 3. Horizontal Pager for Category Swiping
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize()
+        ) { page ->
+            val currentCategory = categories.getOrNull(page) ?: categories.first()
+            val coursesToDisplay = groupedCourses[currentCategory] ?: emptyList()
 
-        items(coursesToDisplay) { course ->
-            Box(modifier = Modifier.padding(bottom = 16.dp)) {
-                AttendanceCard(item = course, onClick = { selectedCourse = course })
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 20.dp)
+            ) {
+                items(coursesToDisplay) { course ->
+                    Box(modifier = Modifier.padding(bottom = 16.dp)) {
+                        AttendanceCard(item = course, onClick = { selectedCourse = course })
+                    }
+                }
             }
         }
     }
 
     if (selectedCourse != null) {
         val bottomSheetBg = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF111111) else Color(0xFFFFFFFF)
-        ModalBottomSheet(onDismissRequest = { selectedCourse = null }, containerColor = bottomSheetBg, sheetState = sheetState) {
-            AttendanceBottomSheetContent(course = selectedCourse!!, onSimulateClick = { selectedCourse = null; onLaunchSimulator() }, onBack = { selectedCourse = null })
+        ModalBottomSheet(
+            onDismissRequest = { selectedCourse = null },
+            containerColor = bottomSheetBg,
+            sheetState = sheetState
+        ) {
+            AttendanceBottomSheetContent(
+                course = selectedCourse!!,
+                onSimulateClick = { selectedCourse = null; onLaunchSimulator() },
+                onBack = { selectedCourse = null }
+            )
         }
     }
 }
+@Composable
+private fun BunkPredictorChip(bunkState: BunkState) {
+    val (statusText, isDangerous) = when (bunkState) {
+        is BunkState.Safe -> {
+            if (bunkState.canMiss == 0) {
+                "Cannot skip anymore" to true
+            } else {
+                "Can bunk ${bunkState.canMiss} more" to false
+            }
+        }
+        is BunkState.AtRisk -> "Must attend ${bunkState.mustAttend} more" to true
+        BunkState.NoData -> "" to false
+    }
+
+    if (statusText.isEmpty()) return
+    val chipStatusColor = if (isDangerous) MaterialTheme.colorScheme.error else Color(0xFF4CAF50)
+
+    Row(
+        modifier = Modifier.background(chipStatusColor.copy(alpha = 0.1f), CircleShape).padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(if (isDangerous) Icons.Default.Warning else Icons.Default.CheckCircle, contentDescription = null, tint = chipStatusColor, modifier = Modifier.size(12.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(text = statusText, color = chipStatusColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
 @Composable
 fun AttendanceBottomSheetContent(course: AttendanceModel, onSimulateClick: () -> Unit, onBack: () -> Unit) {
     val cType = course.courseType ?: ""

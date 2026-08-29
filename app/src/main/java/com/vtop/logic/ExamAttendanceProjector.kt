@@ -94,14 +94,8 @@ object ExamAttendanceProjector {
         calendarEvents: List<AcademicCalendarEvent>,
         examStartDate: LocalDate
     ): LocalDate? {
-        return calendarEvents
-            .mapNotNull { event ->
-                val date = parseCalendarDate(event.date) ?: return@mapNotNull null
-                if (!date.isBefore(examStartDate)) return@mapNotNull null
-                if (!isInstructionalDay(event.particulars)) return@mapNotNull null
-                date
-            }
-            .maxOrNull()
+        // Hardcoded to exactly 3 days before the exam's start date
+        return examStartDate.minusDays(3)
     }
 
     @SuppressLint("NewApi")
