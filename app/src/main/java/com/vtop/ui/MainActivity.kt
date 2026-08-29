@@ -171,6 +171,9 @@ class MainActivity : ComponentActivity() {
         WorkManager.getInstance(this).enqueue(testAttendanceWorker)
 
         lifecycleScope.launch(Dispatchers.IO) {
+            // Silently wipe any leftover outpass PDFs from the cache
+            cacheDir.listFiles { file -> file.extension == "pdf" }?.forEach { it.delete() }
+
             AppRepositories.loadAll(this@MainActivity)
             withContext(Dispatchers.Main) {
                 isDataLoaded.value = true
@@ -297,49 +300,23 @@ class MainActivity : ComponentActivity() {
                                                 callback.onResult(dummyData)
                                             }
 
-
                                             override fun onViewPass(id: String, isWeekend: Boolean, onReady: (File?) -> Unit) {
                                                 lifecycleScope.launch(Dispatchers.IO) {
                                                     try {
-                                                        val creds = Vault.getCredentials(this@MainActivity)
                                                         val regNo = Vault.getRegNo(this@MainActivity)
-                                                        val client = VtopClient(this@MainActivity, creds[0]!!, creds[1]!!)
-                                                        client.authorizedId = regNo // FIX: Property access syntax
+                                                        val client = com.vtop.core.SessionManager.getSyncClient()
+                                                            ?: throw Exception("Session expired. Please pull down to sync again.")
+
+                                                        client.authorizedId = regNo
                                                         val tempFile = File(cacheDir, "outpass_$id.pdf")
                                                         val success = client.downloadAndCacheOutpass(id, isWeekend, regNo, tempFile)
 
                                                         if (success && tempFile.exists()) {
-                                                            val resolver = contentResolver
-                                                            val fileName = "outpass_$id.pdf"
-                                                            val values = ContentValues().apply {
-                                                                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                                                                put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
-                                                                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-                                                            }
-                                                            val collection = if (Build.VERSION.SDK_INT >= 29) {
-                                                                MediaStore.Downloads.EXTERNAL_CONTENT_URI
-                                                            } else {
-                                                                MediaStore.Files.getContentUri("external")
-                                                            }
-                                                            val uri = resolver.insert(collection, values) ?: throw Exception("Failed creating MediaStore entry")
-                                                            resolver.openOutputStream(uri)?.use { output ->
-                                                                tempFile.inputStream().use { input -> input.copyTo(output) }
-                                                            }
-                                                            withContext(Dispatchers.Main) {
-                                                                NotificationHelper.showDownloadNotificationFromUri(
-                                                                    context = this@MainActivity,
-                                                                    uri = uri,
-                                                                    fileName = fileName,
-                                                                    mimeType = "application/pdf", // FIX: Added missing mimeType
-                                                                    title = "Outpass Downloaded",
-                                                                    description = "Tap to open $fileName"
-                                                                )
-                                                                Toast.makeText(this@MainActivity, "Outpass saved to Downloads", Toast.LENGTH_SHORT).show()
-                                                                onReady(tempFile)
-                                                            }
+                                                            // Pass the cached file directly to the UI without saving to MediaStore
+                                                            withContext(Dispatchers.Main) { onReady(tempFile) }
                                                         } else {
                                                             withContext(Dispatchers.Main) {
-                                                                Toast.makeText(this@MainActivity, "Failed to download outpass", Toast.LENGTH_SHORT).show()
+                                                                Toast.makeText(this@MainActivity, "Failed to fetch outpass", Toast.LENGTH_SHORT).show()
                                                                 onReady(null)
                                                             }
                                                         }
@@ -355,51 +332,64 @@ class MainActivity : ComponentActivity() {
                                             override fun onWeekendSubmit(place: String, purpose: String, date: String, time: String, contact: String) {
                                                 lifecycleScope.launch(Dispatchers.IO) {
                                                     try {
-                                                        val creds = Vault.getCredentials(this@MainActivity)
                                                         val regNo = Vault.getRegNo(this@MainActivity)
-                                                        val client = VtopClient(this@MainActivity, creds[0]!!, creds[1]!!)
-                                                        client.setAuthorizedId(regNo)
+                                                        val client = com.vtop.core.SessionManager.getSyncClient()
+                                                            ?: throw Exception("Session expired. Please pull down to sync again.")
+
+                                                        client.authorizedId = regNo
                                                         val success = client.submitWeekendOuting(place, purpose, date, time, contact)
 
                                                         withContext(Dispatchers.Main) {
                                                             Toast.makeText(this@MainActivity, if (success) "Weekend Request Submitted!" else "Submission Failed", Toast.LENGTH_LONG).show()
                                                             if (success) { lifecycleScope.launch { SyncManager.performSync(this@MainActivity) } }
                                                         }
-                                                    } catch (_: Exception) { withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error during submission", Toast.LENGTH_SHORT).show() } }
+                                                    } catch (e: Exception) {
+                                                        withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_SHORT).show() }
+                                                    }
                                                 }
                                             }
 
                                             override fun onGeneralSubmit(place: String, purpose: String, fromDate: String, toDate: String, fromTime: String, toTime: String) {
                                                 lifecycleScope.launch(Dispatchers.IO) {
                                                     try {
-                                                        val creds = Vault.getCredentials(this@MainActivity)
                                                         val regNo = Vault.getRegNo(this@MainActivity)
-                                                        val client = VtopClient(this@MainActivity, creds[0]!!, creds[1]!!)
-                                                        client.setAuthorizedId(regNo)
+                                                        val client = com.vtop.core.SessionManager.getSyncClient()
+                                                            ?: throw Exception("Session expired. Please pull down to sync again.")
+
+                                                        client.authorizedId = regNo
                                                         val success = client.submitGeneralOuting(place, purpose, fromDate, toDate, fromTime, toTime)
 
                                                         withContext(Dispatchers.Main) {
                                                             Toast.makeText(this@MainActivity, if (success) "General Leave Submitted!" else "Submission Failed", Toast.LENGTH_LONG).show()
                                                             if (success) { lifecycleScope.launch { SyncManager.performSync(this@MainActivity) } }
                                                         }
-                                                    } catch (_: Exception) { withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error during submission", Toast.LENGTH_SHORT).show() } }
+                                                    } catch (e: Exception) {
+                                                        withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_SHORT).show() }
+                                                    }
                                                 }
                                             }
 
                                             override fun onDelete(id: String, isWeekend: Boolean) {
                                                 lifecycleScope.launch(Dispatchers.IO) {
                                                     try {
-                                                        val creds = Vault.getCredentials(this@MainActivity)
                                                         val regNo = Vault.getRegNo(this@MainActivity)
-                                                        val client = VtopClient(this@MainActivity, creds[0]!!, creds[1]!!)
-                                                        client.setAuthorizedId(regNo)
+                                                        val client = com.vtop.core.SessionManager.getSyncClient()
+                                                            ?: throw Exception("Session expired. Please pull down to sync again.")
+
+                                                        client.authorizedId = regNo
                                                         val success = client.deleteOuting(id, isWeekend)
 
                                                         withContext(Dispatchers.Main) {
-                                                            if (success) { Toast.makeText(this@MainActivity, "Leave Cancelled!", Toast.LENGTH_SHORT).show(); lifecycleScope.launch { SyncManager.performSync(this@MainActivity) } }
-                                                            else { Toast.makeText(this@MainActivity, "Failed to cancel request.", Toast.LENGTH_SHORT).show() }
+                                                            if (success) {
+                                                                Toast.makeText(this@MainActivity, "Leave Cancelled!", Toast.LENGTH_SHORT).show()
+                                                                lifecycleScope.launch { SyncManager.performSync(this@MainActivity) }
+                                                            } else {
+                                                                Toast.makeText(this@MainActivity, "Failed to cancel request.", Toast.LENGTH_SHORT).show()
+                                                            }
                                                         }
-                                                    } catch (e: Exception) { withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_SHORT).show() } }
+                                                    } catch (e: Exception) {
+                                                        withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_SHORT).show() }
+                                                    }
                                                 }
                                             }
                                         }

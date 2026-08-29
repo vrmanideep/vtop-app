@@ -83,6 +83,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import com.vtop.utils.AnalyticsManager
+import androidx.core.content.FileProvider
 
 private val OutingColorSuccess = Color(0xFF4ADE80)
 private val OutingColorWarning = Color(0xFFFBBF24)
@@ -169,43 +170,15 @@ private fun calculateLiveProgress(outD: String, outT: String, inD: String, inT: 
 
 private fun sharePdf(context: Context, sourceFile: File, leaveId: String) {
     try {
-        val fileName = "$leaveId.pdf"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val resolver = context.contentResolver
-            val contentValues = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
-                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-            }
-            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-            if (uri != null) {
-                resolver.openOutputStream(uri)?.use { outStream ->
-                    sourceFile.inputStream().use { it.copyTo(outStream) }
-                }
-                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = "application/pdf"
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                context.startActivity(Intent.createChooser(shareIntent, "Share Outpass"))
-                return
-            }
-        }
-
-        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        downloadsDir.mkdirs()
-        val destFile = File(downloadsDir, fileName)
-        sourceFile.copyTo(destFile, overwrite = true)
-
-        val builder = android.os.StrictMode.VmPolicy.Builder()
-        android.os.StrictMode.setVmPolicy(builder.build())
-        val uri = Uri.fromFile(destFile)
+        // Securely expose the cached file to other apps using FileProvider
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", sourceFile)
 
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
             type = "application/pdf"
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
+
         context.startActivity(Intent.createChooser(shareIntent, "Share Outpass"))
     } catch (e: Exception) {
         Toast.makeText(context, "Sharing failed: ${e.message}", Toast.LENGTH_LONG).show()
@@ -226,9 +199,13 @@ private fun savePdfToDownloads(context: Context, sourceFile: File, fileName: Str
                 resolver.openOutputStream(uri)?.use { outStream ->
                     sourceFile.inputStream().use { it.copyTo(outStream) }
                 }
-                NotificationHelper.showDownloadNotification(
+
+                // FIX: Use the public MediaStore URI directly instead of the restricted FileProvider
+                NotificationHelper.showDownloadNotificationFromUri(
                     context = context,
-                    file = sourceFile,
+                    uri = uri,
+                    fileName = fileName,
+                    mimeType = "application/pdf",
                     title = "Download Complete",
                     description = "Tap to open $fileName"
                 )
