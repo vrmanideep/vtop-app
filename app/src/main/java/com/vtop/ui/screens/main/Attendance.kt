@@ -16,9 +16,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
@@ -89,25 +91,14 @@ fun calculateBunkBudget(attended: Int, total: Int, target: Float = 0.75f): BunkS
         BunkState.AtRisk(mustAttend)
     }
 }
-// -----------------------------
 
 @Composable
 fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
 
-    val attended =
-        item.attendedClasses.toIntOrNull() ?: 0
-
-    val total =
-        item.totalClasses.toIntOrNull() ?: 0
-
-    val percentage =
-        item.attendancePercentage
-            .toFloatOrNull()
-            ?.toInt()
-            ?: 0
-
-    val progress =
-        (percentage / 100f).coerceIn(0f, 1f)
+    val attended = item.attendedClasses?.toString()?.toIntOrNull() ?: 0
+    val total = item.totalClasses?.toString()?.toIntOrNull() ?: 0
+    val percentage = item.attendancePercentage?.toFloatOrNull()?.toInt() ?: 0
+    val progress = (percentage / 100f).coerceIn(0f, 1f)
 
     val statusColor = when {
         percentage < 75 -> MaterialTheme.colorScheme.error
@@ -115,22 +106,7 @@ fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
         else -> Color(0xFF4CAF50) // Success Green
     }
 
-    val bunkState =
-        remember(attended, total) {
-
-            calculateBunkBudget(
-                attended,
-                total
-            )
-        }
-
-    val cType = item.courseType ?: ""
-    val categoryLabel = when {
-        cType.contains("TH", ignoreCase = true) || cType.contains("ETH", ignoreCase = true) -> "Theory"
-        cType.contains("LO", ignoreCase = true) || cType.contains("ELA", ignoreCase = true) -> "Lab"
-        cType.contains("PJT", ignoreCase = true) || cType.contains("EPT", ignoreCase = true) -> "Project"
-        else -> cType.ifEmpty { "Theory" }
-    }
+    val bunkState = remember(attended, total) { calculateBunkBudget(attended, total) }
 
     Card(
         shape = RoundedCornerShape(12.dp),
@@ -139,34 +115,48 @@ fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
         modifier = Modifier.fillMaxWidth().clickable { onClick() }
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Left side: Title + Subtitle (Fraction & Chip)
+                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                     Text(
-                        text = item.courseCode ?: "",
+                        text = "${item.courseCode ?: ""} - ${item.courseName ?: "Unknown Course"}",
                         color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        lineHeight = 20.sp
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp))
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Grouping the fraction and chip together eliminates the horizontal void
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = categoryLabel,
+                            text = "$attended/$total",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
                         )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        BunkPredictorChip(bunkState)
                     }
                 }
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(text = "$percentage%", color = statusColor, fontSize = 20.sp, fontWeight = FontWeight.Black)
-            }
-            Spacer(modifier = Modifier.height(10.dp))
 
+                // Right side: Percentage
+                Text(
+                    text = "$percentage%",
+                    color = statusColor,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Black
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Bottom Anchor: Progress Bar
             Box(modifier = Modifier.fillMaxWidth().height(3.dp).clip(CircleShape).background(premiumBorderColor())) {
                 if (progress > 0f) {
                     Box(
@@ -180,12 +170,6 @@ fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
                     )
                 }
             }
-
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(text = "$attended / $total", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                BunkPredictorChip(bunkState)
-            }
         }
     }
 }
@@ -197,7 +181,7 @@ private fun BunkPredictorChip(bunkState: BunkState) {
             if (bunkState.canMiss == 0) {
                 "Cannot skip anymore" to true
             } else {
-                "Can skip ${bunkState.canMiss} more" to false
+                "Can bunk ${bunkState.canMiss} more" to false
             }
         }
         is BunkState.AtRisk -> "Must attend ${bunkState.mustAttend} more" to true
@@ -207,10 +191,12 @@ private fun BunkPredictorChip(bunkState: BunkState) {
     if (statusText.isEmpty()) return
     val chipStatusColor = if (isDangerous) MaterialTheme.colorScheme.error else Color(0xFF4CAF50)
 
-    Box(
-        modifier = Modifier.background(chipStatusColor.copy(alpha = 0.1f), CircleShape).padding(horizontal = 8.dp, vertical = 2.dp),
-        contentAlignment = Alignment.Center
+    Row(
+        modifier = Modifier.background(chipStatusColor.copy(alpha = 0.1f), CircleShape).padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
+        Icon(if (isDangerous) Icons.Default.Warning else Icons.Default.CheckCircle, contentDescription = null, tint = chipStatusColor, modifier = Modifier.size(12.dp))
+        Spacer(Modifier.width(4.dp))
         Text(text = statusText, color = chipStatusColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }
 }
@@ -276,11 +262,9 @@ fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> U
     }
 
     val categories = groupedCourses.keys.toList()
-    val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { categories.size })
-    val coroutineScope = rememberCoroutineScope()
+    var selectedTabIndex by remember { mutableIntStateOf(0) }
 
-    // ── Single Scrollable Column containing Headers, TabRow, and Pager ──
-    // This ensures everything scrolls together.
+    // ── Single Scrollable Column handles EVERYTHING cleanly ──
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
@@ -331,26 +315,26 @@ fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> U
             }
         }
 
-        // 2. TabRow (No pills, standard underline)
+        // 2. TabRow (Standard Underline)
         item {
             TabRow(
-                selectedTabIndex = pagerState.currentPage,
+                selectedTabIndex = selectedTabIndex,
                 modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
                 containerColor = Color.Transparent, // Inherit background
                 divider = { HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)) },
                 indicator = { tabPositions ->
                     TabRowDefaults.SecondaryIndicator(
-                        modifier = Modifier.tabIndicatorOffset(tabPositions[pagerState.currentPage]),
+                        modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
                         color = MaterialTheme.colorScheme.primary,
                         height = 3.dp
                     )
                 }
             ) {
                 categories.forEachIndexed { index, title ->
-                    val isSelected = pagerState.currentPage == index
+                    val isSelected = selectedTabIndex == index
                     Tab(
                         selected = isSelected,
-                        onClick = { coroutineScope.launch { pagerState.animateScrollToPage(index) } },
+                        onClick = { selectedTabIndex = index },
                         text = {
                             Text(
                                 text = title,
@@ -365,29 +349,13 @@ fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> U
             }
         }
 
-        // 3. Pager containing the lists
-        // Note: HorizontalPager inside LazyColumn requires a fixed height or weight.
-        // We calculate an approximate height based on the longest list so it doesn't clip.
-        item {
-            val maxListSize = groupedCourses.values.maxOfOrNull { it.size } ?: 1
-            // Approx 120dp per card + 16dp spacing
-            val pagerHeight = (maxListSize * 136).dp
+        // 3. Dynamic Native List (No Pager Fixed Height Constraints!)
+        val currentCategory = categories.getOrNull(selectedTabIndex) ?: categories.first()
+        val coursesToDisplay = groupedCourses[currentCategory] ?: emptyList()
 
-            androidx.compose.foundation.pager.HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxWidth().height(pagerHeight)
-            ) { page ->
-                val currentCategory = categories[page]
-                val courses = groupedCourses[currentCategory] ?: emptyList()
-
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    courses.forEach { course ->
-                        AttendanceCard(item = course, onClick = { selectedCourse = course })
-                    }
-                }
+        items(coursesToDisplay) { course ->
+            Box(modifier = Modifier.padding(bottom = 16.dp)) {
+                AttendanceCard(item = course, onClick = { selectedCourse = course })
             }
         }
     }
@@ -469,8 +437,6 @@ fun AttendanceDetailCore(course: AttendanceModel, onSimulateClick: (() -> Unit)?
         ) {
             when (bunkState) {
                 is BunkState.Safe -> Column {
-                    //Text("Bunk Budget", color = Color(0xFF4CAF50), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                   //  Spacer(Modifier.height(4.dp))
                     Text(text = "You can safely skip the next ${bunkState.canMiss} classes and stay above 75%.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, lineHeight = 18.sp)
                 }
                 is BunkState.AtRisk -> Column {
@@ -514,7 +480,7 @@ fun AttendanceDetailCore(course: AttendanceModel, onSimulateClick: (() -> Unit)?
 fun DetailedAttendanceHistoryView(item: AttendanceModel) {
     val history = item.history ?: return
 
-    var selectedFilter by remember { mutableStateOf("ALL") } // "ALL", "PRESENT", "ABSENT", "DUTY"
+    var selectedFilter by remember { mutableStateOf("ALL") }
 
     val filteredHistory = remember(history, selectedFilter) {
         history.filter { h ->
