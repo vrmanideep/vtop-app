@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
@@ -18,8 +19,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vtop.network.VtopClient
@@ -31,6 +34,9 @@ import com.vtop.core.SessionManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+@Composable
+fun premiumSurfaceColor(): Color = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF141414) else Color(0xFFFFFFFF)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -53,6 +59,7 @@ fun VtopPortalScreen(
     val isParallel = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE).getBoolean("PARALLEL_PORTAL_SESSION", false) }
 
     var desktopMode by remember { mutableStateOf(portalPreferences.getBoolean("desktop_mode", true)) }
+    var vtopThemeDark by remember { mutableStateOf(portalPreferences.getBoolean("vtop_theme_dark", false)) }
     var expandedMenu by remember { mutableStateOf(false) }
 
     suspend fun executeLoginFlow() {
@@ -97,20 +104,33 @@ fun VtopPortalScreen(
     }
 
     if (sessionError != null) {
-        VtopWebViewLoading(error = sessionError, onRetry = { scope.launch { executeLoginFlow() } })
+        VtopWebViewLoading(error = sessionError, onRetry = { scope.launch { executeLoginFlow() } }, onBack = onBack)
         return
     }
 
     if (activeClient == null) {
-        VtopWebViewLoading(error = null, onRetry = null)
+        VtopWebViewLoading(error = null, onRetry = null, onBack = onBack)
         return
     }
 
     Scaffold(
-        containerColor = Color.Black,
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text(text = pageTitle, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1) },
+                title = {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Lock, contentDescription = "Secure Session", modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(6.dp))
+                            Text(text = pageTitle, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                        }
+                        Text(
+                            text = if (isParallel) "Parallel Session Active" else "Shared Session Active",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
                 },
@@ -119,12 +139,25 @@ fun VtopPortalScreen(
                         IconButton(onClick = { expandedMenu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "Menu") }
                         DropdownMenu(expanded = expandedMenu, onDismissRequest = { expandedMenu = false }) {
                             DropdownMenuItem(
+                                text = { Text(if (vtopThemeDark) "VTOP theme: dark" else "VTOP theme: light") },
+                                onClick = {
+                                    expandedMenu = false
+                                    vtopThemeDark = !vtopThemeDark
+                                    portalPreferences.edit().putBoolean("vtop_theme_dark", vtopThemeDark).apply()
+                                }
+                            )
+                            // We kept the text exactly as requested, but added the session drop logic
+                            DropdownMenuItem(
                                 text = { Text(if (desktopMode) "Desktop Mode" else "Mobile Mode") },
                                 onClick = {
                                     expandedMenu = false
                                     desktopMode = !desktopMode
                                     portalPreferences.edit().putBoolean("desktop_mode", desktopMode).apply()
                                     Toast.makeText(context, if (desktopMode) "Mobile mode enabled" else "Desktop mode enabled", Toast.LENGTH_SHORT).show()
+
+                                    // Fix: Drop current session and force re-auth to bind new User-Agent
+                                    if (isParallel) SessionManager.setPortalClient(null)
+                                    scope.launch { executeLoginFlow() }
                                 }
                             )
                             DropdownMenuItem(text = { Text("Refresh") }, onClick = { expandedMenu = false; PortalController.reload() })
@@ -132,7 +165,12 @@ fun VtopPortalScreen(
                         }
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF0f0f0f), titleContentColor = Color.White, navigationIconContentColor = Color.White, actionIconContentColor = Color.White)
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = premiumSurfaceColor(),
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
+                )
             )
         }
     ) { padding ->
@@ -142,6 +180,7 @@ fun VtopPortalScreen(
                 activeClient = activeClient!!,
                 sessionKey = sessionKey,
                 desktopMode = desktopMode,
+                vtopThemeDark = vtopThemeDark,
                 onPageLoading = { isLoading = it },
                 onTitleUpdate = { pageTitle = it },
                 onSessionExpired = { scope.launch { executeLoginFlow() } }
@@ -155,25 +194,32 @@ fun VtopPortalScreen(
 }
 
 @Composable
-fun VtopWebViewLoading(error: String?, onRetry: (() -> Unit)?) {
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+fun VtopWebViewLoading(error: String?, onRetry: (() -> Unit)?, onBack: () -> Unit) {
+    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             if (error != null) {
-                Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFf87171), modifier = Modifier.size(48.dp))
+                Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(48.dp))
                 Spacer(Modifier.height(16.dp))
-                Text("Could not open VTOP", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("Could not open VTOP", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
-                Text(error, color = Color.Gray, fontSize = 12.sp)
-                if (onRetry != null) {
-                    Spacer(Modifier.height(20.dp))
-                    Button(onClick = onRetry, shape = RoundedCornerShape(10.dp)) { Text("Retry") }
+                Text(error, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 32.dp))
+                Spacer(Modifier.height(24.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(onClick = onBack, shape = RoundedCornerShape(10.dp)) {
+                        Text("Go Back", color = MaterialTheme.colorScheme.onSurface)
+                    }
+                    if (onRetry != null) {
+                        Button(onClick = onRetry, shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
+                            Text("Retry", color = MaterialTheme.colorScheme.onPrimary)
+                        }
+                    }
                 }
             } else {
-                CircularProgressIndicator(color = Color.White)
+                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.height(16.dp))
-                Text("Opening VTOP...", color = Color.Gray, fontSize = 13.sp)
+                Text("Opening VTOP...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(4.dp))
-                Text("Injecting your session securely", color = Color(0xFF555555), fontSize = 11.sp)
+                Text("Injecting your session securely", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), fontSize = 11.sp)
             }
         }
     }

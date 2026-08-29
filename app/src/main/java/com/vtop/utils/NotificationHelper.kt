@@ -260,6 +260,35 @@ object NotificationHelper {
             e.printStackTrace()
         }
     }
+    // 8. Fire Download Progress Notification
+    fun showDownloadProgressNotification(
+        context: Context,
+        notificationId: Int,
+        fileName: String,
+        progress: Int,
+        progressText: String = "" // Added this
+    ) {
+        val builder = NotificationCompat.Builder(context, CHANNEL_DOWNLOADS)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle("Downloading...")
+            .setContentText(fileName)
+            .setSubText(progressText.ifEmpty { null }) // Displays the MB/KB string
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+
+        if (progress < 0) {
+            builder.setProgress(0, 0, true)
+        } else {
+            builder.setProgress(100, progress, false)
+        }
+
+        try {
+            androidx.core.app.NotificationManagerCompat.from(context).notify(notificationId, builder.build())
+        } catch (e: SecurityException) {
+            e.printStackTrace()
+        }
+    }
 }
 
 object BatteryUtils {
