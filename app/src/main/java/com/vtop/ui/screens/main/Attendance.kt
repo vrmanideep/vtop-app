@@ -7,15 +7,19 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -41,9 +45,12 @@ import com.vtop.models.AttendanceModel
 import com.vtop.utils.AnalyticsManager
 import kotlinx.coroutines.launch
 import java.util.Locale
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
-
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.draw.alpha
 
 @Composable
 fun premiumSurfaceColor(): Color = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF141414) else Color(0xFFFFFFFF)
@@ -51,7 +58,7 @@ fun premiumSurfaceColor(): Color = if (MaterialTheme.colorScheme.background.lumi
 @Composable
 fun premiumBorderColor(): Color = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.08f)
 
-// --- TRUE COUNT ENGINE: Ignores VTOP's raw lab hours and counts physical history rows ---
+// Ignores VTOP's raw lab hours and counts physical history rows
 fun getRealAttendanceCounts(item: AttendanceModel): Pair<Int, Int> {
     val history = item.history
     if (!history.isNullOrEmpty()) {
@@ -68,7 +75,6 @@ fun getRealAttendanceCounts(item: AttendanceModel): Pair<Int, Int> {
     return Pair(rawAttended, rawTotal)
 }
 
-// --- RESTORED BUNK LOGIC ---
 sealed class BunkState {
     data class Safe(val canMiss: Int) : BunkState()
     data class AtRisk(val mustAttend: Int) : BunkState()
@@ -93,9 +99,6 @@ fun calculateBunkBudget(attended: Int, total: Int, target: Float = 0.75f): BunkS
         BunkState.AtRisk(mustAttend)
     }
 }
-
-
-// Add the above imports to your existing import block
 
 @Composable
 fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
@@ -191,6 +194,33 @@ fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
     }
 }
 
+@Composable
+private fun BunkPredictorChip(bunkState: BunkState) {
+    val (statusText, isDangerous) = when (bunkState) {
+        is BunkState.Safe -> {
+            if (bunkState.canMiss == 0) {
+                "Cannot skip anymore" to true
+            } else {
+                "Can bunk ${bunkState.canMiss} more" to false
+            }
+        }
+        is BunkState.AtRisk -> "Must attend ${bunkState.mustAttend} more" to true
+        BunkState.NoData -> "" to false
+    }
+
+    if (statusText.isEmpty()) return
+    val chipStatusColor = if (isDangerous) MaterialTheme.colorScheme.error else Color(0xFF4CAF50)
+
+    Row(
+        modifier = Modifier.background(chipStatusColor.copy(alpha = 0.1f), CircleShape).padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(if (isDangerous) Icons.Default.Warning else Icons.Default.CheckCircle, contentDescription = null, tint = chipStatusColor, modifier = Modifier.size(12.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(text = statusText, color = chipStatusColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @SuppressLint("NewApi")
 @Composable
@@ -216,7 +246,7 @@ fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> U
         return
     }
 
-    // Evaluate Risk using our True Count engine
+    // Evaluate Risk using the True Count engine
     val atRiskCount = attendanceData.count { item ->
         val (_, total) = getRealAttendanceCounts(item)
         if (total == 0) false else {
@@ -242,7 +272,6 @@ fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> U
             }
         }
 
-        // Only keep categories that actually have courses
         val map = mutableMapOf<String, List<AttendanceModel>>()
         if (theory.isNotEmpty()) map["Theory"] = theory.sortedBy { it.courseCode }
         if (lab.isNotEmpty()) map["Lab"] = lab.sortedBy { it.courseCode }
@@ -261,81 +290,148 @@ fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> U
         selectedTabIndex = pagerState.currentPage
     }
 
+    // Collapsing Header Logic
+    val density = LocalDensity.current
+    val bannerMaxHeight = 100.dp
+    val bannerMaxHeightPx = with(density) { bannerMaxHeight.toPx() }
+    var bannerOffsetHeightPx by remember { mutableFloatStateOf(0f) }
+
+    val nestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val delta = available.y
+                // Consume upward scrolls to collapse the banner before the list scrolls
+                if (delta < 0) {
+                    val newOffset = bannerOffsetHeightPx + delta
+                    val previousOffset = bannerOffsetHeightPx
+                    bannerOffsetHeightPx = newOffset.coerceIn(-bannerMaxHeightPx, 0f)
+                    val consumed = bannerOffsetHeightPx - previousOffset
+                    return Offset(0f, consumed)
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                val delta = available.y
+                // Expand the banner only after the list has reached the top
+                if (delta > 0) {
+                    val newOffset = bannerOffsetHeightPx + delta
+                    val previousOffset = bannerOffsetHeightPx
+                    bannerOffsetHeightPx = newOffset.coerceIn(-bannerMaxHeightPx, 0f)
+                    val consumedOffset = bannerOffsetHeightPx - previousOffset
+                    return Offset(0f, consumedOffset)
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(top = 96.dp, bottom = 120.dp) // Maintain outer container padding
+            .nestedScroll(nestedScrollConnection)
+            .padding(top = 96.dp)
     ) {
-        // 1. Header Cards (Bunk Simulator & Risk)
-        Row(
+        val bannerHeight = with(density) { (bannerMaxHeightPx + bannerOffsetHeightPx).toDp() }
+        val bannerAlpha = (bannerMaxHeightPx + bannerOffsetHeightPx) / bannerMaxHeightPx
+
+        // 1. Monochromatic Status Banner with Semantic Accent (Wrapped in dynamically sized Box)
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(IntrinsicSize.Max)
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                .height(bannerHeight)
+                .alpha(bannerAlpha),
+            contentAlignment = Alignment.TopCenter
         ) {
+            val isSafe = atRiskCount == 0
+            val statusColor = if (isSafe) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
+
             Card(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .clickable { onLaunchSimulator() },
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 16.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = premiumSurfaceColor()),
-                border = BorderStroke(1.dp, premiumBorderColor()),
-                shape = RoundedCornerShape(16.dp)
+                border = BorderStroke(1.dp, premiumBorderColor())
             ) {
-                Column(
+                Row(
                     modifier = Modifier
-                        .padding(16.dp)
-                        .fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Min)
                 ) {
-                    Icon(
-                        Icons.Default.DateRange,
-                        contentDescription = "Simulator",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(32.dp)
+                    // Semantic Accent Bar
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .width(4.dp)
+                            .background(statusColor)
                     )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = "Bunk Simulator",
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center
-                    )
-                }
-            }
-            Card(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                colors = CardDefaults.cardColors(containerColor = if (atRiskCount > 0) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else premiumSurfaceColor()),
-                border = BorderStroke(1.dp, if (atRiskCount > 0) MaterialTheme.colorScheme.error.copy(alpha = 0.3f) else premiumBorderColor()),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .padding(16.dp)
-                        .fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = atRiskCount.toString(),
-                        color = if (atRiskCount > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.Black
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = "Courses at Risk",
-                        color = if (atRiskCount > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center
-                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 18.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        // Left: Risk Status Text
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                            Text(
+                                text = when {
+                                    isSafe -> "Looking good!"
+                                    atRiskCount == 1 -> "1 Course at Risk"
+                                    else -> "$atRiskCount Courses at Risk"
+                                },
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Black
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = if (isSafe) "Bunk some classes" else "Please attend classes.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                lineHeight = 16.sp
+                            )
+                        }
+
+                        // Right: Bunk Simulator Action Pill
+                        Surface(
+                            color = Color.Transparent,
+                            shape = RoundedCornerShape(50),
+                            border = BorderStroke(1.dp, premiumBorderColor()),
+                            modifier = Modifier.clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = { onLaunchSimulator() }
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Bunk Simulator",
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -347,7 +443,7 @@ fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> U
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 16.dp),
-            containerColor = Color.Transparent, // Inherit background
+            containerColor = Color.Transparent,
             divider = { HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)) },
             indicator = { tabPositions ->
                 TabRowDefaults.SecondaryIndicator(
@@ -390,7 +486,11 @@ fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> U
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 20.dp)
+                contentPadding = PaddingValues(
+                    start = 20.dp,
+                    end = 20.dp,
+                    bottom = 120.dp
+                )
             ) {
                 items(coursesToDisplay) { course ->
                     Box(modifier = Modifier.padding(bottom = 16.dp)) {
@@ -416,33 +516,6 @@ fun Attendance(attendanceData: List<AttendanceModel>, onLaunchSimulator: () -> U
         }
     }
 }
-@Composable
-private fun BunkPredictorChip(bunkState: BunkState) {
-    val (statusText, isDangerous) = when (bunkState) {
-        is BunkState.Safe -> {
-            if (bunkState.canMiss == 0) {
-                "Cannot skip anymore" to true
-            } else {
-                "Can bunk ${bunkState.canMiss} more" to false
-            }
-        }
-        is BunkState.AtRisk -> "Must attend ${bunkState.mustAttend} more" to true
-        BunkState.NoData -> "" to false
-    }
-
-    if (statusText.isEmpty()) return
-    val chipStatusColor = if (isDangerous) MaterialTheme.colorScheme.error else Color(0xFF4CAF50)
-
-    Row(
-        modifier = Modifier.background(chipStatusColor.copy(alpha = 0.1f), CircleShape).padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(if (isDangerous) Icons.Default.Warning else Icons.Default.CheckCircle, contentDescription = null, tint = chipStatusColor, modifier = Modifier.size(12.dp))
-        Spacer(Modifier.width(4.dp))
-        Text(text = statusText, color = chipStatusColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
 @Composable
 fun AttendanceBottomSheetContent(course: AttendanceModel, onSimulateClick: () -> Unit, onBack: () -> Unit) {
     val cType = course.courseType ?: ""
