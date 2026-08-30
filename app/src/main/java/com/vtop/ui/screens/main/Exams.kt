@@ -29,6 +29,12 @@ import com.vtop.utils.AnalyticsManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.shadow
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 
 private fun getSafeStartTime(exam: ExamScheduleModel): String {
     val eTime = exam.examTime.trim()
@@ -157,19 +163,30 @@ private fun ExamListScreen(exams: List<ExamScheduleModel>, onExamClick: (ExamSch
             ) {
                 items(dynamicFilters) { filter ->
                     val isSelected = selectedFilter == filter
-                    Box(
-                        modifier = Modifier
-                            .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent, RoundedCornerShape(24.dp))
-                            .border(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha=0.2f), RoundedCornerShape(24.dp))
-                            .clickable { selectedFilter = filter }
-                            .padding(horizontal = 24.dp, vertical = 10.dp)
-                    ) {
-                        Text(
-                            text = filter,
-                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 14.sp, fontWeight = FontWeight.Bold
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { selectedFilter = filter },
+                        label = {
+                            Text(
+                                text = filter,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        shape = RoundedCornerShape(24.dp),
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primary,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                            containerColor = Color.Transparent,
+                            labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = isSelected,
+                            borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+                            selectedBorderColor = MaterialTheme.colorScheme.primary
                         )
-                    }
+                    )
                 }
             }
         }
@@ -235,7 +252,15 @@ private fun NextUpCard(exam: ExamScheduleModel, currentTime: Date, onClick: () -
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
-        modifier = Modifier.fillMaxWidth().clickable { onClick() }
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(
+                elevation = 8.dp,
+                shape = RoundedCornerShape(20.dp),
+                spotColor = MaterialTheme.colorScheme.onSurface,
+                ambientColor = MaterialTheme.colorScheme.onSurface
+            )
+            .clickable { onClick() }
     ) {
         Column(modifier = Modifier.padding(20.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
@@ -322,8 +347,16 @@ private fun StandardExamCard(exam: ExamScheduleModel, urgencyColor: Color, isCla
     Card(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.1f)),
-        modifier = Modifier.fillMaxWidth().clickable { onClick() }
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(
+                elevation = 4.dp,
+                shape = RoundedCornerShape(16.dp),
+                spotColor = MaterialTheme.colorScheme.onSurface,
+                ambientColor = MaterialTheme.colorScheme.onSurface
+            )
+            .clickable { onClick() }
     ) {
         Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
             Box(modifier = Modifier.fillMaxHeight().width(4.dp).background(urgencyColor))
@@ -334,13 +367,37 @@ private fun StandardExamCard(exam: ExamScheduleModel, urgencyColor: Color, isCla
                         Text(text = exam.courseTitle, color = MaterialTheme.colorScheme.onSurface, fontSize = 18.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp, bottom = 16.dp))
                     }
                     if (isClashing) {
+                        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+                        val pulseAlpha by infiniteTransition.animateFloat(
+                            initialValue = 0.4f,
+                            targetValue = 1f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(800),
+                                repeatMode = RepeatMode.Reverse
+                            ),
+                            label = "clashPulse"
+                        )
+
                         Row(
-                            modifier = Modifier.border(1.dp, Color(0xFF60A5FA).copy(alpha = 0.5f), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 4.dp),
+                            modifier = Modifier
+                                .border(1.dp, Color(0xFF60A5FA).copy(alpha = pulseAlpha), RoundedCornerShape(6.dp))
+                                .background(Color(0xFF60A5FA).copy(alpha = pulseAlpha * 0.15f), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Lucide.TriangleAlert, null, tint = Color(0xFF60A5FA), modifier = Modifier.size(12.dp))
+                            Icon(
+                                Lucide.TriangleAlert,
+                                contentDescription = null,
+                                tint = Color(0xFF60A5FA).copy(alpha = pulseAlpha),
+                                modifier = Modifier.size(12.dp)
+                            )
                             Spacer(Modifier.width(4.dp))
-                            Text("clash", color = Color(0xFF60A5FA), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "clash",
+                                color = Color(0xFF60A5FA).copy(alpha = pulseAlpha),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 }
