@@ -3,6 +3,7 @@ package com.vtop.ui.theme
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -13,20 +14,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
 val VtopWhite = Color(0xFFFFFFFF)
-val VtopBlack = Color(0xFF1F1D1D)
-val VtopGrey = Color(0xFF6B7280)
+val VtopBlack = Color(0xFF000000) // True AMOLED Black
 val VtopPrimaryBlue = Color(0xFF327FD1)
-val VtopGreen = Color(0xFF16A34A)
+val VtopGreen = Color(0xFF10B981)
 val VtopYellow = Color(0xFFF59E0B)
-val VtopRed = Color(0xFFC91818)
-val VtopPurple = Color(0xFF8A13DD)
+val VtopRed = Color(0xFFE11D48)
+val VtopPurple = Color(0xFF8B5CF6)
 
 val AccentColors = listOf(
     VtopPrimaryBlue,
-    Color(0xFF10B981),
-    Color(0xFFE11D48),
-    Color(0xFF8B5CF6),
-    Color(0xFFF59E0B)
+    VtopGreen,
+    VtopRed,
+    VtopPurple,
+    VtopYellow
 )
 
 val CoursePalette = listOf(VtopPrimaryBlue, VtopGreen, VtopYellow, VtopRed, VtopPurple)
@@ -47,29 +47,6 @@ enum class AuthState { FORM, LOADING_SEMESTERS, SELECT_SEMESTER, DOWNLOADING_DAT
 enum class DockPosition { TOP, BOTTOM, LEFT, RIGHT }
 enum class AppThemeMode { SYSTEM, LIGHT, DARK }
 
-private val DarkColors = darkColorScheme(
-    background = VtopBlack,
-    surface = VtopBlack,
-    surfaceVariant = Color(0xFF374151),
-    primary = VtopPrimaryBlue,
-    onBackground = VtopWhite,
-    onSurface = VtopWhite,
-    onSurfaceVariant = VtopGrey,
-    error = VtopRed
-)
-
-
-private val LightColors = lightColorScheme(
-    background = Color(0xFFF3F4F6),
-    surface = VtopWhite,
-    surfaceVariant = Color(0xFFE5E7EB),
-    primary = VtopPrimaryBlue,
-    onBackground = VtopBlack,
-    onSurface = VtopBlack,
-    onSurfaceVariant = VtopGrey,
-    error = VtopRed
-)
-
 object AppColors {
     private val isDark: Boolean
         @Composable get() = when (ThemeManager.themeMode.value) {
@@ -78,12 +55,53 @@ object AppColors {
             AppThemeMode.SYSTEM -> isSystemInDarkTheme()
         }
 
-    val glassBg: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.05f)
-    val glassBorder: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.1f)
+    val glassBg: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.03f)
+    val glassBorder: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.1f) else Color.Black.copy(alpha = 0.1f)
     val success: Color = VtopGreen
     val danger: Color = VtopRed
     val warning: Color = VtopYellow
     val info: Color = VtopPrimaryBlue
+}
+
+// Generates a complete cohesive palette from a single custom accent color
+private fun createCustomColorScheme(accent: Color, isDark: Boolean): ColorScheme {
+    return if (isDark) {
+        darkColorScheme(
+            primary = accent,
+            onPrimary = Color.White,
+            primaryContainer = accent.copy(alpha = 0.3f),
+            onPrimaryContainer = accent.copy(alpha = 0.9f),
+            secondary = accent,
+            secondaryContainer = accent.copy(alpha = 0.2f),
+            onSecondaryContainer = accent.copy(alpha = 0.9f),
+            background = VtopBlack,
+            surface = VtopBlack,
+            surfaceVariant = Color(0xFF141414), // Clean, premium dark grey for cards
+            onBackground = Color.White,
+            onSurface = Color.White,
+            onSurfaceVariant = Color(0xFFAAAAAA), // High contrast light grey for readable text
+            error = VtopRed,
+            outline = Color(0xFF2A2A2A)
+        )
+    } else {
+        lightColorScheme(
+            primary = accent,
+            onPrimary = Color.White,
+            primaryContainer = accent.copy(alpha = 0.2f),
+            onPrimaryContainer = accent,
+            secondary = accent,
+            secondaryContainer = accent.copy(alpha = 0.1f),
+            onSecondaryContainer = accent,
+            background = Color(0xFFF9FAFB),
+            surface = Color.White,
+            surfaceVariant = Color(0xFFF3F4F6),
+            onBackground = Color.Black,
+            onSurface = Color.Black,
+            onSurfaceVariant = Color.DarkGray,
+            error = VtopRed,
+            outline = Color(0xFFE5E7EB)
+        )
+    }
 }
 
 @Composable
@@ -99,35 +117,42 @@ fun AppTheme(
         AppThemeMode.SYSTEM -> isSystemInDarkTheme()
     }
 
-    val baseColorScheme = when {
-        useDynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            // Explicitly override the dynamic error color with our vibrant red
-            if (darkTheme) {
-                dynamicDarkColorScheme(context).copy(error = VtopRed)
-            } else {
-                dynamicLightColorScheme(context).copy(error = VtopRed)
-            }
-        }
-        darkTheme -> DarkColors.copy(primary = customAccent)
-        else -> LightColors.copy(primary = customAccent)
-    }
+    val context = LocalContext.current
 
-    // Use 'remember' so we don't recreate the entire color scheme 60 times a second!
-    val finalColorScheme = androidx.compose.runtime.remember(darkTheme, baseColorScheme) {
+    val resolvedScheme = if (useDynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        val dynamic = if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+
+        // We let Android handle the accent colors (primary, secondary, etc) based on the wallpaper.
+        // But we MUST manually override the structural colors so they don't look muddy or unreadable.
         if (darkTheme) {
-            baseColorScheme.copy(
-                background = Color.Black,
-                surface = Color.Black,
-                surfaceVariant = Color(0xFF0A0A0A)
+            dynamic.copy(
+                background = VtopBlack,
+                surface = VtopBlack,
+                surfaceVariant = Color(0xFF141414), // Forces cards to be clean dark grey
+                onBackground = Color.White,
+                onSurface = Color.White,
+                onSurfaceVariant = Color(0xFFAAAAAA), // Forces text to be visible
+                error = VtopRed,
+                outline = Color(0xFF2A2A2A)
             )
         } else {
-            baseColorScheme
+            dynamic.copy(
+                background = Color(0xFFF9FAFB),
+                surface = Color.White,
+                surfaceVariant = Color(0xFFF3F4F6),
+                onBackground = Color.Black,
+                onSurface = Color.Black,
+                onSurfaceVariant = Color.DarkGray,
+                error = VtopRed,
+                outline = Color(0xFFE5E7EB)
+            )
         }
+    } else {
+        createCustomColorScheme(customAccent, darkTheme)
     }
 
     MaterialTheme(
-        colorScheme = finalColorScheme,
+        colorScheme = resolvedScheme,
         content = content
     )
 }

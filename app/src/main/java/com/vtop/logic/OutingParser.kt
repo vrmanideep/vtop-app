@@ -112,21 +112,22 @@ object OutingParser {
 
                 // Step 6 & 7 — Booking ID & Download link
                 var bookingId = ""
+                val rowHtml = row.outerHtml()
                 val downloadLink = cells[downloadIndex].selectFirst("a[data-leave-url]")
 
-                if (isWeekendFormat) {
+                // Regex reliably catches the W123456789 ID from the Delete button OR the download link
+                val idMatch = Regex("[A-Z]\\d{6,15}").find(rowHtml)
+                if (idMatch != null) {
+                    bookingId = idMatch.value
+                } else if (isWeekendFormat) {
                     val bookingIdText = text(bookingIdIndex)
-                    if (bookingIdText.isNotBlank()) {
-                        bookingId = bookingIdText
-                    } else if (downloadLink != null) {
-                        val dataUrl = downloadLink.attr("data-leave-url")
-                        bookingId = dataUrl.split("/").lastOrNull() ?: ""
-                    }
-                } else {
-                    if (downloadLink != null) {
-                        val dataUrl = downloadLink.attr("data-leave-url")
-                        bookingId = dataUrl.split("/").lastOrNull() ?: ""
-                    }
+                    if (bookingIdText.isNotBlank()) bookingId = bookingIdText
+                }
+
+                // Final fallback just in case
+                if (bookingId.isBlank() && downloadLink != null) {
+                    val dataUrl = downloadLink.attr("data-leave-url")
+                    bookingId = dataUrl.split("/").lastOrNull() ?: ""
                 }
 
                 // Step 8 — canDownload

@@ -3,25 +3,23 @@
 package com.vtop.ui.screens.main
 
 import android.annotation.SuppressLint
-import android.app.DatePickerDialog
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.pdf.PdfRenderer
-import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.ParcelFileDescriptor
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.MediaStore
 import android.widget.Toast
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -33,7 +31,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -42,10 +39,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,8 +66,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.FileProvider
+import com.composables.icons.lucide.*
 import com.vtop.models.OutingModel
-import kotlinx.coroutines.CoroutineScope
+import com.vtop.utils.AnalyticsManager
+import com.vtop.utils.NotificationHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -77,18 +79,11 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.roundToInt
-import com.composables.icons.lucide.*
-import com.vtop.utils.NotificationHelper
-import android.os.VibrationEffect
-import android.os.Vibrator
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
-import com.vtop.utils.AnalyticsManager
-import androidx.core.content.FileProvider
+import kotlin.time.Duration.Companion.seconds
 
 private val OutingColorSuccess = Color(0xFF4ADE80)
 private val OutingColorWarning = Color(0xFFFBBF24)
 private val OutingColorDanger = Color(0xFFE53935)
-private const val PENDING_BLOCK_DAYS = 5
 
 private fun String.toTitleCase(): String {
     return this.lowercase(Locale.getDefault()).split(" ").joinToString(" ") { word ->
@@ -170,15 +165,12 @@ private fun calculateLiveProgress(outD: String, outT: String, inD: String, inT: 
 
 private fun sharePdf(context: Context, sourceFile: File, leaveId: String) {
     try {
-        // Securely expose the cached file to other apps using FileProvider
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", sourceFile)
-
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
             type = "application/pdf"
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-
         context.startActivity(Intent.createChooser(shareIntent, "Share Outpass"))
     } catch (e: Exception) {
         Toast.makeText(context, "Sharing failed: ${e.message}", Toast.LENGTH_LONG).show()
@@ -200,7 +192,6 @@ private fun savePdfToDownloads(context: Context, sourceFile: File, fileName: Str
                     sourceFile.inputStream().use { it.copyTo(outStream) }
                 }
 
-                // FIX: Use the public MediaStore URI directly instead of the restricted FileProvider
                 NotificationHelper.showDownloadNotificationFromUri(
                     context = context,
                     uri = uri,
@@ -227,8 +218,31 @@ private fun savePdfToDownloads(context: Context, sourceFile: File, fileName: Str
     }
 }
 
+@Composable
+fun VtopAlert(title: String, message: String, isSuccess: Boolean, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (isSuccess) Icons.Default.CheckCircle else Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = if (isSuccess) OutingColorSuccess else OutingColorDanger
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(title, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
+            }
+        },
+        text = { Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("OK", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) }
+        },
+        containerColor = MaterialTheme.colorScheme.surface
+    )
+}
+
+@SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class)
-@SuppressLint("NewApi")
 @Composable
 fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler) {
     LaunchedEffect(Unit) { AnalyticsManager.logScreenView("Outings_Screen") }
@@ -242,6 +256,25 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
     var viewingPdfFile by remember { mutableStateOf<File?>(null) }
     var fetchingPdfIds by remember { mutableStateOf(setOf<String>()) }
 
+    var alertTitle by remember { mutableStateOf<String?>(null) }
+    var alertMessage by remember { mutableStateOf<String?>(null) }
+    var alertIsSuccess by remember { mutableStateOf(false) }
+
+    val triggerAlert = { title: String, message: String, isSuccess: Boolean ->
+        alertTitle = title
+        alertMessage = message
+        alertIsSuccess = isSuccess
+    }
+
+    if (alertTitle != null) {
+        VtopAlert(
+            title = alertTitle!!,
+            message = alertMessage ?: "",
+            isSuccess = alertIsSuccess,
+            onDismiss = { alertTitle = null }
+        )
+    }
+
     Scaffold(
         containerColor = Color.Transparent,
         floatingActionButton = {
@@ -253,13 +286,13 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
                         handler.onFetchGeneralFormData { data ->
                             isFetchingForm = false
                             if (data != null && data["error"] == null) showWizardType = "GENERAL"
-                            else Toast.makeText(context, data?.get("error") ?: "Failed to load form from VTOP.", Toast.LENGTH_LONG).show()
+                            else triggerAlert("Error", data?.get("error") ?: "Failed to load form from VTOP.", false)
                         }
                     } else {
                         handler.onFetchWeekendFormData { data ->
                             isFetchingForm = false
                             if (data != null && data["error"] == null) showWizardType = "WEEKEND"
-                            else Toast.makeText(context, data?.get("error") ?: "Weekend Outing portal is closed.", Toast.LENGTH_LONG).show()
+                            else triggerAlert("Notice", data?.get("error") ?: "Weekend Outing portal is closed.", false)
                         }
                     }
                 },
@@ -275,7 +308,7 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
                 }
             }
         }
-    ) { paddingValues ->
+    ) { _ ->
         Box(modifier = Modifier.fillMaxSize()) {
 
             HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
@@ -310,9 +343,7 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
 
                         items(
                             items = activeOutings,
-                            key = { outing ->
-                                "${outing.type}_${outing.id}_${outing.fromDate}_${outing.fromTime}"
-                            }
+                            key = { outing -> "${outing.type}_${outing.id}_${outing.fromDate}_${outing.fromTime}" }
                         ) { outing ->
                             ActiveOutingCard(
                                 outing = outing,
@@ -353,9 +384,7 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
 
                         items(
                             items = pastOutings,
-                            key = { outing ->
-                                "${outing.type}_${outing.id}_${outing.fromDate}_${outing.fromTime}"
-                            }
+                            key = { outing -> "${outing.type}_${outing.id}_${outing.fromDate}_${outing.fromTime}" }
                         ) { outing ->
                             HistoryOutingCard(outing)
                         }
@@ -366,7 +395,7 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .fillParentMaxHeight(0.7f), // Forces it to take up most of the screen so dragging works
+                                    .fillParentMaxHeight(0.7f),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.Center
                             ) {
@@ -419,17 +448,18 @@ fun VtopOutingsTab(outingsData: List<OutingModel>, handler: OutingActionHandler)
             onDismissRequest = { showWizardType = null },
             properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
         ) {
-            Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            // Force true black background here to eliminate the white/grey shade
+            Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
                 OutingWizardDialog(
                     type = showWizardType!!,
                     onDismiss = { showWizardType = null },
-                    onSubmitGeneral = { p, purp, fD, tD, fT, tT -> handler.onGeneralSubmit(p, purp, fD, tD, fT, tT); showWizardType = null },
-                    onSubmitWeekend = { place, purp, d, t, c -> handler.onWeekendSubmit(place, purp, d, t, c); showWizardType = null }
+                    onSubmitGeneral = { p, purp, fD, tD, fT, tT, cb -> handler.onGeneralSubmit(p, purp, fD, tD, fT, tT, cb) },
+                    onSubmitWeekend = { place, purp, d, t, c, cb -> handler.onWeekendSubmit(place, purp, d, t, c, cb) },
+                    onAlert = triggerAlert
                 )
             }
         }
     }
-
     viewingPdfFile?.let { InAppPdfViewer(it) { viewingPdfFile = null } }
 }
 
@@ -438,7 +468,6 @@ private fun ApprovalJourney(statusStr: String, type: String) {
     val s = statusStr.uppercase(Locale.getDefault())
     val themePrimary = MaterialTheme.colorScheme.primary
 
-    val isSubmitted = true // Always true if the card exists
     val isMentorApproved = !s.contains("MENTOR") && (s.contains("WARDEN") || s.contains("ACCEPT") || s.contains("APPROVE"))
     val isWardenApproved = s.contains("ACCEPT") || s.contains("APPROVE") || s.contains("ISSUED")
     val isRejected = s.contains("REJECT") || s.contains("CANCEL") || s.contains("DECLINE")
@@ -446,10 +475,10 @@ private fun ApprovalJourney(statusStr: String, type: String) {
     val steps = listOf("Submitted", "Mentor Approval", "Warden Approval", "Pass Available")
 
     val currentStep = when {
-        isRejected -> -1 // Journey stopped
+        isRejected -> -1
         isWardenApproved -> 3
         isMentorApproved -> 2
-        else -> 1 // Still at step 1 (Waiting for Mentor)
+        else -> 1
     }
 
     Column(modifier = Modifier.padding(vertical = 4.dp)) {
@@ -460,7 +489,7 @@ private fun ApprovalJourney(statusStr: String, type: String) {
             val isCurrent = index == currentStep
 
             val dotColor = when {
-                currentStep == -1 && index <= 1 -> OutingColorDanger // Show path to rejection
+                currentStep == -1 && index <= 1 -> OutingColorDanger
                 isCompleted -> OutingColorSuccess
                 isCurrent -> themePrimary
                 else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
@@ -508,7 +537,15 @@ private fun ActiveOutingCard(
 
     if (isPending) {
         val context = LocalContext.current
-        val vibrator = remember { context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator }
+        val vibrator = remember {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                vibratorManager.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            }
+        }
         val offsetX = remember { Animatable(0f) }
         val coroutineScope = rememberCoroutineScope()
 
@@ -625,7 +662,7 @@ private fun ActiveCardContent(
     if (isApproved) {
         LaunchedEffect(Unit) {
             while(true) {
-                delay(60_000)
+                delay(60.seconds)
                 currentMillis = System.currentTimeMillis()
             }
         }
@@ -834,10 +871,33 @@ private fun HistoryOutingCard(outing: OutingModel) {
 @Composable
 private fun FormDatePickerDialog(
     initialDateMillis: Long,
+    minDateMillis: Long? = null,
     onDateSelected: (Long) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialDateMillis)
+    val datePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = initialDateMillis,
+        selectableDates = object : SelectableDates {
+            override fun isSelectableDate(utcTimeMillis: Long): Boolean {
+                return if (minDateMillis != null) {
+                    // Compare purely by day to avoid timezone shifting issues
+                    val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = utcTimeMillis }
+                    val minCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = minDateMillis }
+                    cal.set(Calendar.HOUR_OF_DAY, 0)
+                    cal.set(Calendar.MINUTE, 0)
+                    cal.set(Calendar.SECOND, 0)
+                    cal.set(Calendar.MILLISECOND, 0)
+
+                    minCal.set(Calendar.HOUR_OF_DAY, 0)
+                    minCal.set(Calendar.MINUTE, 0)
+                    minCal.set(Calendar.SECOND, 0)
+                    minCal.set(Calendar.MILLISECOND, 0)
+
+                    cal.timeInMillis >= minCal.timeInMillis
+                } else true
+            }
+        }
+    )
     val themePrimary = MaterialTheme.colorScheme.primary
 
     DatePickerDialog(
@@ -917,12 +977,16 @@ private fun FormTimePickerDialog(
 private fun OutingWizardDialog(
     type: String,
     onDismiss: () -> Unit,
-    onSubmitGeneral: (String, String, String, String, String, String) -> Unit,
-    onSubmitWeekend: (String, String, String, String, String) -> Unit
+    onSubmitGeneral: (String, String, String, String, String, String, FetchCallback) -> Unit,
+    onSubmitWeekend: (String, String, String, String, String, FetchCallback) -> Unit,
+    onAlert: (String, String, Boolean) -> Unit
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val themePrimary = MaterialTheme.colorScheme.primary
-    var currentStep by remember { mutableIntStateOf(1) }
+    val onThemePrimary = MaterialTheme.colorScheme.onPrimary
+    var isSubmitting by remember { mutableStateOf(false) }
+    var showConfirmSheet by remember { mutableStateOf(false) }
 
     // Shared State
     var generalPlace by remember { mutableStateOf("") }
@@ -938,11 +1002,13 @@ private fun OutingWizardDialog(
         val cal = Calendar.getInstance()
         cal.add(Calendar.HOUR_OF_DAY, 24)
         val sdf = SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH)
-        repeat(15) {
+
+        while (list.size < 2) {
             val d = cal.get(Calendar.DAY_OF_WEEK)
-            if (d == Calendar.SUNDAY || d == Calendar.MONDAY) list.add(sdf.format(cal.time))
+            if (d == Calendar.SUNDAY || d == Calendar.MONDAY) {
+                list.add(sdf.format(cal.time))
+            }
             cal.add(Calendar.DAY_OF_YEAR, 1)
-            if (list.size >= 2) return@repeat
         }
         list
     }
@@ -954,16 +1020,25 @@ private fun OutingWizardDialog(
     val initialCal = remember { Calendar.getInstance().apply { add(Calendar.HOUR_OF_DAY, 24) } }
     var outDateMillis by remember { mutableLongStateOf(initialCal.timeInMillis) }
     var inDateMillis by remember { mutableLongStateOf(initialCal.timeInMillis) }
-    var outHour by remember { mutableIntStateOf(initialCal.get(Calendar.HOUR_OF_DAY).coerceIn(6, 23)) }
+    var outHour by remember { mutableIntStateOf(initialCal.get(Calendar.HOUR_OF_DAY).coerceIn(6, 22)) }
     var outMinute by remember { mutableIntStateOf(initialCal.get(Calendar.MINUTE).coerceIn(0, 59)) }
 
     val initialInCal = remember { Calendar.getInstance().apply { add(Calendar.HOUR_OF_DAY, 27) } }
-    var inHour by remember { mutableIntStateOf(initialInCal.get(Calendar.HOUR_OF_DAY).coerceIn(6, 23)) }
+    var inHour by remember { mutableIntStateOf(initialInCal.get(Calendar.HOUR_OF_DAY).coerceIn(6, 20)) }
     var inMinute by remember { mutableIntStateOf(initialInCal.get(Calendar.MINUTE).coerceIn(0, 59)) }
 
     val displayDateFmt = SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH)
     val submitDateFmt = SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH)
     val timeFmt = SimpleDateFormat("hh:mm a", Locale.ENGLISH)
+
+    val todayStartMillis = remember {
+        Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
 
     fun formatTimeDisplay(hour: Int, min: Int): String {
         val cal = Calendar.getInstance().apply { set(Calendar.HOUR_OF_DAY, hour); set(Calendar.MINUTE, min) }
@@ -976,14 +1051,14 @@ private fun OutingWizardDialog(
     var showInTimePicker by remember { mutableStateOf(false) }
 
     if (showOutDatePicker) {
-        FormDatePickerDialog(initialDateMillis = outDateMillis, onDateSelected = {
+        FormDatePickerDialog(initialDateMillis = outDateMillis, minDateMillis = todayStartMillis, onDateSelected = {
             outDateMillis = it
             if (inDateMillis < outDateMillis) inDateMillis = outDateMillis
             showOutDatePicker = false
         }, onDismiss = { showOutDatePicker = false })
     }
     if (showInDatePicker) {
-        FormDatePickerDialog(initialDateMillis = inDateMillis, onDateSelected = {
+        FormDatePickerDialog(initialDateMillis = inDateMillis, minDateMillis = outDateMillis, onDateSelected = {
             inDateMillis = it
             showInDatePicker = false
         }, onDismiss = { showInDatePicker = false })
@@ -991,209 +1066,288 @@ private fun OutingWizardDialog(
 
     if (showOutTimePicker) {
         FormTimePickerDialog(initialHour = outHour, initialMinute = outMinute, onTimeSelected = { h, m ->
-            if (h in 6..23) { outHour = h; outMinute = m; showOutTimePicker = false }
-            else Toast.makeText(context, "Invalid time! Outings allowed 6 AM - 11 PM", Toast.LENGTH_LONG).show()
+            if (h in 6..21 || (h == 22 && m == 0)) {
+                outHour = h; outMinute = m; showOutTimePicker = false
+            } else {
+                Toast.makeText(context, "Out time must be between 06:00 AM and 10:00 PM", Toast.LENGTH_LONG).show()
+            }
         }, onDismiss = { showOutTimePicker = false })
     }
     if (showInTimePicker) {
         FormTimePickerDialog(initialHour = inHour, initialMinute = inMinute, onTimeSelected = { h, m ->
-            if (h in 6..23) { inHour = h; inMinute = m; showInTimePicker = false }
-            else Toast.makeText(context, "Invalid time! Outings allowed 6 AM - 11 PM", Toast.LENGTH_LONG).show()
+            if (h in 6..19 || (h == 20 && m == 0)) {
+                inHour = h; inMinute = m; showInTimePicker = false
+            } else {
+                Toast.makeText(context, "Return time must be between 06:00 AM and 08:00 PM", Toast.LENGTH_LONG).show()
+            }
         }, onDismiss = { showInTimePicker = false })
     }
 
     val fieldColors = OutlinedTextFieldDefaults.colors(
-        focusedTextColor = MaterialTheme.colorScheme.onSurface,
-        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+        focusedTextColor = Color.White,
+        unfocusedTextColor = Color.White,
         focusedBorderColor = themePrimary,
-        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha=0.3f),
-        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        unfocusedBorderColor = Color(0xFF333333),
+        focusedContainerColor = Color.Transparent,
+        unfocusedContainerColor = Color.Transparent
     )
 
-    Column(modifier = Modifier.fillMaxSize().imePadding()) {
+    Column(modifier = Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurface) }
+            IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White) }
             Column(modifier = Modifier.padding(start = 8.dp)) {
-                Text("New request", color = MaterialTheme.colorScheme.onSurface, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text("New request", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Text(type.toTitleCase(), color = themePrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             }
         }
 
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 16.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(modifier = Modifier.size(32.dp).background(if (currentStep >= 1) themePrimary else MaterialTheme.colorScheme.outline, CircleShape), contentAlignment = Alignment.Center) { Text("1", color = Color.White, fontWeight = FontWeight.Bold) }
-                Text("Details", color = if (currentStep >= 1) themePrimary else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp), fontWeight = FontWeight.Bold)
+        Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(top = 16.dp).weight(1f)) {
+            Text("Where are you going?", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
+
+            if (type == "WEEKEND") {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(weekendPlaceOptions) { p ->
+                        val isSelected = weekendSelectedPlace == p
+                        Box(modifier = Modifier
+                            .border(1.dp, if (isSelected) themePrimary else Color(0xFF333333), RoundedCornerShape(50))
+                            .background(if (isSelected) themePrimary else Color.Transparent, RoundedCornerShape(50))
+                            .clickable { weekendSelectedPlace = p }
+                            .padding(horizontal = 16.dp, vertical = 10.dp)) {
+                            Text(p, color = if (isSelected) onThemePrimary else Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
+            } else {
+                OutlinedTextField(value = generalPlace, onValueChange = { if(it.length <= 25) generalPlace = it }, label = { Text("Place of Visit", color = Color.Gray) }, modifier = Modifier.fillMaxWidth(), colors = fieldColors, singleLine = true, shape = RoundedCornerShape(12.dp))
             }
-            Box(modifier = Modifier.width(60.dp).height(2.dp).background(if (currentStep == 2) themePrimary else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)).offset(y = (-8).dp))
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(modifier = Modifier.size(32.dp).background(if (currentStep == 2) themePrimary else MaterialTheme.colorScheme.surfaceVariant, CircleShape), contentAlignment = Alignment.Center) { Text("2", color = if(currentStep == 2) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold) }
-                Text("Review", color = if (currentStep == 2) themePrimary else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp), fontWeight = FontWeight.Bold)
+
+            Spacer(Modifier.height(24.dp))
+            Text("Purpose", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+            OutlinedTextField(value = purpose, onValueChange = { if(it.length <= 25) purpose = it }, placeholder = { Text("Brief reason for leave", color = Color.Gray) }, modifier = Modifier.fillMaxWidth(), colors = fieldColors, singleLine = true, shape = RoundedCornerShape(12.dp))
+
+            if (type == "WEEKEND") {
+                Spacer(Modifier.height(24.dp))
+                Text("Contact Number", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+                OutlinedTextField(value = contact, onValueChange = { if (it.length <= 10 && it.all { char -> char.isDigit() }) contact = it }, placeholder = { Text("+91", color = Color.Gray) }, modifier = Modifier.fillMaxWidth(), colors = fieldColors, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, shape = RoundedCornerShape(12.dp))
+
+                Spacer(Modifier.height(24.dp))
+                Text("When are you leaving?", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+                var expandedWDate by remember { mutableStateOf(false) }
+                @Suppress("DEPRECATION")
+                ExposedDropdownMenuBox(expanded = expandedWDate, onExpandedChange = { expandedWDate = it }) {
+                    OutlinedTextField(value = weekendSelectedDate, onValueChange = {}, readOnly = true, trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, null, tint = Color.Gray) }, modifier = Modifier.fillMaxWidth().menuAnchor(), colors = fieldColors, shape = RoundedCornerShape(12.dp))
+                    ExposedDropdownMenu(expanded = expandedWDate, onDismissRequest = { expandedWDate = false }, modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
+                        weekendDates.forEach { option -> DropdownMenuItem(text = { Text(option, color = MaterialTheme.colorScheme.onSurface) }, onClick = { weekendSelectedDate = option; expandedWDate = false }) }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                var expandedWTime by remember { mutableStateOf(false) }
+                @Suppress("DEPRECATION")
+                ExposedDropdownMenuBox(expanded = expandedWTime, onExpandedChange = { expandedWTime = it }) {
+                    OutlinedTextField(value = weekendSelectedTime, onValueChange = {}, readOnly = true, trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, null, tint = Color.Gray) }, modifier = Modifier.fillMaxWidth().menuAnchor(), colors = fieldColors, shape = RoundedCornerShape(12.dp))
+                    ExposedDropdownMenu(expanded = expandedWTime, onDismissRequest = { expandedWTime = false }, modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
+                        weekendTimeOptions.forEach { option -> DropdownMenuItem(text = { Text(option, color = MaterialTheme.colorScheme.onSurface) }, onClick = { weekendSelectedTime = option; expandedWTime = false }) }
+                    }
+                }
+            } else {
+                Spacer(Modifier.height(24.dp))
+                Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(16.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Leave", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+                        OutlinedCard(onClick = { showOutDatePicker = true }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent), border = BorderStroke(1.dp, Color(0xFF333333))) {
+                            Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Lucide.CalendarDays, null, tint = themePrimary, modifier = Modifier.size(16.dp))
+                                Text(displayDateFmt.format(Date(outDateMillis)), color = Color.White, modifier = Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedCard(onClick = { showOutTimePicker = true }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent), border = BorderStroke(1.dp, Color(0xFF333333))) {
+                            Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Lucide.Clock, null, tint = themePrimary, modifier = Modifier.size(16.dp))
+                                Text(formatTimeDisplay(outHour, outMinute), color = Color.White, modifier = Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("Return", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+                        OutlinedCard(onClick = { showInDatePicker = true }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent), border = BorderStroke(1.dp, Color(0xFF333333))) {
+                            Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Lucide.CalendarDays, null, tint = themePrimary, modifier = Modifier.size(16.dp))
+                                Text(displayDateFmt.format(Date(inDateMillis)), color = Color.White, modifier = Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedCard(onClick = { showInTimePicker = true }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent), border = BorderStroke(1.dp, Color(0xFF333333))) {
+                            Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Lucide.Clock, null, tint = themePrimary, modifier = Modifier.size(16.dp))
+                                Text(formatTimeDisplay(inHour, inMinute), color = Color.White, modifier = Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+                }
             }
         }
 
-        if (currentStep == 1) {
-            Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).weight(1f)) {
-                Text("Where are you going?", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
+        val canProceed = if (type == "WEEKEND") purpose.isNotBlank() && contact.length == 10 else generalPlace.isNotBlank() && purpose.isNotBlank()
 
-                if (type == "WEEKEND") {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(weekendPlaceOptions) { p ->
-                            val isSelected = weekendSelectedPlace == p
-                            Box(modifier = Modifier
-                                .border(1.dp, if (isSelected) themePrimary else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(50))
-                                .background(if (isSelected) themePrimary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(50))
-                                .clickable { weekendSelectedPlace = p }
-                                .padding(horizontal = 16.dp, vertical = 10.dp)) {
-                                Text(p, color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                            }
-                        }
+        Button(
+            onClick = {
+                if (type == "GENERAL") {
+                    val now = System.currentTimeMillis()
+                    val outCal = Calendar.getInstance().apply {
+                        timeInMillis = outDateMillis
+                        set(Calendar.HOUR_OF_DAY, outHour)
+                        set(Calendar.MINUTE, outMinute)
+                        set(Calendar.SECOND, 0)
                     }
-                } else {
-                    OutlinedTextField(value = generalPlace, onValueChange = { if(it.length <= 25) generalPlace = it }, label = { Text("Place of Visit") }, modifier = Modifier.fillMaxWidth(), colors = fieldColors, singleLine = true, shape = RoundedCornerShape(12.dp))
+                    val inCal = Calendar.getInstance().apply {
+                        timeInMillis = inDateMillis
+                        set(Calendar.HOUR_OF_DAY, inHour)
+                        set(Calendar.MINUTE, inMinute)
+                        set(Calendar.SECOND, 0)
+                    }
+
+                    if (outCal.timeInMillis - now < 86400000) {
+                        onAlert("Invalid Time", "The selected date and time must be at least 24 hours from the current time.", false)
+                        return@Button
+                    }
+                    if (inCal.timeInMillis <= outCal.timeInMillis) {
+                        onAlert("Invalid Time", "If the dates are the same, 'Return Time' should be greater than 'Leave Time'.", false)
+                        return@Button
+                    }
                 }
+                showConfirmSheet = true
+            },
+            enabled = canProceed, // Compose built-in state
+            modifier = Modifier.fillMaxWidth().padding(24.dp).height(56.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = themePrimary,
+                disabledContainerColor = Color(0xFF151515), // Matches exact dark grey
+                contentColor = onThemePrimary,
+                disabledContentColor = Color(0xFF555555) // Dimmed text color
+            ),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Text("Review request", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        }
+    }
+
+    if (showConfirmSheet) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val finalPlace = if (type == "WEEKEND") weekendSelectedPlace else generalPlace
+
+        ModalBottomSheet(
+            onDismissRequest = { showConfirmSheet = false },
+            sheetState = sheetState,
+            containerColor = Color(0xFF1E1E1E) // Premium dark background
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp).padding(bottom = 32.dp)) {
+                Text("Apply for ${type.lowercase(Locale.getDefault())} outing", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                Text("Check the details before this goes to VTOP.", color = Color.Gray, fontSize = 14.sp)
 
                 Spacer(Modifier.height(24.dp))
-                Text("Purpose", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
-                OutlinedTextField(value = purpose, onValueChange = { if(it.length <= 25) purpose = it }, placeholder = { Text("Brief reason for leave") }, modifier = Modifier.fillMaxWidth(), colors = fieldColors, singleLine = true, shape = RoundedCornerShape(12.dp))
 
-                if (type == "WEEKEND") {
-                    Spacer(Modifier.height(24.dp))
-                    Text("Contact Number", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
-                    OutlinedTextField(value = contact, onValueChange = { if (it.length <= 10 && it.all { char -> char.isDigit() }) contact = it }, placeholder = { Text("+91") }, modifier = Modifier.fillMaxWidth(), colors = fieldColors, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, shape = RoundedCornerShape(12.dp))
-
-                    Spacer(Modifier.height(24.dp))
-                    Text("When are you leaving?", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
-                    var expandedWDate by remember { mutableStateOf(false) }
-                    @Suppress("DEPRECATION")
-                    ExposedDropdownMenuBox(expanded = expandedWDate, onExpandedChange = { expandedWDate = it }) {
-                        OutlinedTextField(value = weekendSelectedDate, onValueChange = {}, readOnly = true, trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }, modifier = Modifier.fillMaxWidth().menuAnchor(), colors = fieldColors, shape = RoundedCornerShape(12.dp))
-                        ExposedDropdownMenu(expanded = expandedWDate, onDismissRequest = { expandedWDate = false }, modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
-                            weekendDates.forEach { option -> DropdownMenuItem(text = { Text(option, color = MaterialTheme.colorScheme.onSurface) }, onClick = { weekendSelectedDate = option; expandedWDate = false }) }
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    var expandedWTime by remember { mutableStateOf(false) }
-                    @Suppress("DEPRECATION")
-                    ExposedDropdownMenuBox(expanded = expandedWTime, onExpandedChange = { expandedWTime = it }) {
-                        OutlinedTextField(value = weekendSelectedTime, onValueChange = {}, readOnly = true, trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }, modifier = Modifier.fillMaxWidth().menuAnchor(), colors = fieldColors, shape = RoundedCornerShape(12.dp))
-                        ExposedDropdownMenu(expanded = expandedWTime, onDismissRequest = { expandedWTime = false }, modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
-                            weekendTimeOptions.forEach { option -> DropdownMenuItem(text = { Text(option, color = MaterialTheme.colorScheme.onSurface) }, onClick = { weekendSelectedTime = option; expandedWTime = false }) }
-                        }
-                    }
-                } else {
-                    Spacer(Modifier.height(24.dp))
-                    Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(16.dp)) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Leave", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
-                            OutlinedCard(onClick = { showOutDatePicker = true }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.3f))) {
-                                Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Lucide.CalendarDays, null, tint = themePrimary, modifier = Modifier.size(16.dp))
-                                    Text(displayDateFmt.format(Date(outDateMillis)), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(12.dp))
-                            OutlinedCard(onClick = { showOutTimePicker = true }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.3f))) {
-                                Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Lucide.Clock, null, tint = themePrimary, modifier = Modifier.size(16.dp))
-                                    Text(formatTimeDisplay(outHour, outMinute), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                }
-                            }
-                        }
-                        Column(Modifier.weight(1f)) {
-                            Text("Return", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
-                            OutlinedCard(onClick = { showInDatePicker = true }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.3f))) {
-                                Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Lucide.CalendarDays, null, tint = themePrimary, modifier = Modifier.size(16.dp))
-                                    Text(displayDateFmt.format(Date(inDateMillis)), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(12.dp))
-                            OutlinedCard(onClick = { showInTimePicker = true }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.3f))) {
-                                Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Lucide.Clock, null, tint = themePrimary, modifier = Modifier.size(16.dp))
-                                    Text(formatTimeDisplay(inHour, inMinute), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            val canProceed = if (type == "WEEKEND") purpose.isNotBlank() && contact.length == 10 else generalPlace.isNotBlank() && purpose.isNotBlank()
-            Button(
-                onClick = { if (canProceed) {
-                    if (type == "GENERAL" && inDateMillis < outDateMillis) Toast.makeText(context, "Return date must be after Leave date", Toast.LENGTH_SHORT).show()
-                    else currentStep = 2
-                }},
-                modifier = Modifier.fillMaxWidth().padding(24.dp).height(56.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = if (canProceed) themePrimary else MaterialTheme.colorScheme.surfaceVariant),
-                shape = RoundedCornerShape(16.dp)
-            ) { Text("Next — review >", color = if (canProceed) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, fontSize = 16.sp) }
-
-        } else if (currentStep == 2) {
-            Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).weight(1f)) {
-                Text("Review your request", color = MaterialTheme.colorScheme.onSurface, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
-
-                val finalPlace = if (type == "WEEKEND") weekendSelectedPlace else generalPlace
-
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.5f)), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.2f)), modifier = Modifier.fillMaxWidth()) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF2D2E33)),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Destination", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp); Text(finalPlace, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
-                        Spacer(Modifier.height(12.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Purpose", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp); Text(purpose, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
-
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            Text("Place", color = Color.LightGray, fontSize = 14.sp, modifier = Modifier.weight(0.35f))
+                            Text(finalPlace, color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(0.65f))
+                        }
                         Spacer(Modifier.height(16.dp))
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha=0.2f))
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            Text("Purpose", color = Color.LightGray, fontSize = 14.sp, modifier = Modifier.weight(0.35f))
+                            Text(purpose, color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(0.65f))
+                        }
                         Spacer(Modifier.height(16.dp))
-
                         if (type == "WEEKEND") {
                             val outT = weekendSelectedTime.substringBefore("-").trim()
                             val inT = weekendSelectedTime.substringAfter("-").trim()
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Leave", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp); Text("${formatDate(weekendSelectedDate, true)} · $outT", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
-                            Spacer(Modifier.height(12.dp))
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Return", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp); Text("${formatDate(weekendSelectedDate, true)} · $inT", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
+                            Row(modifier = Modifier.fillMaxWidth()) {
+                                Text("Leaving", color = Color.LightGray, fontSize = 14.sp, modifier = Modifier.weight(0.35f))
+                                Text("${formatDate(weekendSelectedDate, true)} · $outT", color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(0.65f))
+                            }
+                            Spacer(Modifier.height(16.dp))
+                            Row(modifier = Modifier.fillMaxWidth()) {
+                                Text("Returning", color = Color.LightGray, fontSize = 14.sp, modifier = Modifier.weight(0.35f))
+                                Text("${formatDate(weekendSelectedDate, true)} · $inT", color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(0.65f))
+                            }
                         } else {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Leave", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp); Text("${displayDateFmt.format(Date(outDateMillis))} · ${formatTimeDisplay(outHour, outMinute)}", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
-                            Spacer(Modifier.height(12.dp))
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Return", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp); Text("${displayDateFmt.format(Date(inDateMillis))} · ${formatTimeDisplay(inHour, inMinute)}", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
+                            Row(modifier = Modifier.fillMaxWidth()) {
+                                Text("Leaving", color = Color.LightGray, fontSize = 14.sp, modifier = Modifier.weight(0.35f))
+                                Text("${displayDateFmt.format(Date(outDateMillis))} · ${formatTimeDisplay(outHour, outMinute)}", color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(0.65f))
+                            }
+                            Spacer(Modifier.height(16.dp))
+                            Row(modifier = Modifier.fillMaxWidth()) {
+                                Text("Returning", color = Color.LightGray, fontSize = 14.sp, modifier = Modifier.weight(0.35f))
+                                Text("${displayDateFmt.format(Date(inDateMillis))} · ${formatTimeDisplay(inHour, inMinute)}", color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(0.65f))
+                            }
                         }
                     }
                 }
 
-                Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(24.dp))
 
-                val warningText = if (type == "WEEKEND") "Warden approval is required before your pass is issued." else "Mentor and Warden approval is required before your pass is issued."
-                Row(modifier = Modifier.fillMaxWidth().background(OutingColorWarning.copy(alpha = 0.1f), RoundedCornerShape(12.dp)).border(1.dp, OutingColorWarning.copy(alpha = 0.3f), RoundedCornerShape(12.dp)).padding(16.dp)) {
-                    Icon(Icons.Outlined.Info, null, tint = OutingColorWarning, modifier = Modifier.size(20.dp))
-                    Text(warningText, color = OutingColorWarning, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 12.dp))
-                }
-            }
-
-            Row(Modifier.fillMaxWidth().padding(24.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = { currentStep = 1 }, modifier = Modifier.weight(1f).height(56.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(16.dp)) { Text("Edit", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, fontSize = 16.sp) }
                 Button(
                     onClick = {
+                        isSubmitting = true
+                        val callback = FetchCallback { data ->
+                            coroutineScope.launch {
+                                isSubmitting = false
+                                sheetState.hide()
+                                showConfirmSheet = false
+
+                                val error = data?.get("error")
+                                val success = data?.get("success")
+
+                                if (error != null) {
+                                    onAlert("Request Failed", error, false)
+                                } else if (success != null) {
+                                    onAlert("Success", success, true)
+                                    onDismiss()
+                                } else {
+                                    onAlert("Error", "An unknown error occurred while submitting.", false)
+                                }
+                            }
+                        }
+
                         if (type == "WEEKEND") {
-                            onSubmitWeekend(weekendSelectedPlace, purpose, weekendSelectedDate, weekendSelectedTime, contact)
+                            onSubmitWeekend(weekendSelectedPlace, purpose, weekendSelectedDate, weekendSelectedTime, contact, callback)
                         } else {
                             val subOutDate = submitDateFmt.format(Date(outDateMillis))
                             val subInDate = submitDateFmt.format(Date(inDateMillis))
                             val subOutTime = String.format(Locale.ENGLISH, "%02d:%02d", outHour, outMinute)
                             val subInTime = String.format(Locale.ENGLISH, "%02d:%02d", inHour, inMinute)
-                            onSubmitGeneral(generalPlace, purpose, subOutDate, subInDate, subOutTime, subInTime)
+                            onSubmitGeneral(generalPlace, purpose, subOutDate, subInDate, subOutTime, subInTime, callback)
                         }
                     },
-                    modifier = Modifier.weight(1f).height(56.dp), colors = ButtonDefaults.buttonColors(containerColor = themePrimary), shape = RoundedCornerShape(16.dp)
-                ) { Text("Submit", color = Color.White, fontWeight = FontWeight.Black, fontSize = 16.sp) }
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = themePrimary), // Now uses app's dynamic theme!
+                    shape = RoundedCornerShape(28.dp)
+                ) {
+                    if (isSubmitting) CircularProgressIndicator(color = onThemePrimary, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                    else Text("Confirm and apply", color = onThemePrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                TextButton(
+                    onClick = { showConfirmSheet = false },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Go back and edit", color = themePrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
         }
     }
 }
 
-// --------------------------------------------------------
 // IN-APP PDF VIEWER
-// --------------------------------------------------------
+
 @Composable
 fun InAppPdfViewer(pdfFile: File, onDismiss: () -> Unit) {
     val context = LocalContext.current

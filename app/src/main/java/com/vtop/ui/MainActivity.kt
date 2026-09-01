@@ -312,7 +312,6 @@ class MainActivity : ComponentActivity() {
                                                         val success = client.downloadAndCacheOutpass(id, isWeekend, regNo, tempFile)
 
                                                         if (success && tempFile.exists()) {
-                                                            // Pass the cached file directly to the UI without saving to MediaStore
                                                             withContext(Dispatchers.Main) { onReady(tempFile) }
                                                         } else {
                                                             withContext(Dispatchers.Main) {
@@ -329,7 +328,7 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             }
 
-                                            override fun onWeekendSubmit(place: String, purpose: String, date: String, time: String, contact: String) {
+                                            override fun onWeekendSubmit(place: String, purpose: String, date: String, time: String, contact: String, callback: FetchCallback) {
                                                 lifecycleScope.launch(Dispatchers.IO) {
                                                     try {
                                                         val regNo = Vault.getRegNo(this@MainActivity)
@@ -337,19 +336,25 @@ class MainActivity : ComponentActivity() {
                                                             ?: throw Exception("Session expired. Please pull down to sync again.")
 
                                                         client.authorizedId = regNo
-                                                        val success = client.submitWeekendOuting(place, purpose, date, time, contact)
+                                                        val responseMsg = client.submitWeekendOuting(place, purpose, date, time, contact)
 
                                                         withContext(Dispatchers.Main) {
-                                                            Toast.makeText(this@MainActivity, if (success) "Weekend Request Submitted!" else "Submission Failed", Toast.LENGTH_LONG).show()
-                                                            if (success) { lifecycleScope.launch { SyncManager.performSync(this@MainActivity) } }
+                                                            if (responseMsg == "SUCCESS") {
+                                                                callback.onResult(mapOf("success" to "Weekend Request Submitted!"))
+                                                                lifecycleScope.launch { SyncManager.performSync(this@MainActivity) }
+                                                            } else if (responseMsg.startsWith("ERROR:")) {
+                                                                callback.onResult(mapOf("error" to responseMsg.substringAfter("ERROR:")))
+                                                            } else {
+                                                                callback.onResult(mapOf("error" to "Submission Failed from VTOP"))
+                                                            }
                                                         }
                                                     } catch (e: Exception) {
-                                                        withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_SHORT).show() }
+                                                        withContext(Dispatchers.Main) { callback.onResult(mapOf("error" to (e.message ?: "Unknown Error"))) }
                                                     }
                                                 }
                                             }
 
-                                            override fun onGeneralSubmit(place: String, purpose: String, fromDate: String, toDate: String, fromTime: String, toTime: String) {
+                                            override fun onGeneralSubmit(place: String, purpose: String, fromDate: String, toDate: String, fromTime: String, toTime: String, callback: FetchCallback) {
                                                 lifecycleScope.launch(Dispatchers.IO) {
                                                     try {
                                                         val regNo = Vault.getRegNo(this@MainActivity)
@@ -357,14 +362,20 @@ class MainActivity : ComponentActivity() {
                                                             ?: throw Exception("Session expired. Please pull down to sync again.")
 
                                                         client.authorizedId = regNo
-                                                        val success = client.submitGeneralOuting(place, purpose, fromDate, toDate, fromTime, toTime)
+                                                        val responseMsg = client.submitGeneralOuting(place, purpose, fromDate, toDate, fromTime, toTime)
 
                                                         withContext(Dispatchers.Main) {
-                                                            Toast.makeText(this@MainActivity, if (success) "General Leave Submitted!" else "Submission Failed", Toast.LENGTH_LONG).show()
-                                                            if (success) { lifecycleScope.launch { SyncManager.performSync(this@MainActivity) } }
+                                                            if (responseMsg == "SUCCESS") {
+                                                                callback.onResult(mapOf("success" to "General Leave Submitted!"))
+                                                                lifecycleScope.launch { SyncManager.performSync(this@MainActivity) }
+                                                            } else if (responseMsg.startsWith("ERROR:")) {
+                                                                callback.onResult(mapOf("error" to responseMsg.substringAfter("ERROR:")))
+                                                            } else {
+                                                                callback.onResult(mapOf("error" to "Submission Failed from VTOP"))
+                                                            }
                                                         }
                                                     } catch (e: Exception) {
-                                                        withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_SHORT).show() }
+                                                        withContext(Dispatchers.Main) { callback.onResult(mapOf("error" to (e.message ?: "Unknown Error"))) }
                                                     }
                                                 }
                                             }

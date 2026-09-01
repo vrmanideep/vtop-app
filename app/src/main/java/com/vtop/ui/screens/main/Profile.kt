@@ -736,13 +736,17 @@ fun Profile(
                                 Spacer(Modifier.height(12.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
 
+                                    // Dynamic Color Bubble
                                     Box(
                                         modifier = Modifier
                                             .size(36.dp)
-                                            .background(Brush.sweepGradient(listOf(Color.Red, Color.Yellow, Color.Green, Color.Blue, Color.Magenta, Color.Red)), CircleShape)
+                                            .background(
+                                                if (useDynamicColor) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color.Transparent,
+                                                CircleShape
+                                            )
                                             .border(
-                                                width = if (useDynamicColor) 3.dp else 0.dp,
-                                                color = if (useDynamicColor) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                                width = if (useDynamicColor) 2.dp else 1.dp,
+                                                color = if (useDynamicColor) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                                                 shape = CircleShape
                                             )
                                             .clickable {
@@ -751,19 +755,24 @@ fun Profile(
                                             },
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        Box(modifier = Modifier.size(28.dp).background(MaterialTheme.colorScheme.surface, CircleShape), contentAlignment = Alignment.Center) {
-                                            Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
-                                        }
+                                        Icon(
+                                            Icons.Default.AutoAwesome,
+                                            contentDescription = "Dynamic Color",
+                                            tint = if (useDynamicColor) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(18.dp)
+                                        )
                                     }
 
+                                    // Custom Color Bubbles
                                     com.vtop.ui.theme.AccentColors.forEach { color ->
+                                        val isSelected = !useDynamicColor && customAccent == color
                                         Box(
                                             modifier = Modifier
                                                 .size(36.dp)
                                                 .background(color, CircleShape)
                                                 .border(
-                                                    width = if (!useDynamicColor && customAccent == color) 3.dp else 0.dp,
-                                                    color = if (!useDynamicColor && customAccent == color) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                                    width = if (isSelected) 3.dp else 0.dp,
+                                                    color = if (isSelected) MaterialTheme.colorScheme.onSurface else Color.Transparent,
                                                     shape = CircleShape
                                                 )
                                                 .clickable {

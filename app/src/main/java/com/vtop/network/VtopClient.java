@@ -500,31 +500,28 @@ public class VtopClient {
         }
     }
 
-    @SuppressWarnings("deprecation")
-    public boolean submitGeneralOuting(String place, String purpose, String fromDate, String toDate, String fromTime, String toTime) {
+    public String submitGeneralOuting(String place, String purpose, String fromDate, String toDate, String fromTime, String toTime) {
         try {
             RequestBody applyBody = new FormBody.Builder().add("_csrf", csrfToken).add("verifyMenu", "true").add("authorizedID", authorizedId).build();
             String html = executeWafFetch("/hostel/StudentGeneralOuting", applyBody, "/content");
             Document doc = Jsoup.parse(html != null ? html : "");
 
-            // Jsoup .attr returns "" (empty string) if not found, securing NPEs
             String name = doc.select("input#name").attr("value");
             String appNo = doc.select("input#applicationNo").attr("value");
             String gender = doc.select("input#gender").attr("value");
             String block = doc.select("input#hostelBlock").attr("value");
             String room = doc.select("input#roomNo").attr("value");
 
-            if (appNo.isEmpty()) return false;
+            if (appNo.isEmpty()) return "ERROR:Session Expired. Form data not found.";
 
-            String[] outParts = (fromTime != null) ? fromTime.split(":") : new String[]{"0", "0"};
-            String[] inParts = (toTime != null) ? toTime.split(":") : new String[]{"0", "0"};
+            String[] outParts = (fromTime != null && fromTime.contains(":")) ? fromTime.split(":") : new String[]{"0", "0"};
+            String[] inParts = (toTime != null && toTime.contains(":")) ? toTime.split(":") : new String[]{"0", "0"};
             String oh = String.format(Locale.US, "%02d", Integer.parseInt(outParts[0].trim()));
             String om = String.format(Locale.US, "%02d", Integer.parseInt(outParts[1].trim()));
             String ih = String.format(Locale.US, "%02d", Integer.parseInt(inParts[0].trim()));
             String im = String.format(Locale.US, "%02d", Integer.parseInt(inParts[1].trim()));
 
-            // Swapped to empty byte array RequestBody to replace deprecated MediaType call
-            RequestBody emptyFileBody = RequestBody.create(null, new byte[0]);
+            RequestBody emptyFileBody = RequestBody.create(okhttp3.MediaType.parse("application/pdf"), new byte[0]);
 
             MultipartBody body = new MultipartBody.Builder().setType(MultipartBody.FORM).addFormDataPart("authorizedID", authorizedId).addFormDataPart("LeaveId", "").addFormDataPart("regNo", authorizedId).addFormDataPart("name", name).addFormDataPart("applicationNo", appNo).addFormDataPart("gender", gender).addFormDataPart("hostelBlock", block).addFormDataPart("roomNo", room).addFormDataPart("placeOfVisit", place).addFormDataPart("purposeOfVisit", purpose).addFormDataPart("outDate", fromDate).addFormDataPart("outTimeHr", oh).addFormDataPart("outTimeMin", om).addFormDataPart("inDate", toDate).addFormDataPart("inTimeHr", ih).addFormDataPart("inTimeMin", im).addFormDataPart("_csrf", csrfToken).addFormDataPart("x", getGmtTimestamp()).addFormDataPart("upload_file", "", emptyFileBody).build();
 
@@ -533,23 +530,24 @@ public class VtopClient {
                 Document resDoc = Jsoup.parse(res);
 
                 Element jsonBom = resDoc.selectFirst("input#jsonBom");
-                if (jsonBom != null && !jsonBom.attr("value").isEmpty()) return false;
+                if (jsonBom != null && !jsonBom.attr("value").isEmpty()) return "ERROR:" + jsonBom.attr("value");
 
                 Element successFlag = resDoc.selectFirst("input#success");
-                if (successFlag != null && !successFlag.attr("value").isEmpty()) return true;
+                if (successFlag != null && !successFlag.attr("value").isEmpty()) return "SUCCESS";
             }
-            return false;
+            return "ERROR:Unknown Error Occurred on VTOP servers.";
         } catch (Exception e) {
             Log.e(TAG, "submitGeneralOuting exception", e);
-            return false;
+            return "ERROR:" + e.getMessage();
         }
     }
 
-    public boolean submitWeekendOuting(String place, String purpose, String date, String time, String contact) {
+    public String submitWeekendOuting(String place, String purpose, String date, String time, String contact) {
         try {
             RequestBody applyBody = new FormBody.Builder().add("_csrf", csrfToken).add("verifyMenu", "true").add("authorizedID", authorizedId).build();
             String html = executeWafFetch("/hostel/StudentWeekendOuting", applyBody, "/content");
             Document doc = Jsoup.parse(html != null ? html : "");
+
             String name = doc.select("input#name").attr("value");
             String appNo = doc.select("input#applicationNo").attr("value");
             String gender = doc.select("input#gender").attr("value");
@@ -557,26 +555,26 @@ public class VtopClient {
             String room = doc.select("input#roomNo").attr("value");
             String parentContact = doc.select("input#parentContactNumber").attr("value");
 
-            if (appNo.isEmpty()) return false;
+            if (appNo.isEmpty()) return "ERROR:Session Expired. Form data not found.";
 
             MultipartBody body = new MultipartBody.Builder().setType(MultipartBody.FORM).addFormDataPart("authorizedID", authorizedId).addFormDataPart("BookingId", "").addFormDataPart("regNo", authorizedId).addFormDataPart("name", name).addFormDataPart("applicationNo", appNo).addFormDataPart("gender", gender).addFormDataPart("hostelBlock", block).addFormDataPart("roomNo", room).addFormDataPart("outPlace", place).addFormDataPart("purposeOfVisit", purpose).addFormDataPart("outingDate", date).addFormDataPart("outTime", time).addFormDataPart("contactNumber", contact).addFormDataPart("parentContactNumber", parentContact).addFormDataPart("_csrf", csrfToken).addFormDataPart("x=", getGmtTimestamp()).build();
+
             String res = executeWafFetch("/hostel/saveOutingForm", body, "/content?");
             if (res != null) {
                 Document resDoc = Jsoup.parse(res);
 
                 Element jsonBom = resDoc.selectFirst("input#jsonBom");
-                if (jsonBom != null && !jsonBom.attr("value").isEmpty()) return false;
+                if (jsonBom != null && !jsonBom.attr("value").isEmpty()) return "ERROR:" + jsonBom.attr("value");
 
                 Element successFlag = resDoc.selectFirst("input#success");
-                if (successFlag != null && !successFlag.attr("value").isEmpty()) return true;
+                if (successFlag != null && !successFlag.attr("value").isEmpty()) return "SUCCESS";
             }
-            return false;
+            return "ERROR:Unknown Error Occurred on VTOP servers.";
         } catch (Exception e) {
             Log.e(TAG, "submitWeekendOuting exception", e);
-            return false;
+            return "ERROR:" + e.getMessage();
         }
     }
-
     public boolean downloadAndCacheOutpass(String bookingId, boolean isWeekend, String regNo, File outputFile) {
         try {
             String endpoint = isWeekend ? "/hostel/downloadOutingForm/" : "/hostel/downloadLeavePass/";
