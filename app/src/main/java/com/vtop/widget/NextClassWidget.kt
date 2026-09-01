@@ -316,6 +316,10 @@ class NextClassWidget : GlanceAppWidget() {
     @Composable
     private fun HolidayWidgetContent(holidayName: String) {
         val textPrimary = ColorProvider(day = Color(0xFF18181B), night = Color(0xFFFFFFFF))
+
+        // Extracts whatever is inside the parentheses. If no parentheses exist, falls back to the original string.
+        val cleanedName = Regex("\\((.*?)\\)").find(holidayName)?.groupValues?.get(1) ?: holidayName
+
         Column(
             modifier = GlanceModifier.fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically,
@@ -323,7 +327,7 @@ class NextClassWidget : GlanceAppWidget() {
         ) {
             Text("Holiday", style = TextStyle(color = ColorProvider(day = Color(0xFF10B981), night = Color(0xFF10B981)), fontSize = 16.sp, fontWeight = FontWeight.Bold))
             Spacer(modifier = GlanceModifier.height(4.dp))
-            Text(holidayName, style = TextStyle(color = textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold))
+            Text(cleanedName.trim(), style = TextStyle(color = textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold))
         }
     }
 
