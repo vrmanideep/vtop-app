@@ -43,7 +43,7 @@ fun premiumSurfaceColor(): Color = if (MaterialTheme.colorScheme.background.lumi
 fun VtopPortalScreen(
     vtopClient: VtopClient,
     onBack: () -> Unit
-){
+) {
     BackHandler { onBack() }
 
     val context = LocalContext.current
@@ -51,9 +51,12 @@ fun VtopPortalScreen(
 
     var pageTitle by remember { mutableStateOf("VTOP") }
     var isLoading by remember { mutableStateOf(true) }
+    var authStatusMessage by remember { mutableStateOf("Initializing secure session...") }
     var sessionError by remember { mutableStateOf<String?>(null) }
+
     var activeClient by remember { mutableStateOf<VtopClient?>(null) }
     var sessionKey by remember { mutableIntStateOf(0) }
+    var isAuthenticated by remember { mutableStateOf(false) }
 
     val portalPreferences = remember { context.getSharedPreferences("vtop_portal_preferences", Context.MODE_PRIVATE) }
     val isParallel = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE).getBoolean("PARALLEL_PORTAL_SESSION", false) }
@@ -64,17 +67,22 @@ fun VtopPortalScreen(
 
     suspend fun executeLoginFlow() {
         isLoading = true
+        isAuthenticated = false
         sessionError = null
+        authStatusMessage = "Connecting to VTOP..."
 
         val result = PortalSessionProvider.getOrCreateSession(
             context = context,
             isParallel = isParallel,
             fallbackClient = vtopClient,
             onStatusUpdate = { message ->
-                withContext(Dispatchers.Main) { Toast.makeText(context, message, Toast.LENGTH_SHORT).show() }
+                withContext(Dispatchers.Main) { authStatusMessage = message }
             },
             onOtpRequested = { resolver ->
-                withContext(Dispatchers.Main) { AppState.currentOtpResolver.value = resolver }
+                withContext(Dispatchers.Main) {
+                    authStatusMessage = "Awaiting OTP Verification..."
+                    AppState.currentOtpResolver.value = resolver
+                }
             }
         )
 
@@ -82,6 +90,7 @@ fun VtopPortalScreen(
             withContext(Dispatchers.Main) {
                 activeClient = client
                 sessionKey++
+                isAuthenticated = true
             }
         }.onFailure { error ->
             withContext(Dispatchers.Main) { sessionError = error.message ?: "Unknown error occurred" }
@@ -95,22 +104,15 @@ fun VtopPortalScreen(
             val portalClient = SessionManager.getPortalClient()
             if (portalClient != null) {
                 activeClient = portalClient
+                isAuthenticated = true
+                isLoading = false
             } else {
                 executeLoginFlow()
             }
         } else {
-            activeClient = vtopClient
+            // Using the shared sync client requires us to ensure it's logged in
+            executeLoginFlow()
         }
-    }
-
-    if (sessionError != null) {
-        VtopWebViewLoading(error = sessionError, onRetry = { scope.launch { executeLoginFlow() } }, onBack = onBack)
-        return
-    }
-
-    if (activeClient == null) {
-        VtopWebViewLoading(error = null, onRetry = null, onBack = onBack)
-        return
     }
 
     Scaffold(
@@ -136,7 +138,7 @@ fun VtopPortalScreen(
                 },
                 actions = {
                     Box {
-                        IconButton(onClick = { expandedMenu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "Menu") }
+                        IconButton(onClick = { expandedMenu = true }, enabled = isAuthenticated) { Icon(Icons.Default.MoreVert, contentDescription = "Menu") }
                         DropdownMenu(expanded = expandedMenu, onDismissRequest = { expandedMenu = false }) {
                             DropdownMenuItem(
                                 text = { Text(if (vtopThemeDark) "VTOP theme: dark" else "VTOP theme: light") },
@@ -146,7 +148,6 @@ fun VtopPortalScreen(
                                     portalPreferences.edit().putBoolean("vtop_theme_dark", vtopThemeDark).apply()
                                 }
                             )
-                            // We kept the text exactly as requested, but added the session drop logic
                             DropdownMenuItem(
                                 text = { Text(if (desktopMode) "Desktop Mode" else "Mobile Mode") },
                                 onClick = {
@@ -154,8 +155,6 @@ fun VtopPortalScreen(
                                     desktopMode = !desktopMode
                                     portalPreferences.edit().putBoolean("desktop_mode", desktopMode).apply()
                                     Toast.makeText(context, if (desktopMode) "Mobile mode enabled" else "Desktop mode enabled", Toast.LENGTH_SHORT).show()
-
-                                    // Fix: Drop current session and force re-auth to bind new User-Agent
                                     if (isParallel) SessionManager.setPortalClient(null)
                                     scope.launch { executeLoginFlow() }
                                 }
@@ -176,17 +175,27 @@ fun VtopPortalScreen(
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
 
-            PortalHost(
-                activeClient = activeClient!!,
-                sessionKey = sessionKey,
-                desktopMode = desktopMode,
-                vtopThemeDark = vtopThemeDark,
-                onPageLoading = { isLoading = it },
-                onTitleUpdate = { pageTitle = it },
-                onSessionExpired = { scope.launch { executeLoginFlow() } }
-            )
+            // Mask the WebView completely until authentication succeeds
+            if (!isAuthenticated || activeClient == null) {
+                VtopWebViewLoading(
+                    error = sessionError,
+                    statusMessage = authStatusMessage,
+                    onRetry = if (sessionError != null) { { scope.launch { executeLoginFlow() } } } else null,
+                    onBack = onBack
+                )
+            } else {
+                PortalHost(
+                    activeClient = activeClient!!,
+                    sessionKey = sessionKey,
+                    desktopMode = desktopMode,
+                    vtopThemeDark = vtopThemeDark,
+                    onPageLoading = { isLoading = it },
+                    onTitleUpdate = { pageTitle = it },
+                    onSessionExpired = { scope.launch { executeLoginFlow() } }
+                )
+            }
 
-            AnimatedVisibility(visible = isLoading, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopCenter)) {
+            AnimatedVisibility(visible = isLoading && isAuthenticated, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopCenter)) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp), color = MaterialTheme.colorScheme.primary, trackColor = Color.Transparent)
             }
         }
@@ -194,13 +203,13 @@ fun VtopPortalScreen(
 }
 
 @Composable
-fun VtopWebViewLoading(error: String?, onRetry: (() -> Unit)?, onBack: () -> Unit) {
+fun VtopWebViewLoading(error: String?, statusMessage: String, onRetry: (() -> Unit)?, onBack: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             if (error != null) {
                 Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(48.dp))
                 Spacer(Modifier.height(16.dp))
-                Text("Could not open VTOP", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("Authentication Failed", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
                 Text(error, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 32.dp))
                 Spacer(Modifier.height(24.dp))
@@ -217,9 +226,9 @@ fun VtopWebViewLoading(error: String?, onRetry: (() -> Unit)?, onBack: () -> Uni
             } else {
                 CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.height(16.dp))
-                Text("Opening VTOP...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                Text("Preparing VTOP...", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
-                Text("Injecting your session securely", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), fontSize = 11.sp)
+                Text(statusMessage, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f), fontSize = 12.sp)
             }
         }
     }

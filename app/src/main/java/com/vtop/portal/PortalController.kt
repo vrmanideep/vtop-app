@@ -30,16 +30,18 @@ object PortalController {
     fun loadUrl(url: String) { _commands.tryEmit(PortalCommand.LoadUrl(url)) }
     fun executeJs(script: String) { _commands.tryEmit(PortalCommand.ExecuteJs(script)) }
 
-    // Fast DOM navigation - Clicks the menu item natively without triggering a full page reload
+    // Robust DOM Navigation - Tolerates HTML formatting variations and case changes
     private fun navigateViaDom(menuName: String) {
         val script = """
             (function() {
+                var searchText = '${menuName.lowercase()}';
                 var links = Array.from(document.querySelectorAll('a, span'));
-                var target = links.find(e => e.textContent.trim() === '$menuName');
+                var target = links.find(e => e.textContent.trim().toLowerCase().includes(searchText));
+                
                 if (target) {
                     target.click();
                 } else {
-                    console.log('VTOP Menu item $menuName not found');
+                    console.error('VTOP Menu item matching "' + searchText + '" not found in DOM');
                 }
             })();
         """.trimIndent()
@@ -48,37 +50,37 @@ object PortalController {
 
     fun openHome() {
         _destination.value = PortalDestination.HOME
-        navigateViaDom("Dashboard")
+        navigateViaDom("dashboard")
     }
 
     fun openAttendance() {
         _destination.value = PortalDestination.ATTENDANCE
-        navigateViaDom("Class Attendance")
+        navigateViaDom("class attendance")
     }
 
     fun openTimetable() {
         _destination.value = PortalDestination.TIMETABLE
-        navigateViaDom("Time Table")
+        navigateViaDom("time table")
     }
 
     fun openMarks() {
         _destination.value = PortalDestination.MARKS
-        navigateViaDom("Marks View")
+        navigateViaDom("marks view")
     }
 
     fun openExams() {
         _destination.value = PortalDestination.EXAMS
-        navigateViaDom("Exam Schedule")
+        navigateViaDom("exam schedule")
     }
 
     fun openFaculty() {
         _destination.value = PortalDestination.FACULTY
-        navigateViaDom("Know Your Faculty")
+        navigateViaDom("know your faculty")
     }
 
     fun openCourseRegistration() {
         _destination.value = PortalDestination.COURSE_REGISTRATION
-        navigateViaDom("Course Registration")
+        navigateViaDom("course registration")
     }
 
     fun updateCurrentUrl(url: String?) {
