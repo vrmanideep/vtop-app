@@ -143,7 +143,7 @@ class NextClassWidget : GlanceAppWidget() {
             }
             eventTimes.add(midnightCal.timeInMillis)
 
-            val bunkCache = CalendarSync.parseBunkCache(context)
+            val bunkCache = CalendarSync.parseAcademicTimeline(context)
             val semId = Vault.getSelectedSemester(context)[0]
 
             val calendarEvents = Vault.getAcademicCalendar(context, semId)
