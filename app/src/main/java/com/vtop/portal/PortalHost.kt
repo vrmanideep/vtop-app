@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -36,6 +35,10 @@ import com.vtop.network.VtopClient
 import com.vtop.utils.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -47,6 +50,20 @@ private const val VTOP_CONTENT = "$VTOP_BASE/vtop/content"
 private const val DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
 private const val MOBILE_UA = "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Mobile Safari/537.36"
 private const val TAG = "PORTAL_HOST"
+
+// Global download state decoupled from Compose lifecycle
+object PortalDownloadManager {
+    private val _activeDownloads = MutableStateFlow<Map<String, Triple<String, Float, String>>>(emptyMap())
+    val activeDownloads: StateFlow<Map<String, Triple<String, Float, String>>> = _activeDownloads.asStateFlow()
+
+    fun updateDownload(id: String, name: String, progress: Float, status: String) {
+        _activeDownloads.update { it + (id to Triple(name, progress, status)) }
+    }
+
+    fun removeDownload(id: String) {
+        _activeDownloads.update { it - id }
+    }
+}
 
 @Composable
 fun premiumSurfaceColor(): Color = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF141414) else Color(0xFFFFFFFF)
@@ -66,29 +83,45 @@ fun PortalHost(
     onSessionExpired: () -> Unit
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-
     val currentDarkTheme by rememberUpdatedState(vtopThemeDark)
     val currentDesktopMode by rememberUpdatedState(desktopMode)
-    var activeDownloads by remember { mutableStateOf<Map<String, Triple<String, Float, String>>>(emptyMap()) }
-    val webView = remember {
+    val downloads by PortalDownloadManager.activeDownloads.collectAsState()
+
+    // Keyed by sessionKey to ensure a fresh, uncorrupted WebView instance upon re-auth
+    val webView = remember(sessionKey) {
         WebView(context).apply {
+            addJavascriptInterface(object : Any() {
+                @JavascriptInterface
+                fun notifySessionExpired() {
+                    Log.w(TAG, "AJAX session expiration detected!")
+                    onSessionExpired()
+                }
+            }, "AndroidInterface")
+
             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             overScrollMode = WebView.OVER_SCROLL_ALWAYS
             isVerticalScrollBarEnabled = true
             isHorizontalScrollBarEnabled = true
-            setOnTouchListener { view, _ -> view.parent?.requestDisallowInterceptTouchEvent(true); false }
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
 
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
+                databaseEnabled = true
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 javaScriptCanOpenWindowsAutomatically = true
                 setSupportMultipleWindows(true)
                 builtInZoomControls = true
                 displayZoomControls = false
                 setSupportZoom(true)
+
+                // Set desktop/mobile properties natively on boot
+                userAgentString = if (desktopMode) DESKTOP_UA else MOBILE_UA
+                useWideViewPort = desktopMode
+                loadWithOverviewMode = desktopMode
+                layoutAlgorithm = if (desktopMode) WebSettings.LayoutAlgorithm.TEXT_AUTOSIZING else WebSettings.LayoutAlgorithm.NORMAL
             }
+            setInitialScale(if (desktopMode) 1 else 100)
 
             webChromeClient = object : WebChromeClient() {
                 override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
@@ -109,8 +142,8 @@ fun PortalHost(
             setDownloadListener { url, _, contentDisposition, mimeType, _ ->
                 val originalFileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
                 val downloadId = url.hashCode().toString()
-                // Instant UI Feedback
-                activeDownloads = activeDownloads + (downloadId to Triple(originalFileName, -1f, "Starting..."))
+
+                PortalDownloadManager.updateDownload(downloadId, originalFileName, -1f, "Starting...")
 
                 val safeUrl = url.replace("\"", "\\\"")
                 val jsCode = """
@@ -149,13 +182,10 @@ fun PortalHost(
                 """.trimIndent()
 
                 evaluateJavascript(jsCode) { jsResult ->
-                    // Detach from Compose scope so download survives temporary recompositions
+                    // Uses Application-level scope to survive screen navigation
                     CoroutineScope(Dispatchers.IO).launch {
                         try {
                             val cleanResult = jsResult?.trim('"') ?: ""
-                            var finalName = originalFileName
-
-                            // Use exact UA currently active in WebView
                             val targetUa = if (currentDesktopMode) DESKTOP_UA else MOBILE_UA
                             val request = okhttp3.Request.Builder()
                                 .url(url)
@@ -167,111 +197,16 @@ fun PortalHost(
                             val body = response.body
 
                             if (response.isSuccessful && body != null) {
-                                val contentLength = body.contentLength()
-                                val inputStream = body.byteStream()
-                                val outputStream = java.io.ByteArrayOutputStream()
-                                val buffer = ByteArray(8 * 1024)
-                                var bytesRead: Int
-                                var totalRead = 0L
-                                var lastUpdate = System.currentTimeMillis()
-
-                                // Stream the file to track progress in real-time
-                                while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                                    val formatSize = { bytes: Long ->
-                                        if (bytes < 1024 * 1024) "${bytes / 1024} KB" else String.format(java.util.Locale.US, "%.1f MB", bytes / (1024f * 1024f))
-                                    }
-
-                                    // Stream the file to track progress in real-time
-                                    while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                                        outputStream.write(buffer, 0, bytesRead)
-                                        totalRead += bytesRead
-
-                                        val now = System.currentTimeMillis()
-                                        if (now - lastUpdate > 100) {
-                                            val progress = if (contentLength > 0) totalRead.toFloat() / contentLength else -1f
-                                            val pct = if (progress >= 0) (progress * 100).toInt() else -1
-
-                                            val progressString = if (contentLength > 0) {
-                                                "${formatSize(totalRead)} / ${formatSize(contentLength)}"
-                                            } else {
-                                                "${formatSize(totalRead)} downloaded"
-                                            }
-
-                                            withContext(Dispatchers.Main) {
-                                                activeDownloads = activeDownloads + (downloadId to Triple(originalFileName, progress, progressString))
-                                            }
-
-                                            NotificationHelper.showDownloadProgressNotification(
-                                                context = context,
-                                                notificationId = originalFileName.hashCode(),
-                                                fileName = originalFileName,
-                                                progress = pct,
-                                                progressText = if (pct >= 0) "$progressString ($pct%)" else progressString
-                                            )
-
-                                            lastUpdate = now
-                                        }
-                                    }
-                                }
-
-                                val bytes = outputStream.toByteArray()
-
-                                var originalExt = ""
+                                // 1. Determine Extension Early (Relying on Content-Disposition)
+                                var ext = ""
                                 val cdMatch = Regex("filename=\"?([^\";]+)\"?").find(contentDisposition ?: "")
-                                if (cdMatch != null) {
-                                    originalExt = cdMatch.groupValues[1].substringAfterLast('.', "")
-                                }
-                                if (originalExt.isBlank()) {
-                                    originalExt = originalFileName.substringAfterLast('.', "")
-                                }
-                                originalExt = originalExt.lowercase().trim()
+                                if (cdMatch != null) ext = cdMatch.groupValues[1].substringAfterLast('.', "")
+                                if (ext.isBlank()) ext = originalFileName.substringAfterLast('.', "")
+                                ext = ext.lowercase().trim()
+                                val safeExt = if (ext.isNotEmpty() && !ext.startsWith(".")) ".$ext" else ext
 
-                                val magic = bytes.take(4).toByteArray()
-                                var actualExt = originalExt
-
-                                if (magic.size >= 4 && magic[0] == 0x25.toByte() && magic[1] == 0x50.toByte() && magic[2] == 0x44.toByte() && magic[3] == 0x46.toByte()) {
-                                    actualExt = "pdf"
-                                } else if (magic.size >= 4 && magic[0] == 0x50.toByte() && magic[1] == 0x4B.toByte() && magic[2] == 0x03.toByte() && magic[3] == 0x04.toByte()) {
-                                    actualExt = "zip"
-                                    try {
-                                        val zis = java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(bytes))
-                                        var entry = zis.nextEntry
-                                        while (entry != null) {
-                                            if (entry.name.startsWith("ppt/")) { actualExt = "pptx"; break }
-                                            if (entry.name.startsWith("word/")) { actualExt = "docx"; break }
-                                            if (entry.name.startsWith("xl/")) { actualExt = "xlsx"; break }
-                                            entry = zis.nextEntry
-                                        }
-                                        zis.close()
-                                    } catch (e: Exception) { }
-                                    if (actualExt == "zip" && originalExt in listOf("docx", "pptx", "xlsx")) {
-                                        actualExt = originalExt
-                                    }
-                                } else if (magic.size >= 4 && magic[0] == 0xD0.toByte() && magic[1] == 0xCF.toByte() && magic[2] == 0x11.toByte() && magic[3] == 0xE0.toByte()) {
-                                    actualExt = if (originalExt in listOf("doc", "ppt", "xls")) originalExt else "doc"
-                                } else if (magic.size >= 4 && magic[0] == 0x89.toByte() && magic[1] == 0x50.toByte() && magic[2] == 0x4E.toByte() && magic[3] == 0x47.toByte()) {
-                                    actualExt = "png"
-                                } else if (magic.size >= 3 && magic[0] == 0xFF.toByte() && magic[1] == 0xD8.toByte() && magic[2] == 0xFF.toByte()) {
-                                    actualExt = "jpg"
-                                }
-
-                                val safeExt = if (actualExt.startsWith(".")) actualExt else ".$actualExt"
-
-                                val correctedMimeType = when (actualExt) {
-                                    "pdf" -> "application/pdf"
-                                    "zip" -> "application/zip"
-                                    "doc" -> "application/msword"
-                                    "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                                    "ppt" -> "application/vnd.ms-powerpoint"
-                                    "pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                                    "xls" -> "application/vnd.ms-excel"
-                                    "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                                    "png" -> "image/png"
-                                    "jpg", "jpeg" -> "image/jpeg"
-                                    "txt" -> "text/plain"
-                                    else -> mimeType ?: "application/octet-stream"
-                                }
-
+                                // 2. Determine Final Name
+                                var finalName = originalFileName
                                 if (cleanResult.contains("|||")) {
                                     val parts = cleanResult.split("|||")
                                     val courseCode = parts[0].replace(Regex("[^a-zA-Z0-9]"), "")
@@ -286,7 +221,6 @@ fun PortalHost(
                                         val dateRaw = parts[2]
                                         val topic = parts[3].replace(Regex("[^a-zA-Z0-9]"), "_").trim('_')
                                         val linkText = if (parts.size > 4) parts[4] else ""
-
                                         val typeSuffix = when {
                                             linkText.contains("Reference Material I", ignoreCase = true) && !linkText.contains("II") -> "Ref1"
                                             linkText.contains("Reference Material II", ignoreCase = true) && !linkText.contains("III") -> "Ref2"
@@ -310,6 +244,9 @@ fun PortalHost(
                                     if (!finalName.endsWith(safeExt, true)) finalName += safeExt
                                 }
 
+                                val correctedMimeType = mimeType ?: "application/octet-stream"
+
+                                // 3. Create MediaStore Entry FIRST
                                 val resolver = context.contentResolver
                                 val values = ContentValues().apply {
                                     put(MediaStore.MediaColumns.DISPLAY_NAME, finalName)
@@ -317,44 +254,60 @@ fun PortalHost(
                                     put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/VTOP_Materials")
                                 }
 
-                                val collection = if (Build.VERSION.SDK_INT >= 29) {
-                                    MediaStore.Downloads.EXTERNAL_CONTENT_URI
-                                } else {
-                                    MediaStore.Files.getContentUri("external")
-                                }
-
+                                val collection = if (Build.VERSION.SDK_INT >= 29) MediaStore.Downloads.EXTERNAL_CONTENT_URI else MediaStore.Files.getContentUri("external")
                                 val uri: Uri = resolver.insert(collection, values) ?: throw Exception("Failed creating download entry")
 
-                                val os = resolver.openOutputStream(uri)
-                                if (os != null) {
-                                    os.use { outputStream -> outputStream.write(bytes) }
+                                // Generate a unique Notification ID that won't collide
+                                val uniqueNotificationId = (url + System.currentTimeMillis()).hashCode()
+
+                                // 4. Stream Direct to Disk
+                                resolver.openOutputStream(uri)?.use { outputStream ->
+                                    val inputStream = body.byteStream()
+                                    val buffer = ByteArray(8 * 1024)
+                                    var bytesRead: Int
+                                    var totalRead = 0L
+                                    val contentLength = body.contentLength()
+                                    var lastUpdate = System.currentTimeMillis()
+
+                                    while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                                        outputStream.write(buffer, 0, bytesRead)
+                                        totalRead += bytesRead
+
+                                        val now = System.currentTimeMillis()
+                                        if (now - lastUpdate > 100) {
+                                            val progress = if (contentLength > 0) totalRead.toFloat() / contentLength else -1f
+                                            val pct = if (progress >= 0) (progress * 100).toInt() else -1
+
+                                            val formatSize = { bytes: Long -> if (bytes < 1024 * 1024) "${bytes / 1024} KB" else String.format(java.util.Locale.US, "%.1f MB", bytes / (1024f * 1024f)) }
+                                            val progressString = if (contentLength > 0) "${formatSize(totalRead)} / ${formatSize(contentLength)}" else "${formatSize(totalRead)} downloaded"
+
+                                            PortalDownloadManager.updateDownload(downloadId, originalFileName, progress, progressString)
+
+                                            NotificationHelper.showDownloadProgressNotification(
+                                                context = context,
+                                                notificationId = uniqueNotificationId,
+                                                fileName = finalName,
+                                                progress = pct,
+                                                progressText = if (pct >= 0) "$progressString ($pct%)" else progressString
+                                            )
+                                            lastUpdate = now
+                                        }
+                                    }
                                 }
 
+                                // 5. Finalize Success
                                 withContext(Dispatchers.Main) {
-                                    // 1. Explicitly kill the progress notification using its original ID
-                                    NotificationHelper.dismissNotification(context, originalFileName.hashCode())
-
-                                    // 2. Show the success notification with the smart-renamed ID
-                                    NotificationHelper.showDownloadNotificationFromUri(
-                                        context = context,
-                                        uri = uri,
-                                        fileName = finalName,
-                                        mimeType = correctedMimeType,
-                                        title = "Download Complete",
-                                        description = "Tap to open $finalName"
-                                    )
+                                    NotificationHelper.dismissNotification(context, uniqueNotificationId)
+                                    NotificationHelper.showDownloadNotificationFromUri(context, uri, finalName, correctedMimeType, "Download Complete", "Tap to open $finalName")
                                 }
                             } else {
                                 withContext(Dispatchers.Main) { Toast.makeText(context, "Download rejected by server", Toast.LENGTH_SHORT).show() }
-                                NotificationHelper.dismissNotification(context, originalFileName.hashCode())
                             }
                         } catch (e: Exception) {
                             withContext(Dispatchers.Main) { Toast.makeText(context, "Download Failed", Toast.LENGTH_SHORT).show() }
                         } finally {
                             withContext(Dispatchers.Main) {
-                                activeDownloads = activeDownloads - downloadId
-                                // Ensure the progress notification is ALWAYS cleared if the coroutine dies
-                                NotificationHelper.dismissNotification(context, originalFileName.hashCode())
+                                PortalDownloadManager.removeDownload(downloadId)
                             }
                         }
                     }
@@ -363,12 +316,52 @@ fun PortalHost(
 
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+                    Log.d(TAG, "WebView started loading: $url")
                     onPageLoading(true)
-                    com.vtop.portal.PortalController.updateCurrentUrl(url)
+                    PortalController.updateCurrentUrl(url)
+                    val ajaxInterceptor = """
+                        (function() {
+                            var originalXhrOpen = window.XMLHttpRequest.prototype.open;
+                            window.XMLHttpRequest.prototype.open = function() {
+                                this.addEventListener('load', function() {
+                                    // Only trigger if unauthorized OR strictly redirected to a login URL
+                                    if (this.status === 401 || (this.responseURL && this.responseURL.includes('/vtop/login'))) {
+                                        window.AndroidInterface.notifySessionExpired();
+                                    }
+                                });
+                                originalXhrOpen.apply(this, arguments);
+                            };
+                        })();
+                    """.trimIndent()
+                    view.evaluateJavascript(ajaxInterceptor, null)
+                    if (currentDarkTheme) {
+                        val earlyScript = """
+                            if (document.documentElement) {
+                                document.documentElement.style.filter = 'invert(100%) hue-rotate(180deg) brightness(95%) contrast(105%)';
+                                document.documentElement.style.backgroundColor = '#ffffff'; // Inverts to dark
+                            }
+                        """.trimIndent()
+                        view.evaluateJavascript(earlyScript, null)
+                    }
+                }
+
+                @SuppressLint("WebViewClientOnReceivedSslError")
+                override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
+                    // VTOP often has broken SSL chains. We allow it ONLY for the university domain.
+                    if (error.url.contains("vitap.ac.in")) {
+                        Log.w(TAG, "Bypassing SSL error for VTOP domain: ${error.primaryError}")
+                        handler.proceed()
+                    } else {
+                        Log.e(TAG, "Blocked SSL error for external domain: ${error.url}")
+                        handler.cancel()
+                    }
                 }
 
                 override fun onPageFinished(view: WebView, url: String?) {
+                    Log.d(TAG, "WebView finished loading: $url")
                     onPageLoading(false)
+
+                    CookieManager.getInstance().flush()
 
                     var script = """
                         document.documentElement.style.overflowY = 'auto';
@@ -402,7 +395,6 @@ fun PortalHost(
                             if (style) style.remove();
                         """.trimIndent()
                     }
-
                     view.evaluateJavascript("(function() { $script })();", null)
 
                     if (url?.contains("open/page") == true) {
@@ -410,19 +402,20 @@ fun PortalHost(
                         val jsCode = """
                             (function() {
                                 if (window.location.href.indexOf('login') !== -1) return;
-                                
                                 var csrfInput = document.querySelector('input[name="_csrf"]');
-                                var token = csrfInput ? csrfInput.value : '';
-                                if (token) {
+                                if (csrfInput && csrfInput.value) {
+                                    console.log("CSRF Token found, auto-posting to content dashboard...");
                                     var form = document.createElement('form');
                                     form.method = 'POST';
                                     form.action = '$VTOP_CONTENT';
-                                    form.innerHTML = '<input type="hidden" name="_csrf" value="'+token+'">' +
+                                    form.innerHTML = '<input type="hidden" name="_csrf" value="'+csrfInput.value+'">' +
                                                      '<input type="hidden" name="authorizedID" value="$regNo">' +
                                                      '<input type="hidden" name="verifyMenu" value="true">' +
                                                      '<input type="hidden" name="nocache" value="'+(new Date().getTime())+'">';
                                     document.body.appendChild(form);
                                     form.submit();
+                                } else {
+                                    console.error("CRITICAL: CSRF Token missing on open/page!");
                                 }
                             })()
                         """.trimIndent()
@@ -436,20 +429,16 @@ fun PortalHost(
                         }
                         onTitleUpdate(titleText)
                     } else if (url?.endsWith("vtop/login") == true || url?.contains("vtop/login/error") == true) {
-                        Log.w(TAG, "Portal session expired")
+                        Log.w(TAG, "Portal session expired or redirected to login")
                         onSessionExpired()
                     }
                 }
 
                 override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
                     Log.e(TAG, "Chromium Render Process crashed! Rebooting session...")
-                    Toast.makeText(context, "Renderer crashed. Reloading VTOP...", Toast.LENGTH_SHORT).show()
                     onSessionExpired()
                     return true
                 }
-
-                @SuppressLint("WebViewClientOnReceivedSslError")
-                override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) { handler?.proceed() }
 
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     return !request.url.toString().startsWith(VTOP_BASE)
@@ -491,24 +480,6 @@ fun PortalHost(
         webView.evaluateJavascript("(function() { $script })();", null)
     }
 
-    LaunchedEffect(desktopMode) {
-        val settings = webView.settings
-        if (desktopMode) {
-            settings.userAgentString = DESKTOP_UA
-            settings.useWideViewPort = true
-            settings.loadWithOverviewMode = true
-            settings.layoutAlgorithm = WebSettings.LayoutAlgorithm.TEXT_AUTOSIZING
-            webView.setInitialScale(1)
-        } else {
-            settings.userAgentString = MOBILE_UA
-            settings.useWideViewPort = false
-            settings.loadWithOverviewMode = false
-            settings.layoutAlgorithm = WebSettings.LayoutAlgorithm.NORMAL
-            webView.setInitialScale(100)
-        }
-        webView.reload()
-    }
-
     LaunchedEffect(activeClient, sessionKey) {
         syncCookies(webView, activeClient)
         webView.loadUrl(VTOP_OPEN_PAGE)
@@ -520,14 +491,13 @@ fun PortalHost(
             modifier = Modifier.fillMaxSize()
         )
 
-        // UI Downloads Tracker Overlay
-        if (activeDownloads.isNotEmpty()) {
+        if (downloads.isNotEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize().padding(16.dp),
                 contentAlignment = Alignment.BottomCenter
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    activeDownloads.forEach { (_, data) ->
+                    downloads.forEach { (_, data) ->
                         val (name, prog, progText) = data
                         Card(
                             colors = CardDefaults.cardColors(containerColor = premiumSurfaceColor()),
@@ -542,51 +512,18 @@ fun PortalHost(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = name,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f).padding(end = 8.dp)
-                                    )
-                                    if (prog >= 0f) {
-                                        Text(
-                                            text = "${(prog * 100).toInt()}%",
-                                            color = MaterialTheme.colorScheme.primary,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
+                                    Text(text = name, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(end = 8.dp))
+                                    if (prog >= 0f) Text(text = "${(prog * 100).toInt()}%", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
-
                                 if (progText.isNotEmpty()) {
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = progText,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
+                                    Text(text = progText, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                                 }
-
                                 Spacer(modifier = Modifier.height(10.dp))
-
                                 if (prog < 0f) {
-                                    androidx.compose.material3.LinearProgressIndicator(
-                                        modifier = Modifier.fillMaxWidth().height(4.dp),
-                                        color = MaterialTheme.colorScheme.primary,
-                                        strokeCap = androidx.compose.ui.graphics.StrokeCap.Round
-                                    )
+                                    androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp), color = MaterialTheme.colorScheme.primary, strokeCap = androidx.compose.ui.graphics.StrokeCap.Round)
                                 } else {
-                                    androidx.compose.material3.LinearProgressIndicator(
-                                        progress = { prog },
-                                        modifier = Modifier.fillMaxWidth().height(4.dp),
-                                        color = MaterialTheme.colorScheme.primary,
-                                        trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
-                                        strokeCap = androidx.compose.ui.graphics.StrokeCap.Round
-                                    )
+                                    androidx.compose.material3.LinearProgressIndicator(progress = { prog }, modifier = Modifier.fillMaxWidth().height(4.dp), color = MaterialTheme.colorScheme.primary, trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f), strokeCap = androidx.compose.ui.graphics.StrokeCap.Round)
                                 }
                             }
                         }
@@ -623,5 +560,4 @@ private fun syncCookies(webView: WebView, vtopClient: VtopClient) {
         cookieManager.setCookie(targetUrl, cookieStr)
     }
     cookieManager.flush()
-    Log.i(TAG, "Cookie synchronization complete")
 }
