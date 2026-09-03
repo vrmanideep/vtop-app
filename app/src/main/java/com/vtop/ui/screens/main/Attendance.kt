@@ -81,22 +81,24 @@ sealed class BunkState {
     object NoData : BunkState()
 }
 
-fun calculateBunkBudget(attended: Int, total: Int, target: Float = 0.75f): BunkState {
+fun calculateBunkBudget(attended: Int, total: Int, weight: Int = 1, target: Float = 0.75f): BunkState {
     if (total == 0) return BunkState.NoData
     val currentPct = attended.toFloat() / total
 
     return if (currentPct >= target) {
-        var canMiss = 0
-        while ((attended.toFloat() / (total + canMiss + 1)) >= target) {
-            canMiss++
+        var canMissSessions = 0
+        // Multiply simulated missed sessions by the course's weight
+        while ((attended.toFloat() / (total + (canMissSessions + 1) * weight)) >= target) {
+            canMissSessions++
         }
-        BunkState.Safe(canMiss)
+        BunkState.Safe(canMissSessions)
     } else {
-        var mustAttend = 0
-        while (((attended + mustAttend).toFloat() / (total + mustAttend)) < target) {
-            mustAttend++
+        var mustAttendSessions = 0
+        // Multiply simulated attended sessions by the course's weight
+        while (((attended + mustAttendSessions * weight).toFloat() / (total + mustAttendSessions * weight)) < target) {
+            mustAttendSessions++
         }
-        BunkState.AtRisk(mustAttend)
+        BunkState.AtRisk(mustAttendSessions)
     }
 }
 
@@ -114,7 +116,9 @@ fun AttendanceCard(item: AttendanceModel, onClick: () -> Unit) {
         else -> Color(0xFF4CAF50) // Success Green
     }
 
-    val bunkState = remember(attended, total) { calculateBunkBudget(attended, total) }
+    val historySize = item.history?.size ?: 0
+    val sessionWeight = if (historySize > 0 && total > 0) Math.max(1, Math.round(total.toFloat() / historySize)) else 1
+    val bunkState = remember(attended, total, sessionWeight) { calculateBunkBudget(attended, total, sessionWeight) }
 
     Card(
         shape = RoundedCornerShape(12.dp),
