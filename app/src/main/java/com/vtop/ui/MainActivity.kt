@@ -2,14 +2,12 @@
 
 package com.vtop.ui
 
-import android.content.ContentValues
+
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
-import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -59,12 +57,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.google.firebase.FirebaseApp
-import com.vtop.core.AppEvent
-import com.vtop.core.AppRepositories
-import com.vtop.core.AppState
-import com.vtop.core.AttendanceRepository
-import com.vtop.core.EventBus
-import com.vtop.core.TimetableRepository
+import com.vtop.core.*
 import com.vtop.models.TimetableModel
 import com.vtop.network.VtopClient
 import com.vtop.sync.*
@@ -109,7 +102,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        sharedPrefs = getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
+        sharedPrefs = getSharedPreferences("VTOP_PREFS", MODE_PRIVATE)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
@@ -118,7 +111,7 @@ class MainActivity : ComponentActivity() {
         }
 
         FirebaseApp.initializeApp(this)
-        val vaultPrefs = getSharedPreferences("VTOP_VAULT", Context.MODE_PRIVATE)
+        val vaultPrefs = getSharedPreferences("VTOP_VAULT", MODE_PRIVATE)
 
         val currentAppVersion = try {
             packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.0"
@@ -206,6 +199,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         is AppEvent.SyncCompleted -> { }
+                        is AppEvent.CalendarUpdated -> { }
                     }
                 }
             }
@@ -304,7 +298,7 @@ class MainActivity : ComponentActivity() {
                                                 lifecycleScope.launch(Dispatchers.IO) {
                                                     try {
                                                         val regNo = Vault.getRegNo(this@MainActivity)
-                                                        val client = com.vtop.core.SessionManager.getSyncClient()
+                                                        val client = SessionManager.getSyncClient()
                                                             ?: throw Exception("Session expired. Please pull down to sync again.")
 
                                                         client.authorizedId = regNo
@@ -332,7 +326,7 @@ class MainActivity : ComponentActivity() {
                                                 lifecycleScope.launch(Dispatchers.IO) {
                                                     try {
                                                         val regNo = Vault.getRegNo(this@MainActivity)
-                                                        val client = com.vtop.core.SessionManager.getSyncClient()
+                                                        val client = SessionManager.getSyncClient()
                                                             ?: throw Exception("Session expired. Please pull down to sync again.")
 
                                                         client.authorizedId = regNo
@@ -358,7 +352,7 @@ class MainActivity : ComponentActivity() {
                                                 lifecycleScope.launch(Dispatchers.IO) {
                                                     try {
                                                         val regNo = Vault.getRegNo(this@MainActivity)
-                                                        val client = com.vtop.core.SessionManager.getSyncClient()
+                                                        val client = SessionManager.getSyncClient()
                                                             ?: throw Exception("Session expired. Please pull down to sync again.")
 
                                                         client.authorizedId = regNo
@@ -384,7 +378,7 @@ class MainActivity : ComponentActivity() {
                                                 lifecycleScope.launch(Dispatchers.IO) {
                                                     try {
                                                         val regNo = Vault.getRegNo(this@MainActivity)
-                                                        val client = com.vtop.core.SessionManager.getSyncClient()
+                                                        val client = SessionManager.getSyncClient()
                                                             ?: throw Exception("Session expired. Please pull down to sync again.")
 
                                                         client.authorizedId = regNo

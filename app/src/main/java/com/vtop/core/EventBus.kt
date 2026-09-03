@@ -10,6 +10,7 @@ sealed class AppEvent {
     data class SyncError(val exception: Exception) : AppEvent()
     data class AuthOtpRequested(val resolver: Any) : AppEvent()
     object SyncCompleted : AppEvent()
+    object CalendarUpdated : AppEvent()
 }
 
 object EventBus {

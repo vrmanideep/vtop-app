@@ -38,7 +38,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
@@ -79,7 +81,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -221,8 +222,9 @@ fun Profile(
 
     // Initialize GoogleSignInClient locally
     val googleSignInClient = remember(context) {
-        val clientIdRes = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
-        val clientId = if (clientIdRes != 0) context.getString(clientIdRes) else ""
+        val resources = context.resources
+        val clientIdRes = resources.getIdentifier("default_web_client_id", "string", context.packageName)
+        val clientId = if (clientIdRes != 0) resources.getString(clientIdRes) else ""
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestIdToken(clientId)
             .requestEmail()
@@ -951,61 +953,212 @@ fun Profile(
             if (showCalendarSheet) {
                 val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
                 var selectedCalendarId by remember { mutableLongStateOf(availableCalendars.firstOrNull()?.id ?: -1L) }
-                var calendarDropdownExpanded by remember { mutableStateOf(false) }
-                var reminderMins by remember { mutableIntStateOf(10) }
+
+                // State to show the new clean dialog instead of the ugly dropdown
+                var showCalendarSelectionDialog by remember { mutableStateOf(false) }
+
+                var reminderMins by remember { mutableIntStateOf(30) }
                 var reminderDropdownExpanded by remember { mutableStateOf(false) }
                 val reminderOptions = mapOf(0 to "No Reminder", 10 to "10 mins before", 30 to "30 mins before", 60 to "1 hour before")
-                var titleTemplate by remember { mutableStateOf("{courseCode} ({slot})") }
-                var descTemplate by remember { mutableStateOf("{courseTitle}\nFaculty: {faculty}\nType: {courseType}\nClass ID: {classId}") }
-                var locTemplate by remember { mutableStateOf("{venue}") }
-                val sdf = remember { SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH) }
-                var endDate by remember { mutableStateOf(CalendarSync.getDefaultEndDate(context)) }
+
+                var titleTemplate by remember { mutableStateOf(sharedPrefs.getString("CALENDAR_TITLE", "{courseCode} ({slot}) - {venue}") ?: "{courseCode} ({slot}) - {venue}") }
+                var descTemplate by remember { mutableStateOf(sharedPrefs.getString("CALENDAR_DESC", "Instructor: {faculty}\nType: {courseType}\nClass ID: {classId}") ?: "Instructor: {faculty}\nType: {courseType}\nClass ID: {classId}") }
+                var locTemplate by remember { mutableStateOf(sharedPrefs.getString("CALENDAR_LOC", "{venue}") ?: "{venue}") }
+
+                val sdf = remember { SimpleDateFormat("MMM dd, yyyy", Locale.ENGLISH) }
+                var endDate by remember { mutableStateOf(CalendarSync.getDefaultEndDate(context).let {
+                    try { sdf.format(SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH).parse(it)!!) } catch(e:Exception){it}
+                }) }
                 var showDatePicker by remember { mutableStateOf(false) }
 
                 ModalBottomSheet(onDismissRequest = { showCalendarSheet = false }, sheetState = sheetState, containerColor = MaterialTheme.colorScheme.surface) {
-                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Text("Export to Google Calendar", fontSize = 20.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
-                        Text("SELECT CALENDAR", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                        Box(modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.2f), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { calendarDropdownExpanded = true }.padding(16.dp)) {
-                            val selectedName = availableCalendars.find { it.id == selectedCalendarId }?.name ?: "None"
-                            Text(selectedName, color = MaterialTheme.colorScheme.onSurface)
-                            DropdownMenu(expanded = calendarDropdownExpanded, onDismissRequest = { calendarDropdownExpanded = false }) {
-                                availableCalendars.forEach { cal ->
-                                    DropdownMenuItem(text = { Text(cal.name) }, onClick = { selectedCalendarId = cal.id; calendarDropdownExpanded = false })
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp)
+                            .padding(bottom = 32.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(24.dp)
+                    ) {
+
+                        // Header
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Export to Google Calendar", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                            IconButton(onClick = { showCalendarSheet = false }) {
+                                Icon(androidx.compose.material.icons.Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+
+                        // --- 1. Select Calendar ---
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Select Calendar", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                            val selectedCal = availableCalendars.find { it.id == selectedCalendarId }
+                            Card(
+                                modifier = Modifier.fillMaxWidth().clickable { showCalendarSelectionDialog = true },
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                        Box(
+                                            modifier = Modifier.size(42.dp).background(MaterialTheme.colorScheme.surfaceVariant, CircleShape).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.3f), CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(androidx.compose.material.icons.Icons.Default.Event, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                                        }
+                                        Column {
+                                            Text(selectedCal?.name ?: "Select Calendar", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                            Spacer(Modifier.height(2.dp))
+                                            Text(selectedCal?.accountName ?: "Tap to choose an account", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Select", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         }
-                        Text("REMINDER", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                        Box(modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.2f), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { reminderDropdownExpanded = true }.padding(16.dp)) {
-                            Text(reminderOptions[reminderMins] ?: "None", color = MaterialTheme.colorScheme.onSurface)
-                            DropdownMenu(expanded = reminderDropdownExpanded, onDismissRequest = { reminderDropdownExpanded = false }) {
-                                reminderOptions.forEach { (mins, label) ->
-                                    DropdownMenuItem(text = { Text(label) }, onClick = { reminderMins = mins; reminderDropdownExpanded = false })
+
+                        // --- 2. Sync Configuration ---
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("Sync Configuration", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                            // Reminder Box
+                            Box(modifier = Modifier.fillMaxWidth()) {
+                                OutlinedTextField(
+                                    value = reminderOptions[reminderMins] ?: "None",
+                                    onValueChange = {}, readOnly = true,
+                                    label = { Text("Reminder") },
+                                    trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, null) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                Box(modifier = Modifier.matchParentSize().clickable { reminderDropdownExpanded = true })
+                                DropdownMenu(expanded = reminderDropdownExpanded, onDismissRequest = { reminderDropdownExpanded = false }) {
+                                    reminderOptions.forEach { (mins, label) ->
+                                        DropdownMenuItem(text = { Text(label) }, onClick = { reminderMins = mins; reminderDropdownExpanded = false })
+                                    }
                                 }
                             }
+
+                            // End Sync Date Box
+                            Box(modifier = Modifier.fillMaxWidth()) {
+                                OutlinedTextField(
+                                    value = endDate,
+                                    onValueChange = {}, readOnly = true,
+                                    label = { Text("End Sync Date") },
+                                    trailingIcon = { Icon(Icons.Outlined.Edit, null) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                Box(modifier = Modifier.matchParentSize().clickable { showDatePicker = true })
+                            }
                         }
-                        Text("END SYNC ON (LAST INSTRUCTIONAL DAY)", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                        Row(modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.2f), RoundedCornerShape(8.dp)).background(Color.Transparent).clickable { showDatePicker = true }.padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text(endDate, color = MaterialTheme.colorScheme.onSurface)
-                            Icon(Icons.Outlined.Edit, "Edit", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+
+                        // --- 3. Event Template ---
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("Event Template", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                            OutlinedTextField(
+                                value = titleTemplate, onValueChange = { titleTemplate = it; sharedPrefs.edit().putString("CALENDAR_TITLE", it).apply() },
+                                label = { Text("Event Title") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), singleLine = true
+                            )
+                            OutlinedTextField(
+                                value = descTemplate, onValueChange = { descTemplate = it; sharedPrefs.edit().putString("CALENDAR_DESC", it).apply() },
+                                label = { Text("Event Description") }, modifier = Modifier.fillMaxWidth().height(120.dp), shape = RoundedCornerShape(12.dp)
+                            )
+                            OutlinedTextField(
+                                value = locTemplate, onValueChange = { locTemplate = it; sharedPrefs.edit().putString("CALENDAR_LOC", it).apply() },
+                                label = { Text("Location") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), singleLine = true
+                            )
                         }
-                        Text("EVENT TEMPLATES", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                        OutlinedTextField(value = titleTemplate, onValueChange = { titleTemplate = it }, label = { Text("Event Title") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                        OutlinedTextField(value = descTemplate, onValueChange = { descTemplate = it }, label = { Text("Event Description") }, modifier = Modifier.fillMaxWidth().height(100.dp))
-                        OutlinedTextField(value = locTemplate, onValueChange = { locTemplate = it }, label = { Text("Location") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                        Spacer(Modifier.height(8.dp))
+
+                        // --- 4. Pill Buttons ---
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Button(onClick = { CalendarSync.clearSyncedEvents(context, selectedCalendarId); showCalendarSheet = false }, modifier = Modifier.weight(1f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.15f)), shape = RoundedCornerShape(12.dp)) {
-                                Text("Clear Old", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Black)
+                            Button(
+                                onClick = { CalendarSync.clearSyncedEvents(context, selectedCalendarId); showCalendarSheet = false },
+                                modifier = Modifier.weight(1f).height(56.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f)),
+                                shape = CircleShape // Pill shape
+                            ) {
+                                Text("Clear Old", color = MaterialTheme.colorScheme.onErrorContainer, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                             }
-                            Button(onClick = { if (selectedCalendarId != -1L) { CalendarSync.syncToCalendar(context, timetable, examsData, mergeLabs, selectedCalendarId, reminderMins, endDate, titleTemplate, descTemplate, locTemplate) }; showCalendarSheet = false }, modifier = Modifier.weight(1f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary), shape = RoundedCornerShape(12.dp)) {
-                                Text("Sync Now", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Black)
+                            Button(
+                                onClick = { if (selectedCalendarId != -1L) { CalendarSync.syncToCalendar(context, timetable, examsData, mergeLabs, selectedCalendarId, reminderMins, endDate, titleTemplate, descTemplate, locTemplate) }; showCalendarSheet = false },
+                                modifier = Modifier.weight(1f).height(56.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                                shape = CircleShape // Pill shape
+                            ) {
+                                Text("Sync Now", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                             }
                         }
                     }
                 }
+
+                // --- The New Calendar Selection Dialog ---
+                if (showCalendarSelectionDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showCalendarSelectionDialog = false },
+                        title = { Text("Select Target Calendar", fontWeight = FontWeight.Bold) },
+                        text = {
+                            androidx.compose.foundation.lazy.LazyColumn(
+                                modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                val groupedCalendars = availableCalendars.groupBy { it.accountName }
+                                groupedCalendars.forEach { (accountName, calendars) ->
+                                    item {
+                                        Text(
+                                            text = accountName,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Black,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            letterSpacing = 0.5.sp,
+                                            modifier = Modifier.padding(top = 16.dp, bottom = 4.dp, start = 8.dp)
+                                        )
+                                    }
+                                    items(calendars.size) { index ->
+                                        val cal = calendars[index]
+                                        val isSelected = cal.id == selectedCalendarId
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                                                .clickable { selectedCalendarId = cal.id; showCalendarSelectionDialog = false }
+                                                .padding(vertical = 14.dp, horizontal = 12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = cal.name,
+                                                fontSize = 16.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showCalendarSelectionDialog = false }) {
+                                Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        },
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
+                }
+
                 if (showDatePicker) {
-                    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = sdf.parse(endDate)?.time?.plus(TimeZone.getDefault().rawOffset))
+                    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = try { sdf.parse(endDate)?.time?.plus(TimeZone.getDefault().rawOffset) } catch(e:Exception){null})
                     DatePickerDialog(
                         onDismissRequest = { showDatePicker = false },
                         confirmButton = { TextButton(onClick = { datePickerState.selectedDateMillis?.let { millis -> val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = millis }; endDate = sdf.format(cal.time) }; showDatePicker = false }) { Text("OK", color = MaterialTheme.colorScheme.primary) } },
