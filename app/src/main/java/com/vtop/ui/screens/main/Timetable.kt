@@ -863,32 +863,29 @@ fun TimetableRow(
             status
         }
     }
-    val ongoingIndex = courseStatuses.indexOfFirst {
-        it == TimeStatus.ONGOING
+    val targetIndex = remember(courseStatuses) {
+        courseStatuses.indexOfFirst { it == TimeStatus.ONGOING }.takeIf { it >= 0 }
+            ?: courseStatuses.indexOfFirst { it == TimeStatus.NEXT }.takeIf { it >= 0 }
+            ?: -1
     }
 
     val classListState = rememberLazyListState()
 
-    LaunchedEffect(isToday, isExpanded, ongoingIndex, mergedCourses.size) {
-        if (
-            isToday &&
-            isExpanded &&
-            ongoingIndex >= 0
-        ) {
-            classListState.animateScrollToItem(ongoingIndex)
+    LaunchedEffect(isToday, isExpanded, targetIndex, mergedCourses.size) {
+        if (isToday && isExpanded && targetIndex >= 0) {
+            classListState.scrollToItem(targetIndex)
 
-            kotlinx.coroutines.yield()
+            // Wait until the Compose layout engine actually draws the item
+            var retries = 0
+            while (classListState.layoutInfo.visibleItemsInfo.none { it.index == targetIndex } && retries < 5) {
+                delay(10)
+                retries++
+            }
 
-            val item = classListState.layoutInfo.visibleItemsInfo
-                .firstOrNull { it.index == ongoingIndex }
-
+            val item = classListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == targetIndex }
             if (item != null) {
-                val viewportCenter =
-                    (classListState.layoutInfo.viewportStartOffset +
-                            classListState.layoutInfo.viewportEndOffset) / 2
-
+                val viewportCenter = (classListState.layoutInfo.viewportStartOffset + classListState.layoutInfo.viewportEndOffset) / 2
                 val itemCenter = item.offset + item.size / 2
-
                 val adjustment = itemCenter - viewportCenter
 
                 if (adjustment != 0) {
@@ -923,7 +920,7 @@ fun TimetableRow(
                         state = classListState,
                         modifier = Modifier.fillMaxWidth(),
                         contentPadding = PaddingValues(horizontal = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
                     ) {
                         itemsIndexed(mergedCourses) { index, course ->
                             val reminder = allReminders.find { it.classId == course.classId }
