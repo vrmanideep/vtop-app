@@ -1,3 +1,4 @@
+@file:Suppress("SpellCheckingInspection")
 package com.vtop.sync
 
 import android.content.Context
@@ -89,7 +90,7 @@ class VtopSyncWorker(
 
                                 if (savedEmail.isNotBlank()) {
                                     var extractedOtp: String? = null
-                                    for (i in 1..6) {
+                                    for (attempt in 1..6) {
                                         delay(3.seconds)
                                         extractedOtp = GmailOtpExtractor.getLatestVtopOtp(context, savedEmail, otpRequestedTime)
                                         if (extractedOtp != null) break
@@ -123,7 +124,7 @@ class VtopSyncWorker(
                     if (!loginSuccess) {
                         attempts++
                         client.reinitializeSession(context)
-                        delay(2000L)
+                        delay(2.seconds)
                     }
                 } catch (_: VtopException.InvalidCredentials) {
                     Vault.saveCredentials(context, "", "")
@@ -195,7 +196,6 @@ class VtopSyncWorker(
                     val savedCalId = prefs.getLong("CALENDAR_ID", -1L)
 
                     if (savedCalId != -1L) {
-                        CalendarSync.clearSyncedEvents(context, savedCalId)
                         val timetable = Vault.getTimetable(context)
 
                         if (timetable != null) {
@@ -207,7 +207,7 @@ class VtopSyncWorker(
                                 calendarId = savedCalId,
                                 reminderMinutes = prefs.getInt("CALENDAR_REMINDER", 15),
                                 endDateString = CalendarSync.getDefaultEndDate(context),
-                                titleTemplate = prefs.getString("CALENDAR_TITLE", "{courseCode} - {courseType}") ?: "{courseCode} - {courseType}",
+                                titleTemplate = prefs.getString("CALENDAR_TITLE", "{courseCode} ({slot}) - {venue}") ?: "{courseCode} ({slot}) - {venue}",
                                 descTemplate = prefs.getString("CALENDAR_DESC", "{courseTitle}\n{faculty}") ?: "{courseTitle}\n{faculty}",
                                 locTemplate = prefs.getString("CALENDAR_LOC", "{venue}") ?: "{venue}"
                             )
@@ -279,10 +279,13 @@ class VtopSyncWorker(
                         val html = client.fetchCalendarRawHtml(semId, dateStr, "ALL")
                         if (!html.isNullOrBlank()) allEvents.addAll(CalendarParser.parseCalendarHtml(html))
                     }
-                    if (allEvents.isNotEmpty()) CalendarRepository.update(context, semId, allEvents)
+                    if (allEvents.isNotEmpty()) {
+                        CalendarRepository.update(context, semId, allEvents)
+                        // Alert the rest of the app (including Bunk Simulator) to recalculate
+                        EventBus.emit(AppEvent.CalendarUpdated)
+                    }
                 }
             } catch (e: Exception) { Log.e(tag, "Background Calendar Sync Failed", e) }
-
 
             // --- BACKGROUND FACULTY SYNC ---
             try {
