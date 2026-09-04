@@ -107,46 +107,64 @@ object FacultyScraper {
     suspend fun download(vtopClient: VtopClient): List<FacultyEntity> = withContext(Dispatchers.IO) {
         Telemetry.log(TelemetryStatus.INFO, "Faculty", "Hybrid scrape started.", TelemetryModule.NETWORK)
 
-        coroutineScope {
-            val htmlDeferred = async { vtopClient.fetchFacultiesRawHtml() }
-            val apiDeferred = async { fetchApiDataMap() }
-
-            val html = htmlDeferred.await() ?: throw IOException("Failed to fetch HTML payload")
-            val apiDataMap = try { apiDeferred.await() } catch (e: Exception) { emptyMap<String, ApiFacultyData>() }
-
-            val allFaculty = mutableListOf<FacultyEntity>()
-            val rows = Jsoup.parse(html).select("div#4a table tr")
-
-            for (i in 1 until rows.size) {
-                val cols = rows[i].select("td")
-                if (cols.size >= 4) {
-                    val name = cols[0].text().trim()
-
-                    // Normalize name to map with the API
-                    val normName = name.replace(Regex("(?i)\\b(dr|mr|ms|mrs|prof)\\b\\.?"), "")
-                        .replace(Regex("[^a-zA-Z0-9 ]"), "").replace(Regex("\\s+"), " ").trim().lowercase()
-
-                    val id = cols[3].select("button").attr("id").toIntOrNull() ?: continue
-                    val apiData = apiDataMap[normName] ?: apiDataMap.entries.firstOrNull { it.key.contains(normName) || normName.contains(it.key) }?.value
-
-                    allFaculty.add(
-                        FacultyEntity(
-                            id = id,
-                            name = name,
-                            designation = cols[1].text().trim().ifBlank { null },
-                            department = cols[2].text().trim().ifBlank { null },
-                            email = apiData?.email,
-                            office = apiData?.office,
-                            subDepartment = null,
-                            research = apiData?.research,
-                            image = apiData?.image,
-                            openHours = null
-                        )
-                    )
-                }
+        val htmlDeferred = async { vtopClient.fetchFacultiesRawHtml() }
+        val apiDeferred = async {
+            try {
+                fetchApiDataMap()
+            } catch (e: Exception) {
+                Log.e("FACULTY_SYNC", "API Metadata fetch failed, falling back to HTML only", e)
+                emptyMap<String, ApiFacultyData>()
             }
-            allFaculty
         }
+
+        val html = htmlDeferred.await() ?: throw IOException("Failed to fetch HTML payload")
+        val apiDataMap = apiDeferred.await()
+
+        val allFaculty = mutableListOf<FacultyEntity>()
+        val rows = Jsoup.parse(html).select("div#4a table tr")
+
+        for (i in 1 until rows.size) {
+            val cols = rows[i].select("td")
+            if (cols.size >= 4) {
+                val name = cols[0].text().trim()
+
+                // Normalize name to map with the API
+                val normName = name.replace(Regex("(?i)\\b(dr|mr|ms|mrs|prof)\\b\\.?"), "")
+                    .replace(Regex("[^a-zA-Z0-9 ]"), "").replace(Regex("\\s+"), " ").trim().lowercase()
+
+                val id = cols[3].select("button").attr("id").toIntOrNull() ?: continue
+                // 1. Strict Match or Substring
+                var apiData = apiDataMap[normName] ?: apiDataMap.entries.firstOrNull { it.key.contains(normName) || normName.contains(it.key) }?.value
+
+                // 2. Aggressive Fallback: Check if they share at least 2 significant words
+                if (apiData == null) {
+                    val htmlWords = normName.split(" ").filter { it.length > 2 } // Avoid matching on initials alone
+                    if (htmlWords.size >= 2) {
+                        apiData = apiDataMap.entries.firstOrNull { (apiKey, _) ->
+                            val apiWords = apiKey.split(" ")
+                            val matchCount = htmlWords.count { apiWords.contains(it) }
+                            matchCount >= 2
+                        }?.value
+                    }
+                }
+
+                allFaculty.add(
+                    FacultyEntity(
+                        id = id,
+                        name = name,
+                        designation = cols[1].text().trim().ifBlank { null },
+                        department = cols[2].text().trim().ifBlank { null },
+                        email = apiData?.email,
+                        office = apiData?.office,
+                        subDepartment = null,
+                        research = apiData?.research,
+                        image = apiData?.image,
+                        openHours = null
+                    )
+                )
+            }
+        }
+        allFaculty
     }
 
     // 2. Deep Scrape: Still used dynamically by the Faculty Directory screen for Open Hours
@@ -184,7 +202,12 @@ object FacultyScraper {
                     if (tds.size >= 2) {
                         val day = tds[0].text().trim()
                         val time = tds[1].text().trim()
-                        if (day.isNotBlank() && time.isNotBlank() && !day.equals("Weekday", true) && !day.equals("Day", true) && !day.equals("Hours", true)) {
+                        if (day.isNotBlank() && time.isNotBlank() &&
+                            !day.equals("Weekday", true) &&
+                            !day.equals("Week Day", true) &&
+                            !day.equals("Day", true) &&
+                            !time.equals("Hours", true) &&
+                            !time.equals("Timings", true)) {
                             val obj = FacultyOpenHour(day, time)
                             if (!openHours.contains(obj)) openHours.add(obj)
                         }
@@ -220,7 +243,11 @@ object FacultyScraper {
                 for (i in 0 until data.length()) {
                     val attrs = data.optJSONObject(i)?.optJSONObject("attributes") ?: continue
 
-                    val photoUrl = attrs.optJSONObject("Photo")?.optJSONObject("data")?.optJSONObject("attributes")?.optString("url")
+                    var photoUrl = attrs.optJSONObject("Photo")?.optJSONObject("data")?.optJSONObject("attributes")?.optString("url")
+                    if (photoUrl?.startsWith("/") == true) {
+                        val baseDomain = ApiConstants.FACULTY_API.toHttpUrl().let { "${it.scheme}://${it.host}" }
+                        photoUrl = baseDomain + photoUrl
+                    }
                     val email = attrs.optString("EMAIL").ifBlank { null }
                     val office = attrs.optString("Office_Address").ifBlank { null }
                     val research = attrs.optString("Research_area_of_specialization").ifBlank { null }
