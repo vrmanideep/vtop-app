@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -55,7 +56,9 @@ fun VtopPortalScreen(
     var sessionError by remember { mutableStateOf<String?>(null) }
 
     var activeClient by remember { mutableStateOf<VtopClient?>(null) }
-    var sessionKey by remember { mutableIntStateOf(0) }
+
+    // RememberSaveable ensures the WebView session instance survives process death.
+    var sessionKey by rememberSaveable { mutableIntStateOf(0) }
     var isAuthenticated by remember { mutableStateOf(false) }
 
     val portalPreferences = remember { context.getSharedPreferences("vtop_portal_preferences", Context.MODE_PRIVATE) }
