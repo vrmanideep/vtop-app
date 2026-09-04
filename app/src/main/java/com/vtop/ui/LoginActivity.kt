@@ -9,6 +9,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.*
+import androidx.core.content.edit
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import com.vtop.network.VtopClient
@@ -31,13 +32,14 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import kotlin.time.Duration.Companion.seconds
 
 class LoginActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val sharedPrefs = getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
+        val sharedPrefs = getSharedPreferences("VTOP_PREFS", MODE_PRIVATE)
         val isExplicitlyLoggedOut = sharedPrefs.getBoolean("IS_EXPLICITLY_LOGGED_OUT", false)
 
         val credentials = Vault.getCredentials(this)
@@ -78,7 +80,7 @@ class LoginActivity : ComponentActivity() {
 
                             override fun onLoginSubmit(regNo: String, pass: String) {
                                 Vault.saveCredentials(this@LoginActivity, regNo, pass)
-                                sharedPrefs.edit().putBoolean("IS_EXPLICITLY_LOGGED_OUT", false).apply()
+                                sharedPrefs.edit { putBoolean("IS_EXPLICITLY_LOGGED_OUT", false) }
 
                                 AuthStateManager.currentState.value = AuthState.LOADING_SEMESTERS
 
@@ -95,7 +97,7 @@ class LoginActivity : ComponentActivity() {
                                             attempts++
                                             if (attempts > 1) {
                                                 withContext(Dispatchers.Main) { AuthStateManager.loginError.value = "Retrying login ($attempts/$maxAttempts)..." }
-                                                delay(1000)
+                                                delay(1.seconds)
                                             }
 
                                             loginSuccess = client.autoLogin(this@LoginActivity, object : VtopClient.LoginListener {

@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+@SuppressWarnings("SpellCheckingInspection")
 public class Vault {
 
     private static final String TAG = "VTOP_VAULT";
@@ -64,7 +65,7 @@ public class Vault {
         SharedPreferences prefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE);
         return prefs.getString("NAV_STYLE", "DOCK");
     }
-    // Add this anywhere inside Vault.java
+
     public static void saveRegNo(Context context, String regNo) {
         context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE)
                 .edit()
@@ -144,7 +145,7 @@ public class Vault {
             }
             context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE).edit().putString("STUDENT_PROFILE_DATA", rootObj.toString()).apply();
         } catch (Exception e) {
-            e.printStackTrace();
+            Log.e(TAG, "Failed to serialize and save profile data", e);
         }
     }
 
@@ -168,7 +169,9 @@ public class Vault {
                     }
                     profileData.put(category, innerMap);
                 }
-            } catch (Exception e) { e.printStackTrace(); }
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to parse stored profile data", e);
+            }
         }
         return profileData;
     }
@@ -285,10 +288,6 @@ public class Vault {
                 .putString(KEY_LAST_SYNC, time)
                 .putLong("LAST_SYNC_TIMESTAMP", currentMillis)
                 .apply();
-    }
-
-    public static String getLastSyncTime(Context context) {
-        return context.getSharedPreferences(PUBLIC_PREFS, Context.MODE_PRIVATE).getString(KEY_LAST_SYNC, "Never");
     }
 
     public static long getLastSyncTimestamp(Context context) {
