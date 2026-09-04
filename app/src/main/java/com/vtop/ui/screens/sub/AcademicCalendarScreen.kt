@@ -74,7 +74,6 @@ data class TimelineEvent(
 )
 
 // ====================================================================
-// --- TOGGLE EVENT MERGING HERE ---
 // Set `enableMerging = true` to combine consecutive days with the same
 // description (e.g., "Instructional Day" from the 4th to the 10th).
 // Set to `false` to show every single day individually.
@@ -516,6 +515,10 @@ fun CountdownCard(modifier: Modifier, event: TimelineEvent, today: LocalDate, ac
         else -> "In $days days"
     }
 
+    // Format strictly as dd-MMM-yy (e.g., 28-Sep-26) using only the start date
+    val formatter = remember { DateTimeFormatter.ofPattern("dd-MMM-yy", Locale.ENGLISH) }
+    val exactDate = event.startDate.format(formatter)
+
     Card(
         modifier = modifier,
         shape = RoundedCornerShape(16.dp),
@@ -523,48 +526,17 @@ fun CountdownCard(modifier: Modifier, event: TimelineEvent, today: LocalDate, ac
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         border = BorderStroke(1.dp, premiumBorderColor())
     ) {
-        // Use Arrangement.SpaceBetween to distribute content evenly so cards match height
         Column(modifier = Modifier.fillMaxHeight().padding(16.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Column {
                 Text(timeText, fontSize = 18.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
                 Spacer(Modifier.height(4.dp))
-                val dateDisplay = if (event.startDate == event.endDate) "${event.displayStartDayNum} ${event.monthYearHeader.take(3)}" else "${event.displayStartDayNum}-${event.displayEndDayNum} ${event.monthYearHeader.take(3)}"
                 Text(event.title, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             Spacer(Modifier.height(8.dp))
-            Text(event.monthYearHeader, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = accentColor, letterSpacing = 0.5.sp)
+            Text(exactDate, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = accentColor, letterSpacing = 0.5.sp)
         }
     }
 }
-
-@Composable
-fun CountdownCard(modifier: Modifier, label: String, event: TimelineEvent, today: LocalDate, accentColor: Color) {
-    val days = ChronoUnit.DAYS.between(today, event.startDate)
-    val timeText = when {
-        days < 0L -> "Ongoing"
-        days == 0L -> "Today"
-        days == 1L -> "Tomorrow"
-        else -> "In $days days"
-    }
-
-    Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = premiumSurfaceColor()),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = BorderStroke(1.dp, premiumBorderColor())
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = accentColor, letterSpacing = 0.5.sp)
-            Spacer(Modifier.height(8.dp))
-            Text(timeText, fontSize = 18.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
-            Spacer(Modifier.height(4.dp))
-            val dateDisplay = if (event.startDate == event.endDate) "${event.displayStartDayNum} ${event.monthYearHeader.take(3)}" else "${event.displayStartDayNum}-${event.displayEndDayNum} ${event.monthYearHeader.take(3)}"
-            Text("${event.title} · $dateDisplay", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 16.sp)
-        }
-    }
-}
-
 @Composable
 fun TimelineEventRow(event: TimelineEvent, today: LocalDate) {
     val isToday = !today.isBefore(event.startDate) && !today.isAfter(event.endDate)
