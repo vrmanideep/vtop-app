@@ -10,6 +10,7 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,13 +31,13 @@ import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Science
-import androidx.compose.material.icons.outlined.Badge
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -53,12 +54,18 @@ import coil.compose.AsyncImage
 import com.vtop.models.FacultyEntity
 import com.vtop.network.FacultyDetails
 import com.vtop.network.FacultyScraper
+import com.vtop.network.FacultyMemoryCache
 import com.vtop.network.VtopClient
 import com.vtop.utils.AnalyticsManager
 import com.vtop.core.FacultyStorage
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
+@Composable
+fun premiumSurfaceColor(): Color = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF141414) else Color(0xFFFFFFFF)
+
+@Composable
+fun premiumBorderColor(): Color = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.08f)
 
 // Mapped exactly to the HTML acronym requirements
 fun getShortDept(dept: String?): String {
@@ -136,11 +143,20 @@ fun FacultyScreen(
                             scope.launch {
                                 refreshing = true
                                 errorMessage = null
+                                android.util.Log.d("FACULTY_SYNC", "Manual refresh triggered. Clearing memory cache and initiating scrape...")
+
+                                // 1. Wipe the in-memory deep scrape cache
+                                FacultyMemoryCache.cache.clear()
+
                                 try {
                                     val freshData = FacultyScraper.download(vtopClient)
+                                    val apiEnrichedCount = freshData.count { it.email != null || it.image != null }
+                                    android.util.Log.d("FACULTY_SYNC", "Success! HTML: ${freshData.size}. Enriched: $apiEnrichedCount.")
+
                                     FacultyStorage.saveFaculty(context, freshData)
                                     facultyList = FacultyStorage.loadFaculty(context)
                                 } catch (e: Exception) {
+                                    android.util.Log.e("FACULTY_SYNC", "Manual refresh failed", e)
                                     errorMessage = "Network error: Unable to fetch data."
                                 } finally {
                                     refreshing = false
@@ -255,21 +271,35 @@ fun FacultyCard(faculty: FacultyEntity, vtopClient: VtopClient, isExpanded: Bool
     val context = LocalContext.current
     var details by remember { mutableStateOf<FacultyDetails?>(null) }
     var isLoadingDetails by remember { mutableStateOf(false) }
+    var fetchFailed by remember { mutableStateOf(false) }
 
     LaunchedEffect(isExpanded) {
-        if (isExpanded && details == null) {
-            // Read from Disk if it was saved during Timetable Sync!
-            if (faculty.office != null || faculty.email != null) {
-                details = FacultyDetails(faculty.email, faculty.office, faculty.research, faculty.openHours ?: emptyList())
+        if (isExpanded && details?.openHours.isNullOrEmpty()) {
+            fetchFailed = false
+            isLoadingDetails = true
+
+            val fetchedDetails = FacultyScraper.fetchDetails(vtopClient, faculty.id)
+
+            if (fetchedDetails == null) {
+                fetchFailed = true
             } else {
-                isLoadingDetails = true
-                details = FacultyScraper.fetchDetails(vtopClient, faculty.id)
-                isLoadingDetails = false
+                // Merge the deep scrape results with the API data
+                details = FacultyDetails(
+                    email = faculty.email ?: fetchedDetails.email,
+                    office = faculty.office ?: fetchedDetails.office,
+                    research = faculty.research ?: fetchedDetails.research,
+                    openHours = fetchedDetails.openHours
+                )
             }
+            isLoadingDetails = false
         }
     }
 
-    Card(modifier = Modifier.fillMaxWidth().clickable { onClick() }.animateContentSize(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }.animateContentSize(),
+        colors = CardDefaults.cardColors(containerColor = premiumSurfaceColor()),
+        border = BorderStroke(1.dp, premiumBorderColor())
+    ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(modifier = Modifier.size(56.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant).clickable { onImageClick(faculty) }, contentAlignment = Alignment.Center) {
@@ -293,8 +323,20 @@ fun FacultyCard(faculty: FacultyEntity, vtopClient: VtopClient, isExpanded: Bool
             if (isExpanded) {
                 Spacer(Modifier.height(16.dp))
                 if (isLoadingDetails) {
-                    Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp) }
-                } else {
+                    Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                    }
+                } else if (fetchFailed) {
+                    Text(
+                        text = "Sync failed, refresh to sync.",
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp)
+                    )
+                }
+                else {
                     val rawOffice = details?.office ?: "N/A"
                     val formattedOffice = rawOffice.replace(";", "-")
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -330,21 +372,13 @@ fun FacultyCard(faculty: FacultyEntity, vtopClient: VtopClient, isExpanded: Bool
                             }, modifier = Modifier.size(24.dp)) { Icon(Icons.Outlined.ContentCopy, null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
                         }
                     }
-                    if (!details?.research.isNullOrBlank()) {
-                        Spacer(Modifier.height(8.dp))
-                        Row(verticalAlignment = Alignment.Top, modifier = Modifier.fillMaxWidth()) {
-                            Icon(Icons.Outlined.Science, null, modifier = Modifier.size(16.dp).padding(top = 2.dp), tint = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(8.dp))
-                            Text(details!!.research!!, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
-                        }
-                    }
 
                     if (details?.openHours?.isNotEmpty() == true) {
                         Spacer(Modifier.height(16.dp))
                         Text("Open Hours:", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.height(8.dp))
-                        Column(modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).clip(RoundedCornerShape(8.dp))) {
-                            Row(modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.5f)).padding(12.dp)) {
+                        Column(modifier = Modifier.fillMaxWidth().border(1.dp, premiumBorderColor(), RoundedCornerShape(8.dp)).clip(RoundedCornerShape(8.dp))) {
+                            Row(modifier = Modifier.fillMaxWidth().background(premiumBorderColor()).padding(12.dp)) {
                                 Text("Weekday", modifier = Modifier.weight(1f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 Text("Hours", modifier = Modifier.weight(1f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
