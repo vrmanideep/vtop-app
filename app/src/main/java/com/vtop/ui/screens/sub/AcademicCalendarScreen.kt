@@ -73,12 +73,38 @@ data class TimelineEvent(
     val monthYearHeader: String
 )
 
-data class ParsedCalendarDay(
-    val date: LocalDate,
-    val day: String,
-    val title: String,
-    val category: String
-)
+// ====================================================================
+// --- TOGGLE EVENT MERGING HERE ---
+// Set `enableMerging = true` to combine consecutive days with the same
+// description (e.g., "Instructional Day" from the 4th to the 10th).
+// Set to `false` to show every single day individually.
+// ====================================================================
+private fun mergeConsecutiveEvents(events: List<TimelineEvent>, enableMerging: Boolean = true): List<TimelineEvent> {
+    if (!enableMerging || events.isEmpty()) return events
+    val merged = mutableListOf<TimelineEvent>()
+    var current = events.first()
+
+    for (i in 1 until events.size) {
+        val next = events[i]
+
+        val isAdjacent = ChronoUnit.DAYS.between(current.endDate, next.startDate) == 1L
+        val isSameTitle = current.title.equals(next.title, ignoreCase = true)
+        val isSameMonth = current.startDate.monthValue == next.startDate.monthValue // Keeps tab filters clean
+
+        if (isAdjacent && isSameTitle && isSameMonth) {
+            current = current.copy(
+                endDate = next.endDate,
+                displayEndDayNum = next.displayEndDayNum,
+                endDay = next.endDay
+            )
+        } else {
+            merged.add(current)
+            current = next
+        }
+    }
+    merged.add(current)
+    return merged
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @SuppressLint("NewApi")
@@ -181,9 +207,9 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
             .appendPattern("d-MMM-yyyy")
             .toFormatter(Locale.ENGLISH)
         val dayNumFormatter = DateTimeFormatter.ofPattern("dd", Locale.ENGLISH)
-        val headerFormatter = DateTimeFormatter.ofPattern("MMMM yyyy", Locale.ENGLISH)
+        val headerFormatter = DateTimeFormatter.ofPattern("MMM-yyyy", Locale.ENGLISH)
 
-        rawEvents.mapNotNull { event ->
+        val unmerged = rawEvents.mapNotNull { event ->
             val safeDateStr = event.date.trim()
                 .uppercase(Locale.ENGLISH)
                 .replace(Regex("\\s+"), "")
@@ -199,7 +225,7 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                 .replace(" - General (Semester)", "")
                 .replace(" - Combined", "")
                 .replace(Regex("\\(Holiday\\)", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("\\(No Instructional Day\\)", RegexOption.IGNORE_CASE), "") // Strips redundant text
+                .replace(Regex("\\(No Instructional Day\\)", RegexOption.IGNORE_CASE), "")
                 .replace("\n", " ")
                 .replace(Regex("\\s+"), " ")
                 .trim()
@@ -227,50 +253,39 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                 monthYearHeader = dateObj.format(headerFormatter).uppercase(Locale.getDefault())
             )
         }.sortedBy { it.startDate }
+
+        // Apply dynamic merging
+        mergeConsecutiveEvents(unmerged, enableMerging = true)
     }
 
-    var selectedFilter by remember { mutableStateOf("All") }
+    val currentMonthHeader = remember(todayDate) { todayDate.format(DateTimeFormatter.ofPattern("MMM-yyyy", Locale.ENGLISH)).uppercase(Locale.getDefault()) }
 
-    // Dynamically generate filter options based on available months in the timeline
     val filterOptions = remember(parsedTimeline) {
-        listOf("All") + parsedTimeline.map { it.monthYearHeader }.distinct()
+        parsedTimeline.map { it.monthYearHeader }.distinct()
+    }
+
+    var selectedFilter by remember(filterOptions) {
+        mutableStateOf(
+            if (filterOptions.contains(currentMonthHeader)) currentMonthHeader
+            else filterOptions.firstOrNull() ?: ""
+        )
     }
 
     val filteredEvents = remember(parsedTimeline, selectedFilter) {
-        if (selectedFilter == "All") parsedTimeline
-        else parsedTimeline.filter { it.monthYearHeader == selectedFilter }
+        parsedTimeline.filter { it.monthYearHeader == selectedFilter }
     }
-
-    val groupedByMonth = remember(filteredEvents) { filteredEvents.groupBy { it.monthYearHeader } }
 
     val nextExam = remember(parsedTimeline) { parsedTimeline.firstOrNull { it.category == "Exam" && !it.endDate.isBefore(todayDate) } }
     val nextHoliday = remember(parsedTimeline) { parsedTimeline.firstOrNull { it.category == "Holiday" && !it.endDate.isBefore(todayDate) } }
 
     val listState = rememberLazyListState()
-    var showFab by remember { mutableStateOf(false) }
-
-    LaunchedEffect(filteredEvents, listState.layoutInfo.totalItemsCount) {
-        if (filteredEvents.isNotEmpty()) {
-            val todayIndex = filteredEvents.indexOfFirst { !it.endDate.isBefore(todayDate) }
-            if (todayIndex != -1) {
-                val headerOffset = groupedByMonth.keys.indexOf(filteredEvents[todayIndex].monthYearHeader)
-                listState.scrollToItem(index = todayIndex + headerOffset + 2)
-            }
-        }
-    }
-
-    LaunchedEffect(listState.firstVisibleItemIndex) {
-        val todayIndex = filteredEvents.indexOfFirst { !it.endDate.isBefore(todayDate) }
-        showFab = todayIndex != -1 && kotlin.math.abs(listState.firstVisibleItemIndex - todayIndex) > 5
-    }
-    val firstUpcomingEvent = remember(filteredEvents) {
-        filteredEvents.firstOrNull { !it.endDate.isBefore(todayDate) }
-    }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Academic Calendar", fontSize = 20.sp, fontWeight = FontWeight.Black) },
+                title = {
+                    Text("Academic Calendar", fontSize = 20.sp, fontWeight = FontWeight.Black)
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack, modifier = Modifier.padding(start = 4.dp)) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -304,22 +319,27 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
             )
         },
         floatingActionButton = {
+            val showFab = remember(listState.firstVisibleItemIndex, selectedFilter, filterOptions) {
+                if (selectedFilter == currentMonthHeader) {
+                    val todayIndex = filteredEvents.indexOfFirst { !it.endDate.isBefore(todayDate) }
+                    todayIndex != -1 && kotlin.math.abs(listState.firstVisibleItemIndex - (todayIndex + 1)) > 5
+                } else {
+                    filterOptions.contains(currentMonthHeader)
+                }
+            }
+
             AnimatedVisibility(visible = showFab, enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()) {
                 ExtendedFloatingActionButton(
                     onClick = {
-                        // 1. Reset the filter to "All" so the current date exists in the list
-                        selectedFilter = "All"
-
-                        coroutineScope.launch {
-                            // 2. Give Compose a fraction of a second to rebuild the full list
-                            kotlinx.coroutines.delay(50)
-
-                            val todayIndex = parsedTimeline.indexOfFirst { !it.endDate.isBefore(todayDate) }
-                            if (todayIndex != -1) {
-                                // Calculate offset based on the newly restored full list
-                                val fullGrouped = parsedTimeline.groupBy { it.monthYearHeader }
-                                val headerOffset = fullGrouped.keys.indexOf(parsedTimeline[todayIndex].monthYearHeader)
-                                listState.scrollToItem(index = todayIndex + headerOffset + 2)
+                        if (filterOptions.contains(currentMonthHeader)) {
+                            selectedFilter = currentMonthHeader
+                            coroutineScope.launch {
+                                kotlinx.coroutines.delay(50)
+                                val todayIndex = parsedTimeline.filter { it.monthYearHeader == currentMonthHeader }
+                                    .indexOfFirst { !it.endDate.isBefore(todayDate) }
+                                if (todayIndex != -1) {
+                                    listState.scrollToItem(index = todayIndex + 1)
+                                }
                             }
                         }
                     },
@@ -339,7 +359,7 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                 val yearTabs = groupedSemesters.keys.toList()
                 var selectedYearTab by remember { mutableStateOf(extractYearFromSemId(selectedSemId).takeIf { yearTabs.contains(it) } ?: yearTabs.firstOrNull() ?: "") }
 
-                ModalBottomSheet(onDismissRequest = { showSemesterSheet = false }, sheetState = sheetState, containerColor = MaterialTheme.colorScheme.surface) {
+                ModalBottomSheet(onDismissRequest = { showSemesterSheet = false }, sheetState = sheetState, containerColor = premiumSurfaceColor()) {
                     Column(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.7f)) {
                         Text("Select Semester", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 16.dp))
                         if (isFetchingSemesters) {
@@ -413,73 +433,65 @@ fun AcademicCalendarScreen(onBack: () -> Unit) {
                 }
             }
             else {
+                if (filterOptions.isNotEmpty()) {
+                    CategoryFilters(
+                        options = filterOptions,
+                        selectedOption = selectedFilter,
+                        onOptionSelected = { selectedFilter = it }
+                    )
+                }
+
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 80.dp, start = 16.dp, end = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                )
-                {
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     item {
                         if (nextExam != null || nextHoliday != null) {
                             NextEventDashboard(nextExam, nextHoliday, todayDate)
+                            Spacer(Modifier.height(4.dp))
                         }
-                        CategoryFilters(options = filterOptions, selectedOption = selectedFilter, onOptionSelected = { selectedFilter = it })
                     }
 
                     if (filteredEvents.isEmpty()) {
-                        item { Text("No events scheduled for $selectedFilter.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth().padding(32.dp), textAlign = TextAlign.Center) }
-                    } else {
-                        groupedByMonth.forEach { (monthHeader, eventsInMonth) ->
-                            stickyHeader {
-                                Box(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = monthHeader,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Black,
-                                        letterSpacing = 2.sp,
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(16.dp))
-                                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                                    )
-                                }
-                            }
-
-                            // Use `items(items = ...)` to safely check against the specific event
-                            items(items = eventsInMonth) { event ->
-                                if (event == firstUpcomingEvent) {
-                                    TodayMarkerPill()
-                                }
-
-                                TimelineEventRow(event)
-                            }
+                        item {
+                            Text("No events scheduled for $selectedFilter.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth().padding(32.dp), textAlign = TextAlign.Center)
                         }
-
-                        // If today is past all the events in the list, place it at the very bottom
-                        if (firstUpcomingEvent == null && selectedFilter == "All") {
-                            item { TodayMarkerPill() }
+                    } else {
+                        items(items = filteredEvents) { event ->
+                            TimelineEventRow(event = event, today = todayDate)
                         }
                     }
                 }
+            }
+        }
     }
-    }
-}
 }
 
 @Composable
 fun CategoryFilters(options: List<String>, selectedOption: String, onOptionSelected: (String) -> Unit) {
-    LazyRow(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp, top = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp)
+    ) {
         items(items = options) { option ->
             val isSelected = option == selectedOption
-            val bgColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
-            val textColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-            Box(modifier = Modifier.clip(RoundedCornerShape(24.dp)).background(bgColor).clickable { onOptionSelected(option) }.padding(horizontal = 20.dp, vertical = 8.dp)) {
-                Text(option, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            val bgColor = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else premiumSurfaceColor()
+            val textColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+            val borderColor = if (isSelected) MaterialTheme.colorScheme.primary else premiumBorderColor()
+            val textWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(bgColor)
+                    .border(1.dp, borderColor, RoundedCornerShape(24.dp))
+                    .clickable { onOptionSelected(option) }
+                    .padding(horizontal = 20.dp, vertical = 10.dp)
+            ) {
+                Text(option, color = textColor, fontSize = 13.sp, fontWeight = textWeight)
             }
         }
     }
@@ -487,9 +499,41 @@ fun CategoryFilters(options: List<String>, selectedOption: String, onOptionSelec
 
 @Composable
 fun NextEventDashboard(nextExam: TimelineEvent?, nextHoliday: TimelineEvent?, today: LocalDate) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (nextExam != null) CountdownCard(Modifier.weight(1f), "NEXT EXAM", nextExam, today, Color(0xFF8B5CF6))
-        if (nextHoliday != null) CountdownCard(Modifier.weight(1f), "NEXT HOLIDAY", nextHoliday, today, Color(0xFF4ADE80))
+    // Modifier.height(IntrinsicSize.Max) forces both cards to match the height of the taller one
+    Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (nextExam != null) CountdownCard(Modifier.weight(1f).fillMaxHeight(), nextExam, today, Color(0xFF8B5CF6))
+        if (nextHoliday != null) CountdownCard(Modifier.weight(1f).fillMaxHeight(), nextHoliday, today, Color(0xFF4ADE80))
+    }
+}
+
+@Composable
+fun CountdownCard(modifier: Modifier, event: TimelineEvent, today: LocalDate, accentColor: Color) {
+    val days = ChronoUnit.DAYS.between(today, event.startDate)
+    val timeText = when {
+        days < 0L -> "Ongoing"
+        days == 0L -> "Today"
+        days == 1L -> "Tomorrow"
+        else -> "In $days days"
+    }
+
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = premiumSurfaceColor()),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(1.dp, premiumBorderColor())
+    ) {
+        // Use Arrangement.SpaceBetween to distribute content evenly so cards match height
+        Column(modifier = Modifier.fillMaxHeight().padding(16.dp), verticalArrangement = Arrangement.SpaceBetween) {
+            Column {
+                Text(timeText, fontSize = 18.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+                Spacer(Modifier.height(4.dp))
+                val dateDisplay = if (event.startDate == event.endDate) "${event.displayStartDayNum} ${event.monthYearHeader.take(3)}" else "${event.displayStartDayNum}-${event.displayEndDayNum} ${event.monthYearHeader.take(3)}"
+                Text(event.title, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(event.monthYearHeader, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = accentColor, letterSpacing = 0.5.sp)
+        }
     }
 }
 
@@ -506,9 +550,9 @@ fun CountdownCard(modifier: Modifier, label: String, event: TimelineEvent, today
     Card(
         modifier = modifier,
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        colors = CardDefaults.cardColors(containerColor = premiumSurfaceColor()),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(1.dp, premiumBorderColor())
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = accentColor, letterSpacing = 0.5.sp)
@@ -516,93 +560,98 @@ fun CountdownCard(modifier: Modifier, label: String, event: TimelineEvent, today
             Text(timeText, fontSize = 18.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(4.dp))
             val dateDisplay = if (event.startDate == event.endDate) "${event.displayStartDayNum} ${event.monthYearHeader.take(3)}" else "${event.displayStartDayNum}-${event.displayEndDayNum} ${event.monthYearHeader.take(3)}"
-            // Removed maxLines and overflow constraints, added lineHeight for readability
             Text("${event.title} · $dateDisplay", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 16.sp)
         }
     }
 }
+
 @Composable
-fun TodayMarkerPill() {
-    Box(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-        contentAlignment = Alignment.Center
+fun TimelineEventRow(event: TimelineEvent, today: LocalDate) {
+    val isToday = !today.isBefore(event.startDate) && !today.isAfter(event.endDate)
+
+    val isHoliday = event.category.equals("Holiday", true)
+    val isNoInstructional = event.title.contains("No Instructional", true)
+    val isInstructional = event.title.contains("Instructional Day", true) && !isNoInstructional
+    val isExam = event.category.equals("Exam", true)
+
+    val cardBg = if (isToday) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f) else premiumSurfaceColor()
+    val cardBorder = if (isToday) MaterialTheme.colorScheme.primary.copy(alpha = 0.7f) else premiumBorderColor()
+
+    val dotColor = when {
+        isHoliday -> Color(0xFFF59E0B) // Orange
+        isExam -> Color(0xFF8B5CF6) // Purple
+        isInstructional -> Color.Transparent
+        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) // Gray for No Instructional Day/Misc
+    }
+
+    val isMultiDay = event.startDate != event.endDate
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = cardBg),
+        border = BorderStroke(1.dp, cardBorder)
     ) {
-        Text(
-            text = "TODAY • ${LocalDate.now().format(DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.ENGLISH)).uppercase(Locale.getDefault())}",
-            color = MaterialTheme.colorScheme.onSecondaryContainer,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Black,
-            letterSpacing = 1.sp,
-            modifier = Modifier
-                .clip(RoundedCornerShape(16.dp))
-                .background(MaterialTheme.colorScheme.secondaryContainer) // Opaque to prevent overlapping ghost text
-                .padding(horizontal = 16.dp, vertical = 6.dp)
-        )
-    }
-}
-
-@Composable
-fun TimelineEventRow(event: TimelineEvent) {
-    val indicatorColor = when {
-        event.category.equals("Exam", true) -> Color(0xFF8B5CF6)
-        event.category.equals("Event", true) -> Color(0xFF3B82F6)
-        else -> Color(0xFF4ADE80)
-    }
-
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        // Left Column: Date
-        Column(
-            modifier = Modifier.width(56.dp).padding(end = 12.dp),
-            horizontalAlignment = Alignment.End
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp, horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(event.displayStartDayNum, fontSize = 18.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
-            Text(event.startDay.uppercase(Locale.getDefault()).take(3), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-        }
-
-        // Middle Column: Disconnected Node
-        Box(
-            modifier = Modifier
-                .size(10.dp)
-                .background(indicatorColor, CircleShape)
-        )
-
-        // Right Column: Card
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .padding(start = 16.dp)
-        ) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            // Flexible width container to prevent line-wrapping on double digits
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.widthIn(min = 48.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                if (isMultiDay) {
                     Text(
-                        text = event.title,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 15.sp,
+                        text = "${event.displayStartDayNum.toInt()}-${event.displayEndDayNum.toInt()}",
+                        fontSize = 17.sp, // Scaled down slightly to fit cleanly
                         fontWeight = FontWeight.Medium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        softWrap = false
                     )
-                    Spacer(Modifier.height(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .background(indicatorColor.copy(alpha = 0.2f), RoundedCornerShape(6.dp))
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = event.category.uppercase(Locale.getDefault()),
-                            color = indicatorColor,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Black,
-                            letterSpacing = 0.5.sp
-                        )
-                    }
+                    val dayRange = "${event.startDay.uppercase(Locale.getDefault()).take(3)}-${event.endDay.uppercase(Locale.getDefault()).take(3)}"
+                    Text(
+                        text = dayRange,
+                        fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                } else {
+                    Text(
+                        text = event.displayStartDayNum,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                    Text(
+                        text = event.startDay.uppercase(Locale.getDefault()).take(3),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
+            }
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            Text(
+                text = event.title,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Normal,
+                modifier = Modifier.weight(1f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            if (dotColor != Color.Transparent) {
+                Box(modifier = Modifier.size(6.dp).background(dotColor, CircleShape))
             }
         }
     }
