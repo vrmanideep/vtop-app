@@ -1,3 +1,4 @@
+@file:Suppress("SpellCheckingInspection")
 package com.vtop.ui.screens.main
 
 import android.content.Context
@@ -25,7 +26,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -58,7 +58,9 @@ import java.util.Locale
 import java.util.zip.GZIPOutputStream
 import kotlin.math.roundToInt
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 
 private val MarksPrimaryAccent = Color(0xFF0090FF)
 private val MarksColorSuccess = Color(0xFF4ADE80)
@@ -93,8 +95,8 @@ data class UiMark(
     val components: List<UiMarkComponent>
 )
 
-private fun getGradeColor(grade: String?): Color {
-    return when (grade?.trim()?.uppercase(Locale.getDefault())) {
+private fun getGradeColor(grade: String): Color {
+    return when (grade.trim().uppercase(Locale.getDefault())) {
         "S" -> MarksColorSGrade
         "A" -> MarksColorAGrade
         "B" -> MarksColorBGrade
@@ -116,8 +118,8 @@ private fun getMarksColor(gained: Double, total: Double): Color {
     }
 }
 
-private fun getCourseTypePriority(type: String?): Int {
-    val t = type?.uppercase(Locale.getDefault()) ?: ""
+private fun getCourseTypePriority(type: String): Int {
+    val t = type.uppercase(Locale.getDefault())
     return when {
         t.contains("TH") || t.contains("ETH") || t.contains("THEORY") -> 0
         t.contains("LO") || t.contains("ELA") || t.contains("LAB") -> 1
@@ -128,24 +130,24 @@ private fun getCourseTypePriority(type: String?): Int {
 
 private fun getBestAttemptTotals(mark: CourseMark): Pair<Double, Double> {
     val detailsList = mark.details
-    if (detailsList.isNullOrEmpty()) {
-        return Pair(mark.totalWeightageMark ?: 0.0, mark.totalWeightagePercent ?: 0.0)
+    if (detailsList.isEmpty()) {
+        return Pair(mark.totalWeightageMark, mark.totalWeightagePercent)
     }
     val groups = detailsList.groupBy { detail ->
-        detail.title?.replace("Re Evaluation ", "", ignoreCase = true)?.trim()?.uppercase() ?: ""
+        detail.title.replace("Re Evaluation ", "", ignoreCase = true).trim().uppercase()
     }
     var totalGained = 0.0
     var totalMax = 0.0
     groups.forEach { (_, detailsInGroup) ->
-        val bestAttempt = detailsInGroup.maxByOrNull { it.weightageMark ?: 0.0 }
+        val bestAttempt = detailsInGroup.maxByOrNull { it.weightageMark }
         totalGained += bestAttempt?.weightageMark ?: 0.0
         totalMax += bestAttempt?.weightagePercent ?: 0.0
     }
     return Pair(totalGained, totalMax)
 }
 
-private fun getGradePoints(grade: String?): Int {
-    return when (grade?.trim()?.uppercase(Locale.getDefault())) {
+private fun getGradePoints(grade: String): Int {
+    return when (grade.trim().uppercase(Locale.getDefault())) {
         "S" -> 10
         "A" -> 9
         "B" -> 8
@@ -163,7 +165,7 @@ private fun calculateSemesterGPA(courses: List<GradeHistoryItem>): Double {
     courses.forEach { course ->
         val pts = getGradePoints(course.grade)
         if (pts >= 0) {
-            val cred = course.credits?.toDoubleOrNull() ?: 0.0
+            val cred = course.credits.toDoubleOrNull() ?: 0.0
             totalPoints += (pts * cred)
             totalCredits += cred
         }
@@ -180,7 +182,7 @@ private fun parseExamMonth(month: String): YearMonth {
         }
         val formatter = DateTimeFormatter.ofPattern("MMM-yyyy", Locale.ENGLISH)
         YearMonth.parse(cleanMonth, formatter)
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         YearMonth.of(1900, 1)
     }
 }
@@ -189,8 +191,7 @@ private fun parseExamMonth(month: String): YearMonth {
 fun Marks(
     marksData: List<CourseMark>,
     historySummary: CGPASummary?,
-    historyData: List<GradeHistoryItem>,
-    onHistoryLoad: () -> Unit
+    historyData: List<GradeHistoryItem>
 ) {
     LaunchedEffect(Unit) {
         AnalyticsManager.logScreenView("Marks_Screen")
@@ -202,7 +203,7 @@ fun Marks(
     val pagerState = rememberPagerState(pageCount = { 2 })
     val coroutineScope = rememberCoroutineScope()
 
-    val groupedHistory = remember(historyData) { historyData.groupBy { it.examMonth ?: "Unknown Semester" } }
+    val groupedHistory = remember(historyData) { historyData.groupBy { it.examMonth.ifEmpty { "Unknown Semester" } } }
     val expandedStates = remember(groupedHistory) {
         androidx.compose.runtime.mutableStateMapOf<String, Boolean>().apply {
             groupedHistory.keys.forEach { this[it] = true }
@@ -266,13 +267,13 @@ fun Marks(
                             "courses" to historyData.mapIndexed { index, item ->
                                 mapOf(
                                     "id" to index,
-                                    "course_code" to (item.courseCode ?: ""),
-                                    "course_title" to (item.courseTitle ?: ""),
-                                    "course_type" to (item.courseType ?: ""),
-                                    "credits" to (item.credits?.toString()?.toDoubleOrNull()?.toInt() ?: 0),
-                                    "grade" to (item.grade ?: ""),
-                                    "exam_month" to (item.examMonth ?: ""),
-                                    "course_distribution" to (item.courseDistribution ?: "")
+                                    "course_code" to item.courseCode,
+                                    "course_title" to item.courseTitle,
+                                    "course_type" to item.courseType,
+                                    "credits" to (item.credits.toDoubleOrNull()?.toInt() ?: 0),
+                                    "grade" to item.grade,
+                                    "exam_month" to item.examMonth,
+                                    "course_distribution" to item.courseDistribution
                                 )
                             }
                         )
@@ -313,7 +314,7 @@ fun Marks(
 @Composable
 fun CurrentSemesterMarksView(marksData: List<CourseMark>, mergeMarks: Boolean) {
     if (marksData.isEmpty()) {
-        val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+        val screenHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -339,15 +340,15 @@ fun CurrentSemesterMarksView(marksData: List<CourseMark>, mergeMarks: Boolean) {
     } else {
         val uiMarks = remember(marksData, mergeMarks) {
             val list = mutableListOf<UiMark>()
-            val grouped = marksData.groupBy { it.courseCode?.trim() ?: "" }
+            val grouped = marksData.groupBy { it.courseCode.trim() }
 
             grouped.forEach { (code, groupMarks) ->
                 val eth = groupMarks.find {
-                    val t = it.courseType?.uppercase(Locale.getDefault()) ?: ""
+                    val t = it.courseType.uppercase(Locale.getDefault())
                     t.contains("ETH") || t.contains("THEORY")
                 }
                 val elaOrEpj = groupMarks.find {
-                    val t = it.courseType?.uppercase(Locale.getDefault()) ?: ""
+                    val t = it.courseType.uppercase(Locale.getDefault())
                     t.contains("ELA") || t.contains("EPJ") || t.contains("PJT") || t.contains("LAB") || t.contains("PROJECT")
                 }
 
@@ -358,28 +359,28 @@ fun CurrentSemesterMarksView(marksData: List<CourseMark>, mergeMarks: Boolean) {
                     val finalGained = (thTotals.first * 0.75) + (pracTotals.first * 0.25)
                     val finalMax = (thTotals.second * 0.75) + (pracTotals.second * 0.25)
 
-                    val isLab = elaOrEpj.courseType?.uppercase(Locale.getDefault())?.contains("LAB") == true || elaOrEpj.courseType?.uppercase(Locale.getDefault())?.contains("ELA") == true
+                    val isLab = elaOrEpj.courseType.uppercase(Locale.getDefault()).contains("LAB") || elaOrEpj.courseType.uppercase(Locale.getDefault()).contains("ELA")
                     val pracName = if (isLab) "Lab" else "Project"
 
                     val thComponent = UiMarkComponent(
                         name = "Theory",
                         gainedRaw = thTotals.first,
                         totalRaw = thTotals.second,
-                        details = eth.details?.map { d -> UiMarkDetail(d.title ?: "", "${d.scoredMark ?: "--"} / ${d.maxMark ?: "--"}", "${d.weightageMark ?: "--"} / ${d.weightagePercent ?: "--"}") } ?: emptyList()
+                        details = eth.details.map { d -> UiMarkDetail(d.title, "${d.scoredMark} / ${d.maxMark}", "${d.weightageMark} / ${d.weightagePercent}") }
                     )
 
                     val pracComponent = UiMarkComponent(
                         name = pracName,
                         gainedRaw = pracTotals.first,
                         totalRaw = pracTotals.second,
-                        details = elaOrEpj.details?.map { d -> UiMarkDetail(d.title ?: "", "${d.scoredMark ?: "--"} / ${d.maxMark ?: "--"}", "${d.weightageMark ?: "--"} / ${d.weightagePercent ?: "--"}") } ?: emptyList()
+                        details = elaOrEpj.details.map { d -> UiMarkDetail(d.title, "${d.scoredMark} / ${d.maxMark}", "${d.weightageMark} / ${d.weightagePercent}") }
                     )
 
                     list.add(
                         UiMark(
                             courseCode = code,
                             courseType = "Theory + $pracName",
-                            courseTitle = eth.courseTitle ?: "",
+                            courseTitle = eth.courseTitle,
                             gainedRaw = finalGained,
                             totalRaw = finalMax,
                             components = listOf(thComponent, pracComponent)
@@ -389,16 +390,16 @@ fun CurrentSemesterMarksView(marksData: List<CourseMark>, mergeMarks: Boolean) {
                     groupMarks.filter { it != eth && it != elaOrEpj }.forEach { remaining ->
                         val remTotals = getBestAttemptTotals(remaining)
                         val comp = UiMarkComponent(
-                            name = remaining.courseType ?: "Assessments",
+                            name = remaining.courseType,
                             gainedRaw = remTotals.first,
                             totalRaw = remTotals.second,
-                            details = remaining.details?.map { d -> UiMarkDetail(d.title ?: "", "${d.scoredMark ?: "--"} / ${d.maxMark ?: "--"}", "${d.weightageMark ?: "--"} / ${d.weightagePercent ?: "--"}") } ?: emptyList()
+                            details = remaining.details.map { d -> UiMarkDetail(d.title, "${d.scoredMark} / ${d.maxMark}", "${d.weightageMark} / ${d.weightagePercent}") }
                         )
                         list.add(
                             UiMark(
                                 courseCode = code,
-                                courseType = remaining.courseType ?: "",
-                                courseTitle = remaining.courseTitle ?: "",
+                                courseType = remaining.courseType,
+                                courseTitle = remaining.courseTitle,
                                 gainedRaw = remTotals.first,
                                 totalRaw = remTotals.second,
                                 components = listOf(comp)
@@ -412,13 +413,13 @@ fun CurrentSemesterMarksView(marksData: List<CourseMark>, mergeMarks: Boolean) {
                             name = "Assessments",
                             gainedRaw = totals.first,
                             totalRaw = totals.second,
-                            details = mark.details?.map { d -> UiMarkDetail(d.title ?: "", "${d.scoredMark ?: "--"} / ${d.maxMark ?: "--"}", "${d.weightageMark ?: "--"} / ${d.weightagePercent ?: "--"}") } ?: emptyList()
+                            details = mark.details.map { d -> UiMarkDetail(d.title, "${d.scoredMark} / ${d.maxMark}", "${d.weightageMark} / ${d.weightagePercent}") }
                         )
                         list.add(
                             UiMark(
                                 courseCode = code,
-                                courseType = mark.courseType ?: "",
-                                courseTitle = mark.courseTitle ?: "",
+                                courseType = mark.courseType,
+                                courseTitle = mark.courseTitle,
                                 gainedRaw = totals.first,
                                 totalRaw = totals.second,
                                 components = listOf(comp)
@@ -572,21 +573,22 @@ fun AcademicHistoryView(
         }
     }
 
-    val filterOptions = remember(formattedMonthsMap) {
-        listOf("All") + groupedHistory.keys.mapNotNull { formattedMonthsMap[it] }.sortedDescending()
+    val filterOptions = remember(formattedMonthsMap, groupedHistory) {
+        val sortedMonths = groupedHistory.keys.sortedByDescending { parseExamMonth(it) }
+        listOf("All") + sortedMonths.mapNotNull { formattedMonthsMap[it] }
     }
 
     val filteredHistory = remember(historyData, searchQuery, selectedFilter, formattedMonthsMap) {
         historyData.filter { item ->
             val q = searchQuery.trim().lowercase()
             val matchesSearch = q.isBlank() ||
-                    item.courseCode.orEmpty().lowercase().contains(q) ||
-                    item.courseTitle.orEmpty().lowercase().contains(q) ||
-                    item.courseType.orEmpty().lowercase().contains(q) ||
-                    item.grade.orEmpty().lowercase().contains(q) ||
-                    item.credits.orEmpty().lowercase().contains(q)
+                    item.courseCode.lowercase().contains(q) ||
+                    item.courseTitle.lowercase().contains(q) ||
+                    item.courseType.lowercase().contains(q) ||
+                    item.grade.lowercase().contains(q) ||
+                    item.credits.lowercase().contains(q)
 
-            val itemFormattedMonth = formattedMonthsMap[item.examMonth] ?: ""
+            val itemFormattedMonth = formattedMonthsMap[item.examMonth.ifEmpty { "Unknown Semester" }] ?: ""
             val matchesFilter = selectedFilter == "All" || selectedFilter == itemFormattedMonth
 
             matchesSearch && matchesFilter
@@ -595,15 +597,15 @@ fun AcademicHistoryView(
 
     val sortedAndGroupedHistory = remember(filteredHistory) {
         filteredHistory
-            .sortedByDescending { parseExamMonth(it.examMonth ?: "Jan-1900") }
-            .groupBy { it.examMonth ?: "Unknown Semester" }
+            .sortedByDescending { parseExamMonth(it.examMonth) }
+            .groupBy { it.examMonth.ifEmpty { "Unknown Semester" } }
     }
 
     // --- GRADE COUNTING LOGIC ---
     val gradeCounts = remember(historyData) {
         val counts = mutableMapOf<String, Int>()
         historyData.forEach { item ->
-            val grade = item.grade?.trim()?.uppercase() ?: return@forEach
+            val grade = item.grade.trim().uppercase()
             counts[grade] = (counts[grade] ?: 0) + 1
         }
         // Sort in logical academic order
@@ -702,7 +704,7 @@ fun AcademicHistoryView(
             )
         }
 
-        // 3. Dynamic Semester Filters
+        // 3. Dynamic Semester Filters (M3 Filter Chips)
         item {
             LazyRow(
                 modifier = Modifier.fillMaxWidth(),
@@ -710,20 +712,24 @@ fun AcademicHistoryView(
             ) {
                 items(filterOptions) { option ->
                     val isSelected = selectedFilter == option
-                    val bg = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surface
-                    val border = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
-                    val fg = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(bg)
-                            .border(1.dp, border, RoundedCornerShape(12.dp))
-                            .clickable { selectedFilter = option }
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                    ) {
-                        Text(text = option, color = fg, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    }
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { selectedFilter = option },
+                        label = { Text(text = option, fontSize = 13.sp, fontWeight = FontWeight.Bold) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
+                        shape = RoundedCornerShape(16.dp),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = isSelected,
+                            borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f),
+                            selectedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                        )
+                    )
                 }
             }
         }
@@ -788,7 +794,7 @@ fun AcademicHistoryView(
 @Composable
 fun EnhancedHistoryItemCard(course: GradeHistoryItem) {
     val gradeColor = getGradeColor(course.grade)
-    val isLabOrProject = course.courseType?.contains("Lab", true) == true || course.courseType?.contains("Project", true) == true
+    val isLabOrProject = course.courseType.contains("Lab", true) || course.courseType.contains("Project", true)
 
     Card(
         modifier = Modifier
@@ -825,14 +831,14 @@ fun EnhancedHistoryItemCard(course: GradeHistoryItem) {
 
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = course.courseTitle ?: course.courseCode ?: "",
+                            text = course.courseTitle.ifEmpty { course.courseCode },
                             color = MaterialTheme.colorScheme.onSurface,
                             fontSize = 15.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            text = "${course.courseCode} • ${course.credits ?: "0"} Credits",
+                            text = "${course.courseCode} • ${course.credits} Credits",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Normal
@@ -849,7 +855,7 @@ fun EnhancedHistoryItemCard(course: GradeHistoryItem) {
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = course.grade ?: "-",
+                            text = course.grade,
                             color = gradeColor,
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold

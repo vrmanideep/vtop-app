@@ -8,7 +8,6 @@ import android.app.AlarmManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
@@ -45,15 +44,15 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.glance.appwidget.updateAll
 import androidx.navigation.NavController
@@ -63,18 +62,18 @@ import com.composables.icons.lucide.CalendarDays
 import com.composables.icons.lucide.ChartNoAxesColumnIncreasing
 import com.composables.icons.lucide.CircleCheck
 import com.composables.icons.lucide.Globe
-import com.composables.icons.lucide.GraduationCap
 import com.composables.icons.lucide.House
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.User
 import com.vtop.core.*
-import com.vtop.models.*
+import com.vtop.logic.AttendanceSyncEngine
+import com.vtop.logic.AttendanceSyncMode
+import com.vtop.logic.TimetableParser
+import com.vtop.services.TTExport
 import com.vtop.sync.SyncManager
 import com.vtop.ui.components.OtpForm
-import com.vtop.ui.theme.AppColors
-import com.vtop.ui.theme.AppThemeMode
-import com.vtop.ui.theme.DockPosition
-import com.vtop.ui.theme.ThemeManager
+import com.vtop.ui.screens.portal.VtopPortalScreen
+import com.vtop.ui.theme.*
 import com.vtop.utils.Vault
 import com.vtop.widget.NextClassWidget
 import com.vtop.ui.viewmodels.MainViewModel
@@ -155,10 +154,9 @@ fun MainScreen(
         if (uiState.showPortal) viewModel.updatePortalVisibility(false) else viewModel.updateTab("HOME")
     }
 
-    val config = LocalConfiguration.current
-    val density = LocalDensity.current
-    val screenWidthPx = with(density) { config.screenWidthDp.dp.toPx() }
-    val screenHeightPx = with(density) { config.screenHeightDp.dp.toPx() }
+    val windowInfo = LocalWindowInfo.current
+    val screenWidthPx = windowInfo.containerSize.width.toFloat()
+    val screenHeightPx = windowInfo.containerSize.height.toFloat()
 
     val isRefreshing by remember { derivedStateOf { syncStatus != "IDLE" } }
     val pullRefreshState = rememberPullRefreshState(refreshing = isRefreshing, onRefresh = { handleSyncAndUpdateWidget(uiState.currentTab, false) })
@@ -192,7 +190,7 @@ fun MainScreen(
                     }
                     "ATTENDANCE" -> { Attendance(attendanceData = attendanceData, onLaunchSimulator = { navController.navigate("simulator") }) }
                     "EXAMS" -> { Exams(examsData) }
-                    "MARKS" -> { Marks(marksData = marksData, historySummary = historySummary, historyData = historyItems, onHistoryLoad = {}) }
+                    "MARKS" -> { Marks(marksData = marksData, historySummary = historySummary, historyData = historyItems) }
                     "OUTINGS" -> { VtopOutingsTab(outingsData = outingsData, handler = outingHandler) }
                     "PROFILE" -> {
                         val profileMap = profileStateValue?.takeIf { it.isNotEmpty() } ?: Vault.getProfile(context)
@@ -255,7 +253,7 @@ fun MainScreen(
                                     viewModel.updateForceAttSync(true)
                                     coroutineScope.launch(Dispatchers.IO) {
                                         try {
-                                            com.vtop.logic.AttendanceSyncEngine.sync(context, vtopClient, semId, authorizedId, com.vtop.logic.AttendanceSyncMode.FORCE_FULL, "ATT_FORCE")
+                                            AttendanceSyncEngine.sync(context, vtopClient, semId, authorizedId, AttendanceSyncMode.FORCE_FULL, "ATT_FORCE")
                                             withContext(Dispatchers.Main) { Toast.makeText(context, "Attendance synced", Toast.LENGTH_SHORT).show() }
                                         } finally {
                                             withContext(Dispatchers.Main) { viewModel.updateForceAttSync(false) }
@@ -273,7 +271,7 @@ fun MainScreen(
                                         try {
                                             val html = vtopClient.fetchTimetableRawHtml(semId, null)
                                             if (!html.isNullOrBlank()) {
-                                                com.vtop.core.TimetableRepository.update(context, com.vtop.logic.TimetableParser.parse(html))
+                                                TimetableRepository.update(context, TimetableParser.parse(html))
                                                 withContext(Dispatchers.Main) { Toast.makeText(context, "Timetable synced successfully", Toast.LENGTH_SHORT).show() }
                                             }
                                         } finally {
@@ -306,7 +304,7 @@ fun MainScreen(
                     Toast.makeText(context, "Generating Timetable Image...", Toast.LENGTH_SHORT).show()
 
                     coroutineScope.launch(Dispatchers.Main) {
-                        val result = com.vtop.services.TTExport.exportCurrentSemesterTimetable(context, vtopClient)
+                        val result = TTExport.exportCurrentSemesterTimetable(context, vtopClient)
 
                         if (result.isSuccess) {
                             Toast.makeText(context, "Saved to Downloads folder!", Toast.LENGTH_SHORT).show()
@@ -320,7 +318,7 @@ fun MainScreen(
                                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                     }
                                     context.startActivity(intent)
-                                } catch (e: Exception) {
+                                } catch (_: Exception) {
                                     Toast.makeText(context, "No app found to open images.", Toast.LENGTH_SHORT).show()
                                 }
                             }
@@ -389,7 +387,7 @@ fun MainScreen(
         ) {
             val portalClient = SessionManager.getPortalClient()
             if (portalClient != null) {
-                com.vtop.ui.screens.portal.VtopPortalScreen(vtopClient = portalClient, onBack = { viewModel.updatePortalVisibility(false) })
+                VtopPortalScreen(vtopClient = portalClient, onBack = { viewModel.updatePortalVisibility(false) })
             } else {
                 LaunchedEffect(Unit) {
                     val (newClient, _) = SessionManager.createClient(context, SessionType.PORTAL)
@@ -399,19 +397,6 @@ fun MainScreen(
                     Text("Preparing VTOP Session...", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-        }
-    }
-}
-
-@Composable
-fun SemesterCompletedView() {
-    Box(Modifier.fillMaxSize(), Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Lucide.GraduationCap, contentDescription = "Semester Completed", modifier = Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
-            Spacer(Modifier.height(24.dp))
-            Text("Semester Completed", fontWeight = FontWeight.Black, fontSize = 24.sp, color = MaterialTheme.colorScheme.onBackground)
-            Spacer(Modifier.height(8.dp))
-            Text("Awaiting next semester registration...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
         }
     }
 }
@@ -440,7 +425,7 @@ fun GlobalTopBar(currentScreen: String, onProfileClick: () -> Unit, onExportTime
                         else -> "Synced ${diffMinutes / 1440L} days ago"
                     }
                 }
-                delay(60_000L)
+                delay(60.seconds)
             }
         }
     }
@@ -590,7 +575,7 @@ fun HomepagePermissionHandler() {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
                     if (!alarmManager.canScheduleExactAlarms()) {
-                        val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply { data = Uri.parse("package:${context.packageName}") }
+                        val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply { data = "package:${context.packageName}".toUri() }
                         alarmLauncher.launch(intent)
                     } else { currentStep = 2 }
                 } else { currentStep = 2 }
