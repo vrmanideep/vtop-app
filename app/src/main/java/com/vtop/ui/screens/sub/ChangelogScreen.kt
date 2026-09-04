@@ -35,6 +35,29 @@ data class ReleaseLog(
 
 val releaseHistory = listOf(
     ReleaseLog(
+        version = "Version 1.2.0",
+        tag = "v1.2.0",
+        date = "04 Sep 2026",
+        features = listOf(
+            "Implemented process death recovery, reactive cookie sync, and a native PDF viewer for the VTOP portal.",
+            "Added swipe-to-dismiss functionality for in-app download notifications.",
+            "Overhauled the academic calendar list layout to a unified OLED card aesthetic.",
+            "Overhauled the outings request wizard and locked the true AMOLED black theme.",
+            "Added dynamic card shadows, native filter chips, and pulsing clash alerts to the exams screen.",
+            "Added a collapsing monochromatic status banner and horizontal swipe for course types in attendance.",
+            "Revamped the portal download tracker with real-time byte metrics and system tray synchronization."
+        ),
+        fixes = listOf(
+            "Resolved outpass download failures and optimized file handling using secure cache routing.",
+            "Overhauled WebView stability, implemented OOM crash recovery, and fixed AJAX session timeouts.",
+            "Refined faculty directory UI, forced caching resets, and upgraded the hybrid matching logic.",
+            "Optimized timetable class tile centering and scroll targeting to eliminate visible UI jumps.",
+            "Applied lab weightage to the attendance bunk predictor and fixed percentage parsing errors.",
+            "Cleaned up holiday text formatting in the Next Class widget.",
+            "Resolved various lint warnings, redundant null checks, and legacy math functions across the app."
+        )
+    ),
+    ReleaseLog(
         version = "Version 1.1.16",
         tag = "v1.1.16",
         date = "26 Aug 2026",

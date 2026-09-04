@@ -32,6 +32,7 @@ obj/
 *.aab
 *.dex
 *.class
+*.txt
 
 # Sensitive / Keystore files (NEVER commit production keystores!)
 *.jks
@@ -48,5 +49,5 @@ obj/
 ehthumbs.db
 Thumbs.db
 
-# Google Services (Optional: Uncomment if you use Firebase/Google Services and want to keep it private)
+# Google Services
  google-services.json
