@@ -3,34 +3,48 @@ package com.vtop.portal
 import android.annotation.SuppressLint
 import android.content.ContentValues
 import android.graphics.Bitmap
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.net.http.SslError
 import android.os.Build
 import android.os.Environment
 import android.os.Message
+import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import android.util.Log
 import android.view.ViewGroup
 import android.webkit.*
 import android.widget.Toast
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.vtop.network.VtopClient
 import com.vtop.utils.*
 import kotlinx.coroutines.CoroutineScope
@@ -53,11 +67,12 @@ private const val TAG = "PORTAL_HOST"
 
 // Global download state decoupled from Compose lifecycle
 object PortalDownloadManager {
-    private val _activeDownloads = MutableStateFlow<Map<String, Triple<String, Float, String>>>(emptyMap())
-    val activeDownloads: StateFlow<Map<String, Triple<String, Float, String>>> = _activeDownloads.asStateFlow()
+    data class DownloadState(val name: String, val progress: Float, val status: String, val uri: Uri? = null, val mimeType: String = "")
+    private val _activeDownloads = MutableStateFlow<Map<String, DownloadState>>(emptyMap())
+    val activeDownloads: StateFlow<Map<String, DownloadState>> = _activeDownloads.asStateFlow()
 
-    fun updateDownload(id: String, name: String, progress: Float, status: String) {
-        _activeDownloads.update { it + (id to Triple(name, progress, status)) }
+    fun updateDownload(id: String, name: String, progress: Float, status: String, uri: Uri? = null, mimeType: String = "") {
+        _activeDownloads.update { it + (id to DownloadState(name, progress, status, uri, mimeType)) }
     }
 
     fun removeDownload(id: String) {
@@ -71,6 +86,7 @@ fun premiumSurfaceColor(): Color = if (MaterialTheme.colorScheme.background.lumi
 @Composable
 fun premiumBorderColor(): Color = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.08f)
 
+@OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun PortalHost(
@@ -86,6 +102,8 @@ fun PortalHost(
     val currentDarkTheme by rememberUpdatedState(vtopThemeDark)
     val currentDesktopMode by rememberUpdatedState(desktopMode)
     val downloads by PortalDownloadManager.activeDownloads.collectAsState()
+
+    var pdfUriToView by remember { mutableStateOf<Uri?>(null) }
 
     // Keyed by sessionKey to ensure a fresh, uncorrupted WebView instance upon re-auth
     val webView = remember(sessionKey) {
@@ -184,6 +202,7 @@ fun PortalHost(
                 evaluateJavascript(jsCode) { jsResult ->
                     // Uses Application-level scope to survive screen navigation
                     CoroutineScope(Dispatchers.IO).launch {
+                        var isSuccess = false
                         try {
                             val cleanResult = jsResult?.trim('"') ?: ""
                             val targetUa = if (currentDesktopMode) DESKTOP_UA else MOBILE_UA
@@ -296,7 +315,9 @@ fun PortalHost(
                                 }
 
                                 // 5. Finalize Success
+                                isSuccess = true
                                 withContext(Dispatchers.Main) {
+                                    PortalDownloadManager.updateDownload(downloadId, finalName, 1f, "Download Complete", uri, correctedMimeType)
                                     NotificationHelper.dismissNotification(context, uniqueNotificationId)
                                     NotificationHelper.showDownloadNotificationFromUri(context, uri, finalName, correctedMimeType, "Download Complete", "Tap to open $finalName")
                                 }
@@ -307,7 +328,7 @@ fun PortalHost(
                             withContext(Dispatchers.Main) { Toast.makeText(context, "Download Failed", Toast.LENGTH_SHORT).show() }
                         } finally {
                             withContext(Dispatchers.Main) {
-                                PortalDownloadManager.removeDownload(downloadId)
+                                if (!isSuccess) PortalDownloadManager.removeDownload(downloadId)
                             }
                         }
                     }
@@ -447,6 +468,18 @@ fun PortalHost(
         }
     }
 
+    // Reactive cookie syncing bound to Lifecycle so background token rotations apply immediately upon return.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, activeClient) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                syncCookies(webView, activeClient)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     LaunchedEffect(Unit) {
         com.vtop.portal.PortalController.commands.collect { command ->
             when (command) {
@@ -497,40 +530,94 @@ fun PortalHost(
                 contentAlignment = Alignment.BottomCenter
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    downloads.forEach { (_, data) ->
-                        val (name, prog, progText) = data
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = premiumSurfaceColor()),
-                            border = BorderStroke(1.dp, premiumBorderColor()),
-                            shape = RoundedCornerShape(12.dp),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(text = name, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(end = 8.dp))
-                                    if (prog >= 0f) Text(text = "${(prog * 100).toInt()}%", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                }
-                                if (progText.isNotEmpty()) {
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(text = progText, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Medium)
-                                }
-                                Spacer(modifier = Modifier.height(10.dp))
-                                if (prog < 0f) {
-                                    androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp), color = MaterialTheme.colorScheme.primary, strokeCap = androidx.compose.ui.graphics.StrokeCap.Round)
+                    downloads.forEach { (id, data) ->
+                        val (name, prog, progText, uri, mime) = data
+
+                        val dismissState = rememberSwipeToDismissBoxState(
+                            confirmValueChange = {
+                                if (it == SwipeToDismissBoxValue.EndToStart || it == SwipeToDismissBoxValue.StartToEnd) {
+                                    PortalDownloadManager.removeDownload(id)
+                                    true
                                 } else {
-                                    androidx.compose.material3.LinearProgressIndicator(progress = { prog }, modifier = Modifier.fillMaxWidth().height(4.dp), color = MaterialTheme.colorScheme.primary, trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f), strokeCap = androidx.compose.ui.graphics.StrokeCap.Round)
+                                    false
                                 }
                             }
-                        }
+                        )
+
+                        SwipeToDismissBox(
+                            state = dismissState,
+                            backgroundContent = {
+                                val color by animateColorAsState(
+                                    targetValue = when (dismissState.targetValue) {
+                                        SwipeToDismissBoxValue.Settled -> Color.Transparent
+                                        else -> MaterialTheme.colorScheme.errorContainer
+                                    },
+                                    label = "dismissColor"
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(color, RoundedCornerShape(12.dp))
+                                        .padding(horizontal = 20.dp),
+                                    contentAlignment = if (dismissState.dismissDirection == SwipeToDismissBoxValue.StartToEnd) Alignment.CenterStart else Alignment.CenterEnd
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "Dismiss",
+                                        tint = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                }
+                            },
+                            content = {
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = premiumSurfaceColor()),
+                                    border = BorderStroke(1.dp, premiumBorderColor()),
+                                    shape = RoundedCornerShape(12.dp),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(text = name, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(end = 8.dp))
+                                            if (prog >= 0f && prog < 1f) Text(text = "${(prog * 100).toInt()}%", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                        if (progText.isNotEmpty()) {
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(text = progText, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                                        }
+                                        Spacer(modifier = Modifier.height(10.dp))
+
+                                        if (prog < 1f) {
+                                            if (prog < 0f) {
+                                                androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp), color = MaterialTheme.colorScheme.primary, strokeCap = androidx.compose.ui.graphics.StrokeCap.Round)
+                                            } else {
+                                                androidx.compose.material3.LinearProgressIndicator(progress = { prog }, modifier = Modifier.fillMaxWidth().height(4.dp), color = MaterialTheme.colorScheme.primary, trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f), strokeCap = androidx.compose.ui.graphics.StrokeCap.Round)
+                                            }
+                                        } else {
+                                            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                                if (mime == "application/pdf" && uri != null) {
+                                                    TextButton(onClick = { pdfUriToView = uri }) { Text("View PDF") }
+                                                }
+                                                TextButton(onClick = { PortalDownloadManager.removeDownload(id) }) { Text("Dismiss", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        )
                     }
                 }
             }
         }
+    }
+
+    // In-App Native PDF Rendering Overlay
+    pdfUriToView?.let { uri ->
+        NativePdfViewer(pdfUri = uri, onDismiss = { pdfUriToView = null })
     }
 
     DisposableEffect(Unit) {
@@ -540,6 +627,99 @@ fun PortalHost(
             webView.clearHistory()
             webView.removeAllViews()
             webView.destroy()
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun NativePdfViewer(pdfUri: Uri, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var pdfRenderer by remember { mutableStateOf<PdfRenderer?>(null) }
+    var fileDescriptor by remember { mutableStateOf<ParcelFileDescriptor?>(null) }
+    val density = LocalDensity.current.density
+
+    DisposableEffect(pdfUri) {
+        try {
+            fileDescriptor = context.contentResolver.openFileDescriptor(pdfUri, "r")
+            if (fileDescriptor != null) {
+                pdfRenderer = PdfRenderer(fileDescriptor!!)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        onDispose {
+            pdfRenderer?.close()
+            fileDescriptor?.close()
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                TopAppBar(
+                    title = { Text("PDF Viewer", fontSize = 18.sp, fontWeight = FontWeight.Bold) },
+                    navigationIcon = {
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = premiumSurfaceColor())
+                )
+                if (pdfRenderer == null) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                    }
+                } else {
+                    val pageCount = pdfRenderer!!.pageCount
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize().background(Color(0xFF222222)),
+                        contentPadding = PaddingValues(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(pageCount) { index ->
+                            PdfPage(pdfRenderer!!, index, density)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PdfPage(pdfRenderer: PdfRenderer, pageIndex: Int, density: Float) {
+    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
+
+    LaunchedEffect(pageIndex) {
+        withContext(Dispatchers.IO) {
+            val page = pdfRenderer.openPage(pageIndex)
+            val width = (page.width * density).toInt()
+            val height = (page.height * density).toInt()
+
+            val renderedBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            renderedBitmap.eraseColor(android.graphics.Color.WHITE)
+
+            page.render(renderedBitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            page.close()
+
+            bitmap = renderedBitmap
+        }
+    }
+
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap!!.asImageBitmap(),
+            contentDescription = "PDF Page ${pageIndex + 1}",
+            modifier = Modifier.fillMaxWidth(),
+            contentScale = ContentScale.FillWidth
+        )
+    } else {
+        Box(
+            modifier = Modifier.fillMaxWidth().aspectRatio(0.75f).background(Color.White),
+            contentAlignment = Alignment.Center
+        ) {
+            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         }
     }
 }
