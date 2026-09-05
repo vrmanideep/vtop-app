@@ -228,7 +228,7 @@ class VtopSyncWorker(
                         val oldMark = oldCourse?.details?.find { it.title == newMark.title }
                         val validScore = newMark.scoredMark.isNotBlank() && newMark.scoredMark != "-"
                         if (validScore && (oldMark == null || oldMark.scoredMark != newMark.scoredMark)) {
-                            NotificationHelper.showNotification(context, "New Marks Uploaded", "Your ${newMark.title} marks of ${newCourse.courseCode} - ${newCourse.courseType} have been updated.", 301 + notificationCount)
+                            NotificationHelper.showNotification(context, "New Marks Uploaded", "Your ${newMark.title} marks for ${newCourse.courseTitle} - ${newCourse.courseType} have been updated.", 301 + notificationCount)
                             notificationCount++
                             delay(1.seconds)
                         }
