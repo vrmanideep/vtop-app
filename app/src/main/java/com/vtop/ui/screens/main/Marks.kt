@@ -2,7 +2,7 @@
 package com.vtop.ui.screens.main
 
 import android.content.Context
-import android.net.Uri
+import androidx.core.net.toUri
 import android.util.Base64
 import android.widget.Toast
 import androidx.browser.customtabs.CustomTabsIntent
@@ -56,14 +56,8 @@ import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.zip.GZIPOutputStream
-import kotlin.math.roundToInt
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalWindowInfo
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withStyle
 
 private val MarksPrimaryAccent = Color(0xFF0090FF)
 private val MarksColorSuccess = Color(0xFF4ADE80)
@@ -119,6 +113,20 @@ private fun getMarksColor(gained: Double, total: Double): Color {
         pct >= 25.0 -> MarksColorWarning
         else -> MarksColorDanger
     }
+}
+
+private fun formatVal(v: Double): String {
+    return if (v % 1.0 == 0.0) {
+        v.toInt().toString()
+    } else {
+        String.format(Locale.US, "%.2f", v).removeSuffix("0").removeSuffix(".")
+    }
+}
+
+private fun cleanMark(value: Any?): String {
+    val strVal = value?.toString()?.trim() ?: return "-"
+    val d = strVal.toDoubleOrNull() ?: return strVal
+    return formatVal(d)
 }
 
 private fun getCourseTypePriority(type: String): Int {
@@ -296,9 +304,7 @@ fun Marks(
                         val customTabsIntent = CustomTabsIntent.Builder()
                             .setShowTitle(true)
                             .build()
-
-                        customTabsIntent.launchUrl(context, Uri.parse(url))
-
+                        customTabsIntent.launchUrl(context, url.toUri())
                     } catch (e: Exception) {
                         Toast.makeText(context, "Failed to launch calculator", Toast.LENGTH_SHORT).show()
                         e.printStackTrace()
@@ -317,11 +323,9 @@ fun Marks(
 @Composable
 fun CurrentSemesterMarksView(marksData: List<CourseMark>, mergeMarks: Boolean) {
     if (marksData.isEmpty()) {
-        val screenHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(screenHeight)
+                .fillMaxSize()
                 .verticalScroll(rememberScrollState()),
             contentAlignment = Alignment.Center
         ) {
@@ -369,14 +373,14 @@ fun CurrentSemesterMarksView(marksData: List<CourseMark>, mergeMarks: Boolean) {
                         name = "Theory",
                         gainedRaw = thTotals.first,
                         totalRaw = thTotals.second,
-                        details = eth.details.map { d -> UiMarkDetail(d.title, "${d.scoredMark} / ${d.maxMark}", "${d.weightageMark} / ${d.weightagePercent}") }
+                        details = eth.details.map { d -> UiMarkDetail(d.title, "${cleanMark(d.scoredMark)} / ${cleanMark(d.maxMark)}", "${cleanMark(d.weightageMark)} / ${cleanMark(d.weightagePercent)}") }
                     )
 
                     val pracComponent = UiMarkComponent(
                         name = pracName,
                         gainedRaw = pracTotals.first,
                         totalRaw = pracTotals.second,
-                        details = elaOrEpj.details.map { d -> UiMarkDetail(d.title, "${d.scoredMark} / ${d.maxMark}", "${d.weightageMark} / ${d.weightagePercent}") }
+                        details = elaOrEpj.details.map { d -> UiMarkDetail(d.title, "${cleanMark(d.scoredMark)} / ${cleanMark(d.maxMark)}", "${cleanMark(d.weightageMark)} / ${cleanMark(d.weightagePercent)}") }
                     )
 
                     list.add(
@@ -396,7 +400,7 @@ fun CurrentSemesterMarksView(marksData: List<CourseMark>, mergeMarks: Boolean) {
                             name = remaining.courseType,
                             gainedRaw = remTotals.first,
                             totalRaw = remTotals.second,
-                            details = remaining.details.map { d -> UiMarkDetail(d.title, "${d.scoredMark} / ${d.maxMark}", "${d.weightageMark} / ${d.weightagePercent}") }
+                            details = remaining.details.map { d -> UiMarkDetail(d.title, "${cleanMark(d.scoredMark)} / ${cleanMark(d.maxMark)}", "${cleanMark(d.weightageMark)} / ${cleanMark(d.weightagePercent)}") }
                         )
                         list.add(
                             UiMark(
@@ -416,7 +420,7 @@ fun CurrentSemesterMarksView(marksData: List<CourseMark>, mergeMarks: Boolean) {
                             name = "Assessments",
                             gainedRaw = totals.first,
                             totalRaw = totals.second,
-                            details = mark.details.map { d -> UiMarkDetail(d.title, "${d.scoredMark} / ${d.maxMark}", "${d.weightageMark} / ${d.weightagePercent}") }
+                            details = mark.details.map { d -> UiMarkDetail(d.title, "${cleanMark(d.scoredMark)} / ${cleanMark(d.maxMark)}", "${cleanMark(d.weightageMark)} / ${cleanMark(d.weightagePercent)}") }
                         )
                         list.add(
                             UiMark(
@@ -448,8 +452,6 @@ fun CurrentSemesterMarksView(marksData: List<CourseMark>, mergeMarks: Boolean) {
 fun MarksExpandableCard(mark: UiMark) {
     var expanded by remember { mutableStateOf(false) }
     val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "arrow")
-
-    val formatVal = { v: Double -> if (v % 1.0 == 0.0) v.toInt().toString() else v.toString() }
     val gainedStr = formatVal(mark.gainedRaw)
     val totalStr = formatVal(mark.totalRaw)
 
@@ -469,19 +471,10 @@ fun MarksExpandableCard(mark: UiMark) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(modifier = Modifier.weight(1f).padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = buildAnnotatedString {
-                            withStyle(style = SpanStyle(
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            ) {
-                                append(mark.courseCode)
-                            }
-                            withStyle(style = SpanStyle(fontSize = 13.sp, fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onSurfaceVariant)) {
-                                append(" - ${mark.courseTitle}")
-                            }
-                        },
+                        text = "${mark.courseCode} - ${mark.courseTitle}",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -546,7 +539,7 @@ fun MarksExpandableCard(mark: UiMark) {
                                 ) {
                                     Text("Mark Title", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                                     Text("Scored / Max", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
-                                    Text("Wtg / Max", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.8f), textAlign = TextAlign.End)
+                                    Text("Wgt / Max", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.8f), textAlign = TextAlign.End)
                                 }
 
                                 // Table Rows
