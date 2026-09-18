@@ -18,7 +18,6 @@ android {
     namespace = "com.vtop"
     compileSdk = 36
 
-
     signingConfigs {
         create("release") {
             storeFile = file(keystoreProperties.getProperty("KEYSTORE_PATH") ?: "")
@@ -32,15 +31,13 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = 8
-        versionName = "1.2.0"
-
+        versionName = "1.2.1"
 
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
     }
 
     buildTypes {
@@ -66,7 +63,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 
-
     buildFeatures {
         compose = true
         buildConfig = true
@@ -90,12 +86,12 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:32.8.0"))
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-config")
-    implementation("com.google.firebase:firebase-messaging-ktx")
+    implementation("com.google.firebase:firebase-messaging") // Fixed artifact name
     implementation("com.google.firebase:firebase-analytics")
     implementation("com.google.firebase:firebase-crashlytics")
 
     // Play Services
-    implementation("com.google.android.gms:play-services-auth:21.0.0")
+    implementation("com.google.android.gms:play-services-auth:21.0.0") // Reverted to stable version
     implementation("io.coil-kt:coil-compose:2.5.0")
 
     // UI & Icons
@@ -105,7 +101,6 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.navigation:navigation-compose:2.7.7")
     implementation("androidx.browser:browser:1.8.0")
-
 
     // Networking & Logic
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
@@ -119,7 +114,6 @@ dependencies {
 
     // Background Tasks
     implementation("androidx.work:work-runtime-ktx:2.9.0")
-    implementation("androidx.navigation:navigation-compose:2.7.7")
 
     // Testing
     testImplementation(libs.junit)

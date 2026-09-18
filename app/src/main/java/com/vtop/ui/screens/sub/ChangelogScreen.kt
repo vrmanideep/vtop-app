@@ -35,6 +35,15 @@ data class ReleaseLog(
 
 val releaseHistory = listOf(
     ReleaseLog(
+        version = "Version 1.2.1",
+        tag = "v1.2.1",
+        date = "18 Sep 2026",
+        features = listOf(
+            "Added custom date support for Bunk Simulator to calculate attendance until a selected exam or custom date",
+            "Bunk Simulator now remembers your selected target preference across app sessions"
+        )
+    ),
+    ReleaseLog(
         version = "Version 1.2.0",
         tag = "v1.2.0",
         date = "04 Sep 2026",
