@@ -2,7 +2,6 @@ package com.vtop.ui.screens.sub
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.util.Log
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -15,12 +14,16 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -34,6 +37,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -368,23 +373,56 @@ fun BunkSimulatorTab(
     LaunchedEffect(Unit) { AnalyticsManager.logScreenView("Bunk_Simulator_Screen") }
 
     val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
+
     val semesterId = remember(selectedSemester) { com.vtop.utils.Vault.getSelectedSemester(context)[0] }
     val academicCalendar = remember(selectedSemester) { com.vtop.utils.Vault.getAcademicCalendar(context, semesterId) }
     val calCtx = remember(selectedSemester) { getCalendarContext(context, selectedSemester) }
+    val today = LocalDate.now()
 
-    val examTarget = remember(academicCalendar) { ExamAttendanceProjector.findNextExam(academicCalendar) }
-    val calculationEndDate = examTarget?.cutoffDate ?: calCtx.trueEndDate
-    val examName = examTarget?.name ?: "END OF SEMESTER"
+    // --- Persistent State & Exam Lookups ---
+    var selectedTarget by remember {
+        mutableStateOf(prefs.getString("BUNK_TARGET", "AUTO") ?: "AUTO")
+    }
+    var customTargetDate by remember {
+        val savedEpoch = prefs.getLong("BUNK_CUSTOM_DATE", -1L)
+        val initialDate = if (savedEpoch != -1L) Instant.ofEpochMilli(savedEpoch).atZone(ZoneId.of("UTC")).toLocalDate() else null
+        mutableStateOf<LocalDate?>(initialDate)
+    }
+
+    var showTargetDatePicker by remember { mutableStateOf(false) }
+
+    val allExams = remember(academicCalendar) { ExamAttendanceProjector.getAllExams(academicCalendar) }
+
+    val examTarget = remember(selectedTarget, allExams, today, customTargetDate) {
+        when (selectedTarget) {
+            "AUTO" -> allExams.firstOrNull { !it.startDate.isBefore(today) }
+            "EOS" -> null
+            "CUSTOM" -> {
+                val referenceDate = customTargetDate ?: today
+                allExams.firstOrNull { !it.startDate.isBefore(referenceDate) }
+            }
+            else -> allExams.firstOrNull { it.name == selectedTarget }
+        }
+    }
+
+    val calculationEndDate = when (selectedTarget) {
+        "CUSTOM" -> customTargetDate ?: calCtx.trueEndDate
+        "EOS" -> calCtx.trueEndDate
+        else -> examTarget?.cutoffDate ?: calCtx.trueEndDate
+    }
+
+    val examName = when (selectedTarget) {
+        "CUSTOM" -> "CUSTOM DATE"
+        "EOS" -> "END OF SEMESTER"
+        else -> examTarget?.name ?: "END OF SEMESTER"
+    }
 
     var selectedDates by remember { mutableStateOf<Set<LocalDate>>(emptySet()) }
     var attendanceOverrides by remember { mutableStateOf<Set<String>>(emptySet()) }
-
-    var showDatePicker by remember { mutableStateOf(false) }
-
-    val today = LocalDate.now()
+    var showBunkDatePicker by remember { mutableStateOf(false) }
 
     // --- Core Calculation Pipeline (Derived State) ---
-    // Now depends directly on `selectedDates` instead of `appliedDates`
     val groupedCourses = remember(selectedDates, attendanceOverrides, timetable, attendanceData, calculationEndDate, calCtx) {
         val courseMap = mutableMapOf<String, MutableList<AttendanceModel>>()
         attendanceData.forEach { att ->
@@ -408,15 +446,6 @@ fun BunkSimulatorTab(
 
                 val projectionStartDate = lastPostedDate?.plusDays(1) ?: calCtx.startDate
 
-                Log.d(
-                    "BUNK_BOUNDARY",
-                    "course=$code type=${att.courseType} " +
-                            "posted=$postedDates " +
-                            "lastPosted=$lastPostedDate " +
-                            "projectionStart=$projectionStartDate " +
-                            "cutoff=$calculationEndDate"
-                )
-
                 val attended = att.attendedClasses?.toIntOrNull() ?: 0
                 val total = att.totalClasses?.toIntOrNull() ?: 0
                 val currentPct = if (total > 0) attended.toFloat() / total * 100f else 0f
@@ -435,13 +464,6 @@ fun BunkSimulatorTab(
                         val weight = matchingClasses.sumOf { getSlotWeight(it.slot) }
 
                         if (weight > 0) {
-                            Log.d(
-                                "BUNK_PROJECT",
-                                "course=$code type=${att.courseType} " +
-                                        "date=$curr weight=$weight " +
-                                        "selected=${selectedDates.contains(curr)}"
-                            )
-
                             remaining += weight
 
                             val isSelected = selectedDates.contains(curr)
@@ -550,42 +572,162 @@ fun BunkSimulatorTab(
         }
 
         val dateFormatter = DateTimeFormatter.ofPattern("dd-MMM-yy", Locale.ENGLISH)
+
         Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 4.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
             shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
-            )
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f))
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                if (examTarget != null) {
+                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                    if (examTarget != null) {
+                        val isPast = examTarget.startDate.isBefore(today)
+                        Text(
+                            text = "${examTarget.name} starts on ${examTarget.startDate.format(dateFormatter)}.",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isPast) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                    }
+
+                    val inlineContent = mapOf(
+                        "editIcon" to InlineTextContent(
+                            Placeholder(
+                                width = 15.sp,
+                                height = 15.sp,
+                                placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Change Date",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    )
+
                     Text(
-                        text = "$examName starts on ${examTarget.startDate.format(dateFormatter)}.",
+                        text = buildAnnotatedString {
+                            append("Attendance might be calculated until ")
+                            withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary)) {
+                                append(calculationEndDate.format(dateFormatter))
+                            }
+                            append(" ")
+                            appendInlineContent("editIcon", "[edit]")
+                            append(".")
+                        },
+                        inlineContent = inlineContent,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable { showTargetDatePicker = true }
+                            .padding(vertical = 2.dp)
                     )
-                    Spacer(modifier = Modifier.height(2.dp))
                 }
 
-                Text(
-                    text = buildAnnotatedString {
-                        append("Attendance might be calculated until ")
-                        withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary)) {
-                            append(calculationEndDate.format(dateFormatter))
+                Box {
+                    var targetDropdownExpanded by remember { mutableStateOf(false) }
+
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.clickable { targetDropdownExpanded = true }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val btnText = when (selectedTarget) {
+                                "AUTO" -> "Auto"
+                                "EOS" -> "EOS"
+                                "CUSTOM" -> "Custom"
+                                else -> selectedTarget
+                            }
+                            val isError = examTarget != null && examTarget.startDate.isBefore(today)
+
+                            Text(
+                                text = btnText,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Icon(
+                                Icons.Default.KeyboardArrowDown,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp).padding(start = 4.dp),
+                                tint = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer
+                            )
                         }
-                        append(".")
-                    },
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+                    }
+
+                    MaterialTheme(
+                        shapes = MaterialTheme.shapes.copy(extraSmall = RoundedCornerShape(12.dp))
+                    ) {
+                        DropdownMenu(
+                            expanded = targetDropdownExpanded,
+                            onDismissRequest = { targetDropdownExpanded = false },
+                            modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+                        ) {
+                            val isAuto = selectedTarget == "AUTO"
+                            DropdownMenuItem(
+                                text = { Text("Auto-detect", fontWeight = if (isAuto) FontWeight.Bold else FontWeight.Normal, fontSize = 14.sp) },
+                                trailingIcon = if (isAuto) { { Icon(Icons.Default.Check, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) } } else null,
+                                colors = MenuDefaults.itemColors(textColor = if (isAuto) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface),
+                                onClick = {
+                                    selectedTarget = "AUTO"
+                                    prefs.edit().putString("BUNK_TARGET", "AUTO").apply()
+                                    targetDropdownExpanded = false
+                                }
+                            )
+
+                            allExams.forEach { exam ->
+                                val isPast = exam.startDate.isBefore(today)
+                                val isSelected = selectedTarget == exam.name
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            exam.name,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                            fontSize = 14.sp
+                                        )
+                                    },
+                                    trailingIcon = if (isSelected) { { Icon(Icons.Default.Check, null, Modifier.size(18.dp), tint = if (isPast) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary) } } else null,
+                                    colors = MenuDefaults.itemColors(
+                                        textColor = if (isPast) MaterialTheme.colorScheme.error
+                                        else if (isSelected) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurface
+                                    ),
+                                    onClick = {
+                                        selectedTarget = exam.name
+                                        prefs.edit().putString("BUNK_TARGET", exam.name).apply()
+                                        targetDropdownExpanded = false
+                                    }
+                                )
+                            }
+
+                            val isEos = selectedTarget == "EOS"
+                            DropdownMenuItem(
+                                text = { Text("End of Semester", fontWeight = if (isEos) FontWeight.Bold else FontWeight.Normal, fontSize = 14.sp) },
+                                trailingIcon = if (isEos) { { Icon(Icons.Default.Check, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) } } else null,
+                                colors = MenuDefaults.itemColors(textColor = if (isEos) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface),
+                                onClick = {
+                                    selectedTarget = "EOS"
+                                    prefs.edit().putString("BUNK_TARGET", "EOS").apply()
+                                    targetDropdownExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -663,7 +805,7 @@ fun BunkSimulatorTab(
 
                         FilterChip(
                             selected = false,
-                            onClick = { showDatePicker = true },
+                            onClick = { showBunkDatePicker = true },
                             label = { Text("+ Pick Date", fontWeight = FontWeight.Bold) },
                             leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = "Calendar", modifier = Modifier.size(16.dp)) },
                             shape = RoundedCornerShape(50)
@@ -744,19 +886,54 @@ fun BunkSimulatorTab(
         }
     }
 
-    if (showDatePicker) {
+    if (showBunkDatePicker) {
         MultiSelectDatePickerDialog(
             initialSelectedDates = selectedDates,
-            onDismissRequest = { showDatePicker = false },
+            onDismissRequest = { showBunkDatePicker = false },
             onDatesSelected = { newDates ->
                 val validDateStrings = newDates.map { it.toString() }.toSet()
                 attendanceOverrides = attendanceOverrides.filter { key ->
                     key.substringBefore("|") in validDateStrings
                 }.toSet()
                 selectedDates = newDates
-                showDatePicker = false
+                showBunkDatePicker = false
             }
         )
+    }
+
+    // --- Target Date Picker Dialog ---
+    if (showTargetDatePicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = customTargetDate?.atStartOfDay(ZoneId.of("UTC"))?.toInstant()?.toEpochMilli()
+                ?: today.atStartOfDay(ZoneId.of("UTC")).toInstant().toEpochMilli()
+        )
+
+        DatePickerDialog(
+            onDismissRequest = { showTargetDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { millis ->
+                        val newDate = Instant.ofEpochMilli(millis).atZone(ZoneId.of("UTC")).toLocalDate()
+                        customTargetDate = newDate
+                        selectedTarget = "CUSTOM"
+                        prefs.edit()
+                            .putString("BUNK_TARGET", "CUSTOM")
+                            .putLong("BUNK_CUSTOM_DATE", millis)
+                            .apply()
+                    }
+                    showTargetDatePicker = false
+                }) {
+                    Text("OK", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTargetDatePicker = false }) {
+                    Text("Cancel", fontWeight = FontWeight.Bold)
+                }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
     }
 }
 

@@ -95,18 +95,22 @@ public class Vault {
     }
 
     public static void saveCredentials(Context context, String regNo, String password) {
-        context.getSharedPreferences("vtop_fallback", Context.MODE_PRIVATE)
-                .edit()
-                .putString("reg_no", regNo.toUpperCase().trim())
-                .putString("password", password.trim())
-                .apply();
+        // 1. Nuke the old plaintext fallback if it exists
+        context.getSharedPreferences("vtop_fallback", Context.MODE_PRIVATE).edit().clear().apply();
 
         try {
-            MasterKey masterKey = new MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build();
+            MasterKey masterKey = new MasterKey.Builder(context)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build();
+
             SharedPreferences prefs = EncryptedSharedPreferences.create(context, SECRET_PREFS, masterKey,
                     EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                     EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM);
-            prefs.edit().putString("reg_no", regNo.toUpperCase().trim()).putString("password", password.trim()).apply();
+
+            prefs.edit()
+                    .putString("reg_no", regNo.toUpperCase().trim())
+                    .putString("password", password.trim())
+                    .apply();
         } catch (Exception e) {
             Log.e(TAG, "Encryption failed on save", e);
         }
@@ -114,9 +118,13 @@ public class Vault {
 
     public static String[] getCredentials(Context context) {
         try {
-            MasterKey masterKey = new MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build();
+            MasterKey masterKey = new MasterKey.Builder(context)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build();
+
             SharedPreferences prefs = EncryptedSharedPreferences.create(context, SECRET_PREFS, masterKey,
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV, EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM);
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM);
 
             String reg = prefs.getString("reg_no", null);
             String pwd = prefs.getString("password", null);
@@ -125,11 +133,9 @@ public class Vault {
                 return new String[]{reg, pwd};
             }
         } catch (Exception e) {
-            Log.e(TAG, "Encryption failed on read, triggering fallback", e);
+            Log.e(TAG, "Encryption failed on read", e);
         }
-
-        SharedPreferences fall = context.getSharedPreferences("vtop_fallback", Context.MODE_PRIVATE);
-        return new String[]{fall.getString("reg_no", null), fall.getString("password", null)};
+        return new String[]{null, null};
     }
 
     public static void saveProfile(Context context, Map<String, Map<String, String>> profileData) {

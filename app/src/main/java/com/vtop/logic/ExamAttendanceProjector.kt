@@ -36,57 +36,37 @@ data class ExamAttendanceProjection(
 object ExamAttendanceProjector {
 
     @SuppressLint("NewApi")
-    fun findNextExam(
-        calendarEvents: List<AcademicCalendarEvent>,
-        today: LocalDate = LocalDate.now()
-    ): ExamTarget? {
-
-        Log.d("BUNK_EXAM", "findNextExam called: events=${calendarEvents.size}, today=$today")
-
+    fun getAllExams(
+        calendarEvents: List<AcademicCalendarEvent>
+    ): List<ExamTarget> {
         val exams = calendarEvents.mapNotNull { event ->
             val date = parseCalendarDate(event.date)
             val name = normalizeExamName(event.particulars)
-
-            if (name != null) {
-                Log.d(
-                    "BUNK_EXAM",
-                    "Exam candidate: rawDate='${event.date}', parsedDate=$date, particulars='${event.particulars}', name=$name"
-                )
-            }
-
             if (date == null || name == null) return@mapNotNull null
             name to date
         }
 
-        Log.d("BUNK_EXAM", "Parsed exam candidates=$exams")
-
-        val nextExam = exams
+        return exams
             .groupBy { it.first }
             .mapNotNull { (name, entries) ->
                 val start = entries.minOfOrNull { it.second } ?: return@mapNotNull null
-                name to start
+                val cutoff = findCutoffDate(calendarEvents, start) ?: start.minusDays(3)
+                ExamTarget(
+                    name = name,
+                    startDate = start,
+                    cutoffDate = cutoff
+                )
             }
-            .filter { (_, start) -> !start.isBefore(today) }
-            .minByOrNull { it.second }
-            ?: return null
-        Log.d("BUNK_EXAM", "Selected nextExam=$nextExam")
-        val cutoff = findCutoffDate(
-            calendarEvents = calendarEvents,
-            examStartDate = nextExam.second
-        )
+            .sortedBy { it.startDate }
+    }
 
-        Log.d("BUNK_EXAM", "Calculated cutoff=$cutoff")
-
-        if (cutoff == null) {
-            Log.e("BUNK_EXAM", "No cutoff found for ${nextExam.first}")
-            return null
-        }
-
-        return ExamTarget(
-            name = nextExam.first,
-            startDate = nextExam.second,
-            cutoffDate = cutoff
-        )
+    @SuppressLint("NewApi")
+    fun findNextExam(
+        calendarEvents: List<AcademicCalendarEvent>,
+        today: LocalDate = LocalDate.now()
+    ): ExamTarget? {
+        val allExams = getAllExams(calendarEvents)
+        return allExams.firstOrNull { !it.startDate.isBefore(today) }
     }
 
     @SuppressLint("NewApi")
@@ -94,7 +74,6 @@ object ExamAttendanceProjector {
         calendarEvents: List<AcademicCalendarEvent>,
         examStartDate: LocalDate
     ): LocalDate? {
-        // Hardcoded to exactly 3 days before the exam's start date
         return examStartDate.minusDays(3)
     }
 
@@ -126,27 +105,6 @@ object ExamAttendanceProjector {
         today: LocalDate
     ): List<ExamAttendanceProjection> {
         val blocked = buildBlockedDateSet(blockedDates)
-        Log.d(
-            "BUNK_PROJECT",
-            "projectToTarget: timetableDays=${timetable.scheduleMap.size}, " +
-                    "attendance=${attendanceData.size}, target=${target.name}, " +
-                    "cutoff=${target.cutoffDate}"
-        )
-
-        timetable.scheduleMap.forEach { (day, classes) ->
-            Log.d(
-                "BUNK_PROJECT",
-                "DAY '$day' -> ${classes.size} classes"
-            )
-
-            classes.forEach { cls ->
-                Log.d(
-                    "BUNK_PROJECT",
-                    "TT '$day' | course='${cls.courseCode}' " +
-                            "type='${cls.courseType}' slot='${cls.slot}'"
-                )
-            }
-        }
 
         return attendanceData.mapNotNull { att ->
             val courseCode = att.courseCode ?: return@mapNotNull null
@@ -164,11 +122,6 @@ object ExamAttendanceProjector {
             val lastAttendanceDate = findLatestHistoryDate(att)
 
             if (lastAttendanceDate == null) {
-                Log.w(
-                    "BUNK_PROJECT",
-                    "${att.courseCode} ${att.courseType}: NO HISTORY DATE -> noData=true"
-                )
-
                 return@mapNotNull ExamAttendanceProjection(
                     courseCode = courseCode,
                     courseType = courseType,
@@ -187,14 +140,7 @@ object ExamAttendanceProjector {
                 )
             }
 
-            /*
-             * Current totals already contain everything VTOP has recorded.
-             * Start strictly AFTER the newest attendance-history entry so
-             * those classes aren't counted twice.
-             */
             var startDate = lastAttendanceDate.plusDays(1)
-
-            // Never project backwards.
             if (startDate.isBefore(today)) {
                 startDate = today
             }
@@ -219,43 +165,17 @@ object ExamAttendanceProjector {
 
             val projectedTotal = currentTotal + upcomingClasses
             val projectedAttended = currentAttended + upcomingClasses
-
             val projectedPct = if (projectedTotal > 0) {
-                projectedAttended.toFloat() /
-                        projectedTotal.toFloat() * 100f
+                projectedAttended.toFloat() / projectedTotal.toFloat() * 100f
             } else {
                 0f
             }
 
-            /*
-             * If x future classes are bunked:
-             *
-             * attended = projectedAttended - x
-             * total    = projectedTotal
-             *
-             * Require:
-             * (projectedAttended - x) / projectedTotal >= 0.75
-             *
-             * Therefore:
-             * x <= projectedAttended - 0.75 * projectedTotal
-             */
             val maxBunksByPercentage = floor(
                 projectedAttended - (0.75 * projectedTotal)
             ).toInt().coerceAtLeast(0)
 
-            val maxBunksAllowed =
-                maxBunksByPercentage.coerceAtMost(upcomingClasses)
-            Log.d(
-                "BUNK_RESULT",
-                "${att.courseCode} ${att.courseType} | " +
-                        "current=$currentAttended/$currentTotal | " +
-                        "latest=$lastAttendanceDate | " +
-                        "until=${target.cutoffDate} | " +
-                        "upcoming=$upcomingClasses | " +
-                        "projected=$projectedAttended/$projectedTotal " +
-                        "(${String.format(Locale.ENGLISH, "%.2f", projectedPct)}%) | " +
-                        "safeBunks=$maxBunksAllowed"
-            )
+            val maxBunksAllowed = maxBunksByPercentage.coerceAtMost(upcomingClasses)
 
             ExamAttendanceProjection(
                 courseCode = courseCode,
@@ -282,15 +202,10 @@ object ExamAttendanceProjector {
         timetable: TimetableModel,
         attendance: AttendanceModel
     ): Int {
-        val attendanceCode = normalizeCourseCode(
-            attendance.courseCode ?: return 0
-        )
-
+        val attendanceCode = normalizeCourseCode(attendance.courseCode ?: return 0)
         val attendanceType = attendance.courseType ?: ""
         val attendanceIsLab = isLab(attendanceType)
-
-        val dayKey =
-            date.dayOfWeek.name.take(3).uppercase(Locale.ENGLISH)
+        val dayKey = date.dayOfWeek.name.take(3).uppercase(Locale.ENGLISH)
 
         val classes = timetable.scheduleMap.entries
             .firstOrNull {
@@ -300,35 +215,22 @@ object ExamAttendanceProjector {
             ?: emptyList()
 
         var count = 0
-
         for (cls in classes) {
             val timetableCode = normalizeCourseCode(cls.courseCode)
             val timetableIsLab = isLab(cls.courseType)
 
-            val sameCourse =
-                timetableCode.contains(attendanceCode) ||
-                        attendanceCode.contains(timetableCode)
+            val sameCourse = timetableCode.contains(attendanceCode) || attendanceCode.contains(timetableCode)
 
             if (sameCourse && attendanceIsLab == timetableIsLab) {
                 count += getSlotWeight(cls.slot)
             }
         }
-
         return count
     }
 
     private fun getSlotWeight(slot: String?): Int {
-        if (
-            slot.isNullOrBlank() ||
-            slot == "-" ||
-            slot.equals("N/A", ignoreCase = true)
-        ) {
-            return 1
-        }
-
-        return slot.split("+")
-            .count { it.isNotBlank() }
-            .coerceAtLeast(1)
+        if (slot.isNullOrBlank() || slot == "-" || slot.equals("N/A", ignoreCase = true)) return 1
+        return slot.split("+").count { it.isNotBlank() }.coerceAtLeast(1)
     }
 
     private fun isLab(type: String): Boolean {
@@ -341,62 +243,32 @@ object ExamAttendanceProjector {
     }
 
     private fun normalizeCourseCode(code: String): String {
-        return code
-            .replace(Regex("[^A-Z0-9]"), "")
-            .uppercase(Locale.ENGLISH)
+        return code.replace(Regex("[^A-Z0-9]"), "").uppercase(Locale.ENGLISH)
     }
 
     private fun numericValue(value: String?): Int {
-        return value
-            ?.filter { it.isDigit() }
-            ?.toIntOrNull()
-            ?: 0
+        return value?.filter { it.isDigit() }?.toIntOrNull() ?: 0
     }
 
     @SuppressLint("NewApi")
     private fun findLatestHistoryDate(attendance: AttendanceModel): LocalDate? {
-        Log.d(
-            "BUNK_PROJECT",
-            "${attendance.courseCode} ${attendance.courseType} | " +
-                    "historySize=${attendance.history?.size ?: 0}"
-        )
-
-        attendance.history?.forEach { entry ->
-            Log.d(
-                "BUNK_PROJECT",
-                "${attendance.courseCode} ${attendance.courseType} | " +
-                        "historyDate='${entry.date}' parsed=${parseHistoryDate(entry.date)}"
-            )
-        }
-
-        val latest = attendance.history
+        return attendance.history
             ?.mapNotNull { parseHistoryDate(it.date) }
             ?.maxOrNull()
-
-        Log.d(
-            "BUNK_PROJECT",
-            "${attendance.courseCode} ${attendance.courseType} | latestHistory=$latest"
-        )
-
-        return latest
     }
 
     @SuppressLint("NewApi")
     private fun parseHistoryDate(value: String?): LocalDate? {
         if (value.isNullOrBlank()) return null
-
         val clean = value.substringAfter(",").trim()
 
-        // VTOP attendance history: "Thu, 23-07"
         Regex("""(\d{1,2})-(\d{1,2})""").matchEntire(clean)?.let {
             val day = it.groupValues[1].toInt()
             val month = it.groupValues[2].toInt()
 
             return try {
                 LocalDate.of(LocalDate.now().year, month, day)
-            } catch (_: Exception) {
-                null
-            }
+            } catch (_: Exception) { null }
         }
 
         val formats = listOf(
@@ -406,11 +278,8 @@ object ExamAttendanceProjector {
         )
 
         for (formatter in formats) {
-            try {
-                return LocalDate.parse(clean, formatter)
-            } catch (_: Exception) {}
+            try { return LocalDate.parse(clean, formatter) } catch (_: Exception) {}
         }
-
         return null
     }
 
@@ -440,70 +309,36 @@ object ExamAttendanceProjector {
 
         return try {
             LocalDate.of(year, month, day)
-        } catch (_: Exception) {
-            null
-        }
+        } catch (_: Exception) { null }
     }
 
     private fun normalizeExamName(particulars: String): String? {
         return when {
-            particulars.contains("CAT - II", true) ||
-                    particulars.contains("CAT-II", true) ||
-                    particulars.contains("Continuous Assessment Test - II", true) ->
-                "CAT-II"
-
-            particulars.contains("CAT - I", true) ||
-                    particulars.contains("CAT-I", true) ||
-                    particulars.contains("Continuous Assessment Test - I", true) ->
-                "CAT-I"
-
-            particulars.contains("LAB FAT", true) ||
-                    particulars.contains("Laboratory FAT", true) ->
-                null
-
-            particulars.contains("Final Assessment Test", true) ||
-                    particulars.contains("FAT", true) ->
-                "FAT"
-
+            particulars.contains("CAT - II", true) || particulars.contains("CAT-II", true) || particulars.contains("Continuous Assessment Test - II", true) -> "CAT-II"
+            particulars.contains("CAT - I", true) || particulars.contains("CAT-I", true) || particulars.contains("Continuous Assessment Test - I", true) -> "CAT-I"
+            particulars.contains("LAB FAT", true) || particulars.contains("Laboratory FAT", true) -> null
+            particulars.contains("Final Assessment Test", true) || particulars.contains("FAT", true) -> "FAT"
             else -> null
         }
     }
 
-    private fun isInstructionalDay(particulars: String): Boolean {
-        return particulars.contains("Instructional Day", true) &&
-                !particulars.contains("No Instructional", true) &&
-                !particulars.contains("Non Instructional", true)
-    }
-
     @SuppressLint("NewApi")
-    private fun buildBlockedDateSet(
-        blockedDates: Map<String, String>
-    ): Set<LocalDate> {
+    private fun buildBlockedDateSet(blockedDates: Map<String, String>): Set<LocalDate> {
         val result = mutableSetOf<LocalDate>()
-
         for (value in blockedDates.keys) {
-            val formats = listOf(
-                DateTimeFormatter.ISO_LOCAL_DATE,
-                DateTimeFormatter.ofPattern("dd-MM-yyyy", Locale.ENGLISH)
-            )
-
+            val formats = listOf(DateTimeFormatter.ISO_LOCAL_DATE, DateTimeFormatter.ofPattern("dd-MM-yyyy", Locale.ENGLISH))
             for (formatter in formats) {
                 try {
                     result.add(LocalDate.parse(value, formatter))
                     break
-                } catch (_: Exception) {
-                }
+                } catch (_: Exception) {}
             }
         }
-
         return result
     }
 
     @SuppressLint("NewApi")
-    private fun isBlocked(
-        date: LocalDate,
-        blockedDates: Set<LocalDate>
-    ): Boolean {
+    private fun isBlocked(date: LocalDate, blockedDates: Set<LocalDate>): Boolean {
         return date in blockedDates
     }
 }

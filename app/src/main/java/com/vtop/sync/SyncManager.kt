@@ -18,9 +18,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 object SyncManager {
     private val syncScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -39,7 +42,8 @@ object SyncManager {
         EventBus.tryEmit(AppEvent.SyncStatusChanged("IDLE"))
     }
 
-    suspend fun performSync(context: Context, priorityTab: String? = null, forceNewSession: Boolean = false, targetSemId: String? = null, skipLogin: Boolean = false) {
+    // Removed the redundant 'suspend' modifier here. Since it launches a coroutine natively, the function itself does not suspend.
+    fun performSync(context: Context, priorityTab: String? = null, forceNewSession: Boolean = false, targetSemId: String? = null, skipLogin: Boolean = false) {
         if (_isSyncing.value) {
             Log.w(TAG, "performSync ignored: already syncing")
             return
@@ -48,7 +52,7 @@ object SyncManager {
         activeSyncJob = syncScope.launch {
             try {
                 _isSyncing.value = true
-                EventBus.emit(AppEvent.SyncStatusChanged("Initializing..."))
+                EventBus.tryEmit(AppEvent.SyncStatusChanged("Initializing..."))
 
                 val existingClient = SessionManager.getSyncClient()
                 val client: VtopClient
@@ -72,7 +76,7 @@ object SyncManager {
                 var attempts = 0
 
                 if (!loginSuccess) {
-                    EventBus.emit(AppEvent.SyncStatusChanged("Logging in..."))
+                    EventBus.tryEmit(AppEvent.SyncStatusChanged("Logging in..."))
                     TelemetryTracer.trace("Login", TelemetryModule.AUTH) {
                         while (attempts < MAX_RETRY && !loginSuccess) {
                             try {
@@ -84,24 +88,24 @@ object SyncManager {
                                             val savedEmail = Vault.getGoogleEmail(context)
 
                                             if (savedEmail.isNotBlank()) {
-                                                EventBus.emit(AppEvent.SyncStatusChanged("Fetching OTP from Gmail..."))
+                                                EventBus.tryEmit(AppEvent.SyncStatusChanged("Fetching OTP from Gmail..."))
 
                                                 var extractedOtp: String? = null
                                                 for (i in 1..6) {
-                                                    kotlinx.coroutines.delay(3000)
+                                                    delay(3.seconds)
                                                     extractedOtp = GmailOtpExtractor.getLatestVtopOtp(context, savedEmail, otpRequestedTime)
                                                     if (extractedOtp != null) break
                                                 }
 
                                                 if (extractedOtp != null) {
-                                                    EventBus.emit(AppEvent.SyncStatusChanged("Verifying OTP..."))
+                                                    EventBus.tryEmit(AppEvent.SyncStatusChanged("Verifying OTP..."))
                                                     resolver.submit(extractedOtp)
                                                     return@launch
                                                 }
                                             }
 
-                                            EventBus.emit(AppEvent.SyncStatusChanged("Awaiting manual OTP..."))
-                                            EventBus.emit(AppEvent.AuthOtpRequested(resolver))
+                                            EventBus.tryEmit(AppEvent.SyncStatusChanged("Awaiting manual OTP..."))
+                                            EventBus.tryEmit(AppEvent.AuthOtpRequested(resolver))
                                         }
                                     }
                                 })
@@ -119,9 +123,9 @@ object SyncManager {
                             if (!loginSuccess) {
                                 attempts++
                                 if (attempts < MAX_RETRY) {
-                                    EventBus.emit(AppEvent.ToastMessage("Login failed. Retrying..."))
+                                    EventBus.tryEmit(AppEvent.ToastMessage("Login failed. Retrying..."))
                                     client.reinitializeSession(context)
-                                    kotlinx.coroutines.delay(2000L)
+                                    delay(2.seconds)
                                 }
                             }
                         }
@@ -138,7 +142,7 @@ object SyncManager {
 
                 TelemetryTracer.trace("Registration Number Discovery", TelemetryModule.AUTH) {
                     if (authorizedId.isBlank() || authorizedId == "-" || !validRegNoRegex.matches(authorizedId)) {
-                        EventBus.emit(AppEvent.SyncStatusChanged("Establishing Session..."))
+                        EventBus.tryEmit(AppEvent.SyncStatusChanged("Establishing Session..."))
                         val contentHtml = client.fetchContentPageRawHtml()
                         val scrapedId = SessionManager.extractAuthorizedIdFromContent(contentHtml)
 
@@ -151,14 +155,15 @@ object SyncManager {
                     }
                 }
 
-                client.setAuthorizedId(authorizedId)
+                client.authorizedId = authorizedId
 
                 val semInfo = Vault.getSelectedSemester(context)
                 val semId = targetSemId ?: semInfo[0] ?: ""
                 val showOutings = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE).getBoolean("SHOW_OUTINGS", true)
 
-                suspend fun updateStatus(msg: String) {
-                    EventBus.emit(AppEvent.SyncStatusChanged(msg))
+                // Removed the redundant 'suspend' modifier from this internal function
+                fun updateStatus(msg: String) {
+                    EventBus.tryEmit(AppEvent.SyncStatusChanged(msg))
                 }
 
                 val priority = priorityTab?.uppercase()
@@ -228,13 +233,13 @@ object SyncManager {
                 Vault.saveLastSyncTime(context)
                 try { NextClassWidget().updateAll(context) } catch (e: Exception) { Log.e(TAG, "Widget update failed") }
 
-                EventBus.emit(AppEvent.SyncCompleted)
-                EventBus.emit(AppEvent.ToastMessage("Sync Complete!"))
+                EventBus.tryEmit(AppEvent.SyncCompleted)
+                EventBus.tryEmit(AppEvent.ToastMessage("Sync Complete!"))
 
             } catch (e: Exception) {
                 SessionManager.invalidateSync()
-                EventBus.emit(AppEvent.SyncError(e))
-                EventBus.emit(AppEvent.ToastMessage("Sync Error: ${e.message}", isLong = true))
+                EventBus.tryEmit(AppEvent.SyncError(e))
+                EventBus.tryEmit(AppEvent.ToastMessage("Sync Error: ${e.message}", isLong = true))
             } finally {
                 _isSyncing.value = false
                 EventBus.tryEmit(AppEvent.SyncStatusChanged("IDLE"))
@@ -242,7 +247,7 @@ object SyncManager {
         }
     }
 
-    private suspend fun syncTimetable(context: Context, client: VtopClient, semId: String) {
+    private fun syncTimetable(context: Context, client: VtopClient, semId: String) {
         TelemetryTracer.trace("Timetable", TelemetryModule.SYNC) {
             val html = client.fetchTimetableRawHtml(semId, null)
             val data = TimetableParser.parse(html)
@@ -250,7 +255,7 @@ object SyncManager {
         }
     }
 
-    private suspend fun syncExams(context: Context, client: VtopClient, semId: String) {
+    private fun syncExams(context: Context, client: VtopClient, semId: String) {
         TelemetryTracer.trace("Exam Schedule", TelemetryModule.SYNC) {
             val html = client.fetchExamScheduleRawHtml(semId, null)
             val data = ExamScheduleParser.parse(html)
@@ -259,7 +264,7 @@ object SyncManager {
         }
     }
 
-    private suspend fun syncMarks(context: Context, client: VtopClient, semId: String) {
+    private fun syncMarks(context: Context, client: VtopClient, semId: String) {
         TelemetryTracer.trace("Marks & Grades", TelemetryModule.SYNC) {
             val marksHtml = client.fetchMarksRawHtml(semId, null)
             val gradesHtml = client.fetchGradesRawHtml(semId, null)
@@ -270,7 +275,6 @@ object SyncManager {
                 com.vtop.models.SemesterOption(id = map["id"] ?: "", name = map["name"] ?: "")
             }
             Vault.saveSemesterOptions(context, mappedOptions)
-
             val marksData = MarksParser.parseMarks(marksHtml)
             val gradesData = MarksParser.parseGrades(gradesHtml)
             val historyPair = MarksParser.parseHistory(historyHtml)
@@ -281,7 +285,7 @@ object SyncManager {
         }
     }
 
-    private suspend fun syncOutings(context: Context, client: VtopClient, authorizedId: String) {
+    private fun syncOutings(context: Context, client: VtopClient, authorizedId: String) {
         TelemetryTracer.trace("Outings", TelemetryModule.SYNC) {
             val genHtml = client.fetchGeneralOutingRawHtml(authorizedId, null)
             val weekHtml = client.fetchWeekendOutingRawHtml(authorizedId, null)
@@ -309,7 +313,7 @@ object SyncManager {
                         val monthlyEvents = CalendarParser.parseCalendarHtml(html)
                         allEvents.addAll(monthlyEvents)
                     }
-                    kotlinx.coroutines.delay(250L) // WAF breather
+                    delay(250.milliseconds) // WAF breather
                 }
                 if (allEvents.isNotEmpty()) {
                     CalendarRepository.update(context, semId, allEvents)
