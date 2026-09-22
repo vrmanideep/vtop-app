@@ -141,19 +141,28 @@ private fun getCourseTypePriority(type: String): Int {
 
 private fun getBestAttemptTotals(mark: CourseMark): Pair<Double, Double> {
     val detailsList = mark.details
+
     if (detailsList.isEmpty()) {
-        return Pair(mark.totalWeightageMark, mark.totalWeightagePercent)
+        return Pair(0.0, 0.0) // Fallback safely to 0 since there is no native total row in VTOP
     }
+
+    // Group titles to handle exceptions like "FAT" vs "Re Evaluation FAT"
     val groups = detailsList.groupBy { detail ->
         detail.title.replace("Re Evaluation ", "", ignoreCase = true).trim().uppercase()
     }
+
     var totalGained = 0.0
     var totalMax = 0.0
+
     groups.forEach { (_, detailsInGroup) ->
+        // Take the highest score if multiple exist for the same component (e.g., Re-evaluations)
         val bestAttempt = detailsInGroup.maxByOrNull { it.weightageMark }
+
+        // Sum the actual scraped column values
         totalGained += bestAttempt?.weightageMark ?: 0.0
         totalMax += bestAttempt?.weightagePercent ?: 0.0
     }
+
     return Pair(totalGained, totalMax)
 }
 
