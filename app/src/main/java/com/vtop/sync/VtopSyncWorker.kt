@@ -179,6 +179,24 @@ class VtopSyncWorker(
                         hasSeat && isUpcoming && (oldExam == null || oldExam.seatNumber != newExam.seatNumber)
                     }
 
+                    if (oldExams.isNotEmpty()) {
+                        newlySeatedExams.forEach { exam ->
+                            val dateTimeString = "${exam.examDate} ${exam.reportingTime.clean().ifBlank { "09:00 AM" }}"
+                            val examStartTimeMillis = try {
+                                SimpleDateFormat("dd-MMM-yyyy hh:mm a", Locale.ENGLISH).parse(dateTimeString)?.time ?: System.currentTimeMillis()
+                            } catch (_: Exception) { System.currentTimeMillis() }
+
+                            NotificationHelper.showExamSeatNotification(
+                                context = context,
+                                title = "Exam Seating Allotment",
+                                message = "${exam.venue} | Seat ${exam.seatLocation} (${exam.seatNumber}) | ${exam.courseCode} ${exam.examType}",
+                                examStartTimeMillis = examStartTimeMillis
+                            )
+                            delay(1.seconds)
+                        }
+                    }
+                    ExamsRepository.update(context, newExams)
+
                     newlySeatedExams.forEach { exam ->
                         val dateTimeString = "${exam.examDate} ${exam.reportingTime.clean().ifBlank { "09:00 AM" }}"
                         val examStartTimeMillis = try {
@@ -219,22 +237,23 @@ class VtopSyncWorker(
                     }
                 }
             }
-
             val oldMarks = Vault.getMarks(context) ?: emptyList()
             val marksHtml = client.fetchMarksRawHtml(semId, null) ?: ""
             val newMarks = MarksParser.parseMarks(marksHtml)
 
             if (newMarks.isNotEmpty()) {
-                var notificationCount = 0
-                newMarks.forEach { newCourse ->
-                    val oldCourse = oldMarks.find { it.courseCode == newCourse.courseCode && it.courseType == newCourse.courseType }
-                    newCourse.details.forEach { newMark ->
-                        val oldMark = oldCourse?.details?.find { it.title == newMark.title }
-                        val validScore = newMark.scoredMark.isNotBlank() && newMark.scoredMark != "-"
-                        if (validScore && (oldMark == null || oldMark.scoredMark != newMark.scoredMark)) {
-                            NotificationHelper.showNotification(context, "New Marks Uploaded", "Your ${newMark.title} marks for ${newCourse.courseTitle} - ${newCourse.courseType} have been updated.", 301 + notificationCount)
-                            notificationCount++
-                            delay(1.seconds)
+                if (oldMarks.isNotEmpty()) {
+                    var notificationCount = 0
+                    newMarks.forEach { newCourse ->
+                        val oldCourse = oldMarks.find { it.courseCode == newCourse.courseCode && it.courseType == newCourse.courseType }
+                        newCourse.details.forEach { newMark ->
+                            val oldMark = oldCourse?.details?.find { it.title == newMark.title }
+                            val validScore = newMark.scoredMark.isNotBlank() && newMark.scoredMark != "-"
+                            if (validScore && (oldMark == null || oldMark.scoredMark != newMark.scoredMark)) {
+                                NotificationHelper.showNotification(context, "New Marks Uploaded", "Your ${newMark.title} marks for ${newCourse.courseTitle} - ${newCourse.courseType} have been updated.", 301 + notificationCount)
+                                notificationCount++
+                                delay(1.seconds)
+                            }
                         }
                     }
                 }
