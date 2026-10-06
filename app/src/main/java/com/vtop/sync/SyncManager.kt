@@ -140,6 +140,13 @@ object SyncManager {
                     SessionManager.invalidateSync()
                     throw Exception("Failed to login after $MAX_RETRY attempts.")
                 }
+                // Automatically cleanup notifications that are fired previously after a successful login
+                try {
+                    NotificationHelper.dismissNotification(context, 999) // Invalid Credentials
+                    NotificationHelper.dismissNotification(context, 998) // Account Locked
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to dismiss error notifications", e)
+                }
 
                 var authorizedId = Vault.getRegNo(context)
                 val validRegNoRegex = Regex("""\b\d{2}[a-zA-Z]{3}\d{4}\b""")
