@@ -42,6 +42,7 @@ import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -72,6 +73,15 @@ data class BunkOccurrence(
         get() = "$date|$courseCode|$courseType|$slot"
 }
 
+data class AuditLogEntry(
+    val dateStr: String,
+    val dayOfWeek: String,
+    val reason: String,
+    val deltaClasses: Int,
+    val isBunk: Boolean,
+    val occurrences: List<BunkOccurrence>
+)
+
 data class CourseTypeBunkUiModel(
     val displayType: String,
     val currentAttended: Int,
@@ -84,6 +94,10 @@ data class CourseTypeBunkUiModel(
     val projectedTotal: Int,
     val projectedPct: Float,
     val additionalSafeBunks: Int,
+    val auditStartDateStr: String,
+    val auditStartAttended: Int,
+    val auditStartTotal: Int,
+    val auditLog: List<AuditLogEntry>,
     val noData: Boolean = false
 )
 
@@ -328,8 +342,16 @@ fun getCalendarContext(context: Context, selectedSemester: String): CalendarCont
             if (title.contains("last instructional day") || title.contains("last working day") || title.contains("last day")) {
                 if (localDate.isAfter(endDate)) endDate = localDate
             }
-            if (title.contains("holiday") || title.contains("exam") || title.contains("cat") || title.contains("fat") ||
-                title.contains("no instructional") || title.contains("non instructional")) {
+
+            // Refined check to explicitly allow LAB FAT as an instructional day
+            val isHoliday = title.contains("holiday") ||
+                    title.contains("no instructional") ||
+                    title.contains("non instructional") ||
+                    title.contains("exam") ||
+                    (title.contains("cat") && !title.contains("vacation")) ||
+                    (title.contains("fat") && !title.contains("lab fat"))
+
+            if (isHoliday) {
                 holidays[localDate] = event.particulars
             }
         } catch (_: Exception) {}
@@ -453,6 +475,13 @@ fun BunkSimulatorTab(
                 var remaining = 0
                 var plannedBunks = 0
                 val selectedOccurrences = mutableListOf<BunkOccurrence>()
+                val auditLog = mutableListOf<AuditLogEntry>()
+
+                val dFormatter = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH)
+                val dateOnlyFmt = DateTimeFormatter.ofPattern("dd MMM", Locale.ENGLISH)
+                val dayOnlyFmt = DateTimeFormatter.ofPattern("EEE", Locale.ENGLISH)
+
+                val auditStartStr = lastPostedDate?.format(dFormatter) ?: "Semester Start"
 
                 var curr = projectionStartDate
                 while (!curr.isAfter(calculationEndDate)) {
@@ -467,36 +496,57 @@ fun BunkSimulatorTab(
                             remaining += weight
 
                             val isSelected = selectedDates.contains(curr)
-                            val isGapDay = !curr.isAfter(today) // Any unposted date up to today
+                            val isGapDay = !curr.isAfter(today)
 
-                            if (isSelected || isGapDay) {
-                                matchingClasses.forEach { session ->
-                                    val sessionWeight = getSlotWeight(session.slot)
+                            val dStr = curr.format(dateOnlyFmt)
+                            val dayStr = curr.format(dayOnlyFmt)
 
-                                    if (sessionWeight > 0) {
-                                        val occurrence = BunkOccurrence(
-                                            date = curr,
-                                            courseCode = code,
-                                            courseType = att.courseType ?: "",
-                                            slot = session.slot ?: "",
-                                            weight = sessionWeight,
-                                            isDefaultBunk = isSelected
-                                        )
+                            val bunkOccs = mutableListOf<BunkOccurrence>()
+                            val attendOccs = mutableListOf<BunkOccurrence>()
 
+                            matchingClasses.forEach { session ->
+                                val sessionWeight = getSlotWeight(session.slot)
+
+                                if (sessionWeight > 0) {
+                                    val isDefaultBunk = isSelected
+                                    val occurrence = BunkOccurrence(
+                                        date = curr,
+                                        courseCode = code,
+                                        courseType = att.courseType ?: "",
+                                        slot = session.slot ?: "",
+                                        weight = sessionWeight,
+                                        isDefaultBunk = isDefaultBunk
+                                    )
+
+                                    val isBunking = if (isDefaultBunk) {
+                                        occurrence.key !in attendanceOverrides
+                                    } else {
+                                        occurrence.key in attendanceOverrides
+                                    }
+
+                                    if (isSelected || isGapDay || isBunking) {
                                         selectedOccurrences += occurrence
+                                    }
 
-                                        // If explicitly selected -> Default Bunk. If Gap Day -> Default Attend.
-                                        val isBunking = if (occurrence.isDefaultBunk) {
-                                            occurrence.key !in attendanceOverrides
-                                        } else {
-                                            occurrence.key in attendanceOverrides
-                                        }
-
-                                        if (isBunking) {
-                                            plannedBunks += sessionWeight
-                                        }
+                                    if (isBunking) {
+                                        plannedBunks += sessionWeight
+                                        bunkOccs += occurrence
+                                    } else {
+                                        attendOccs += occurrence
                                     }
                                 }
+                            }
+
+                            if (bunkOccs.isNotEmpty()) {
+                                val dWeight = bunkOccs.sumOf { it.weight }
+                                val reason = if (isGapDay) "Not posted (Bunked)" else "Planned Bunk"
+                                auditLog.add(AuditLogEntry(dStr, dayStr, reason, dWeight, true, bunkOccs))
+                            }
+
+                            if (attendOccs.isNotEmpty()) {
+                                val dWeight = attendOccs.sumOf { it.weight }
+                                val reason = if (isGapDay) "Not posted (Attended)" else "Future class"
+                                auditLog.add(AuditLogEntry(dStr, dayStr, reason, dWeight, false, attendOccs))
                             }
                         }
                     }
@@ -523,6 +573,10 @@ fun BunkSimulatorTab(
                     projectedTotal = projectedTotal,
                     projectedPct = projectedPct,
                     additionalSafeBunks = additionalSafeBunks,
+                    auditStartDateStr = auditStartStr,
+                    auditStartAttended = attended,
+                    auditStartTotal = total,
+                    auditLog = auditLog,
                     noData = noData
                 )
 
@@ -853,16 +907,7 @@ fun BunkSimulatorTab(
 
                     Spacer(modifier = Modifier.height(12.dp))
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Text(
-                        text = "COURSE DETAILS",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        letterSpacing = 0.5.sp,
-                        modifier = Modifier.padding(start = 20.dp, bottom = 8.dp)
-                    )
+                    Spacer(modifier = Modifier.height(8.dp))
                 }
             }
 
@@ -873,8 +918,11 @@ fun BunkSimulatorTab(
                         examName = examName,
                         calculationDateStr = calculationEndDate.format(dateFormatter),
                         attendanceOverrides = attendanceOverrides,
-                        onAttendanceOverrideChange = { occurrence, attend ->
-                            attendanceOverrides = if (attend) {
+                        onAttendanceOverrideChange = { occurrence, wantsToAttend ->
+                            val wantsToBunk = !wantsToAttend
+                            val needsOverride = occurrence.isDefaultBunk != wantsToBunk
+
+                            attendanceOverrides = if (needsOverride) {
                                 attendanceOverrides + occurrence.key
                             } else {
                                 attendanceOverrides - occurrence.key
@@ -962,6 +1010,7 @@ fun CourseBunkCard(
     }
 
     var bunksExpanded by rememberSaveable { mutableStateOf(false) }
+    var showDetailsDialog by rememberSaveable { mutableStateOf(false) }
 
     Card(
         modifier = Modifier.fillMaxWidth().animateContentSize(),
@@ -1087,6 +1136,7 @@ fun CourseBunkCard(
                                 val hasOverride = occurrence.key in attendanceOverrides
                                 val isBunking = if (occurrence.isDefaultBunk) !hasOverride else hasOverride
                                 val isAttending = !isBunking
+                                val wantsToAttend = isBunking
 
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp, horizontal = 4.dp),
@@ -1110,7 +1160,7 @@ fun CourseBunkCard(
                                     }
 
                                     Button(
-                                        onClick = { onAttendanceOverrideChange(occurrence, !hasOverride) },
+                                        onClick = { onAttendanceOverrideChange(occurrence, wantsToAttend) },
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = if (isAttending) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
                                             contentColor = if (isAttending) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
@@ -1187,20 +1237,185 @@ fun CourseBunkCard(
                     }
                 }
 
-                val remStr = if (activeComponent.remainingClasses == 1) "class" else "classes"
-                Text(
-                    text = buildAnnotatedString {
-                        withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary)) {
-                            append("${activeComponent.remainingClasses}")
-                        }
-                        append(" $remStr ")
-                        withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary)) {
-                            append("remaining")
-                        }
-                    },
-                    fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp)
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    val remStr = if (activeComponent.remainingClasses == 1) "class" else "classes"
+                    Text(
+                        text = buildAnnotatedString {
+                            withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary)) {
+                                append("${activeComponent.remainingClasses}")
+                            }
+                            append(" $remStr remaining")
+                        },
+                        fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Text(
+                        text = "View Calculation",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable { showDetailsDialog = true }
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                    )
+                }
             }
         }
+    }
+
+    if (showDetailsDialog) {
+        AlertDialog(
+            onDismissRequest = { showDetailsDialog = false },
+            title = {
+                Text(
+                    text = "${course.courseCode} (${activeComponent.displayType})",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Black
+                )
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+
+                    // --- Header Card: Starting Point ---
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text("STARTING POINT", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.height(4.dp))
+                            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                                Text(activeComponent.auditStartDateStr, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                Text("${activeComponent.auditStartAttended} / ${activeComponent.auditStartTotal}", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                            }
+                        }
+                    }
+
+                    // --- Table Header ---
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("DATE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(0.20f))
+                        Text("DETAILS", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(0.50f))
+                        Text("ACTION", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(0.30f), textAlign = TextAlign.End)
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                    // --- Scrollable Table Body ---
+                    if (activeComponent.auditLog.isEmpty()) {
+                        Text(
+                            text = "No classes found before target date.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 16.dp).align(Alignment.CenterHorizontally)
+                        )
+                    } else {
+                        LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
+                            items(activeComponent.auditLog) { entry ->
+                                val isInteractive = entry.occurrences.isNotEmpty()
+                                val impactStr = if (entry.isBunk) "-${entry.deltaClasses}" else "+${entry.deltaClasses}"
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 2.dp, vertical = 4.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(
+                                            if (entry.isBunk) MaterialTheme.colorScheme.error.copy(alpha = 0.05f)
+                                            else MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)
+                                        )
+                                        .border(
+                                            width = 1.dp,
+                                            color = if (entry.isBunk) MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
+                                            else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                            shape = RoundedCornerShape(8.dp)
+                                        )
+                                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // Date Column
+                                    Column(modifier = Modifier.weight(0.20f)) {
+                                        Text(entry.dateStr, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                        Text(entry.dayOfWeek, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+
+                                    // Details Column
+                                    Row(modifier = Modifier.weight(0.50f), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = if (entry.isBunk) Icons.Default.Close else Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = if (entry.isBunk) MaterialTheme.colorScheme.error else Color(0xFF10B981),
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "${entry.reason} ($impactStr)",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+
+                                    // Action Column
+                                    Box(modifier = Modifier.weight(0.30f), contentAlignment = Alignment.CenterEnd) {
+                                        if (isInteractive) {
+                                            val isAttending = !entry.isBunk
+                                            Surface(
+                                                color = if (isAttending) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                                                shape = RoundedCornerShape(6.dp),
+                                                modifier = Modifier.clickable {
+                                                    val newAttendState = entry.isBunk // Toggle the current state
+                                                    entry.occurrences.forEach { occ ->
+                                                        onAttendanceOverrideChange(occ, newAttendState)
+                                                    }
+                                                }
+                                            ) {
+                                                Text(
+                                                    text = if (isAttending) "- Bunk" else "+ Add",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (isAttending) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                                                )
+                                            }
+                                        } else {
+                                            Text("-", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // --- Footer Card: Final Projected ---
+                    Spacer(Modifier.height(8.dp))
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text("FINAL PROJECTED", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha=0.7f))
+                            Spacer(Modifier.height(4.dp))
+                            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+                                Text("${activeComponent.projectedPct.roundToInt()}%", fontSize = 24.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                Text("${activeComponent.projectedAttended} / ${activeComponent.projectedTotal}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showDetailsDialog = false }) {
+                    Text("Close", fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(16.dp)
+        )
     }
 }
