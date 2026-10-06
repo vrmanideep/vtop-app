@@ -35,6 +35,24 @@ data class ReleaseLog(
 
 val releaseHistory = listOf(
     ReleaseLog(
+        version = "Version 1.2.2",
+        tag = "v1.2.2",
+        date = "06 Oct 2026",
+        features = listOf(
+            "Added an interactive detailed calculation table dialog in the Bunk Simulator, allowing direct day-by-day class toggling (+ Add / - Bunk).",
+            "Introduced actionable push notifications with deep links to open VTOP directly when an account is locked or credentials expire.",
+            "Implemented an in-app credentials update dialog to seamlessly recover from foreground sync errors without forcing a complete logout."
+        ),
+        fixes = listOf(
+            "Resolved infinite background retry loops and account lockouts by sanitizing VTOP error responses and gracefully halting failed syncs.",
+            "Prevented notification spam on fresh logins by suppressing background alerts when the local data cache is empty.",
+            "Calculated true course mark totals dynamically by summing individual scraped weightage components.",
+            "Fixed holiday detection in the Bunk Simulator to correctly treat Lab FAT and CAT vacation periods as instructional days.",
+            "Ensured manual syncs instantly apply new credentials by forcing a fresh client session.",
+            "Automated the dismissal of lingering authentication error notifications upon a successful login."
+        )
+    ),
+    ReleaseLog(
         version = "Version 1.2.1",
         tag = "v1.2.1",
         date = "18 Sep 2026",
