@@ -184,7 +184,8 @@ fun Profile(
     isForceAttendanceSyncing: Boolean,
     onForceTimetableSync: () -> Unit,
     isForceTimetableSyncing: Boolean,
-    vtopClient: VtopClient?
+    vtopClient: VtopClient?,
+    appError: String? // Added this parameter to listen for sync errors
 ) {
     LaunchedEffect(Unit) {
         AnalyticsManager.logScreenView("Profile_Screen")
@@ -295,6 +296,14 @@ fun Profile(
     }
     var syncDropdownExpanded by remember { mutableStateOf(false) }
     val syncOptions = mapOf(0 to "None", 1 to "1 hr", 2 to "2 hrs", 4 to "4 hrs", 8 to "8 hrs")
+
+    // Trigger the credentials dialog if an Invalid Credentials error is intercepted
+    LaunchedEffect(appError) {
+        if (appError != null && (appError.contains("Invalid username or password") || appError.contains("password has changed"))) {
+            showCredDialog = true
+            // Optional: You could also clear the appError state via a callback here if needed
+        }
+    }
 
     when (currentPage) {
         ProfilePage.MAIN -> {
@@ -1221,8 +1230,10 @@ fun Profile(
             }
 
             if (showCredDialog) {
-                var tempReg by remember { mutableStateOf(currentRegNo) }
-                var tempPass by remember { mutableStateOf(currentPass) }
+                // Fetch directly from Vault so we always get the true saved state
+                val savedCreds = remember { com.vtop.utils.Vault.getCredentials(context) }
+                var tempReg by remember { mutableStateOf(savedCreds[0] ?: currentRegNo) }
+                var tempPass by remember { mutableStateOf(savedCreds[1] ?: currentPass) }
                 var passwordVisible by remember { mutableStateOf(false) }
 
                 AlertDialog(
@@ -1246,7 +1257,21 @@ fun Profile(
                         }
                     },
                     confirmButton = {
-                        Button(onClick = { onCredentialsSave(tempReg, tempPass); showCredDialog = false }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
+                        Button(
+                            onClick = {
+                                // 1. Force the physical save to the Vault immediately
+                                com.vtop.utils.Vault.saveCredentials(context, tempReg, tempPass)
+
+                                // 2. Trigger parent callbacks
+                                onCredentialsSave(tempReg, tempPass)
+
+                                // 3. Explicitly trigger the background sync with a fresh session
+                                onSyncClick(true)
+
+                                showCredDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) {
                             Text("Save & Sync", fontWeight = FontWeight.Bold)
                         }
                     },

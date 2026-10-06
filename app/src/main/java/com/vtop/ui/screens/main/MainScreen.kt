@@ -280,7 +280,8 @@ fun MainScreen(
                                     }
                                 },
                                 isForceTimetableSyncing = uiState.isForceTimetableSyncing,
-                                vtopClient = vtopClient
+                                vtopClient = vtopClient,
+                                appError = errorMsg
                             )
                         }
                     }

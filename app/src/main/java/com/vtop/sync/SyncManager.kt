@@ -58,7 +58,9 @@ object SyncManager {
                 val client: VtopClient
                 val username: String
 
-                if (existingClient != null) {
+                // FIX: Ignore the existing client if we are forcing a new session,
+                // so we can fetch the freshly updated password from the Vault!
+                if (existingClient != null && !forceNewSession) {
                     client = existingClient
                     username = client.username ?: ""
                 } else {
@@ -110,6 +112,8 @@ object SyncManager {
                                     }
                                 })
                             } catch (e: VtopException.InvalidCredentials) {
+                                // DO NOT wipe the Vault or explicitly log out.
+                                // Just invalidate the sync state and throw to UI.
                                 SessionManager.invalidateSync()
                                 throw e
                             } catch (e: VtopException.AuthenticationFailed) {
@@ -246,7 +250,6 @@ object SyncManager {
             }
         }
     }
-
     private fun syncTimetable(context: Context, client: VtopClient, semId: String) {
         TelemetryTracer.trace("Timetable", TelemetryModule.SYNC) {
             val html = client.fetchTimetableRawHtml(semId, null)

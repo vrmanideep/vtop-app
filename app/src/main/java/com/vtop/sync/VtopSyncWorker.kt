@@ -127,16 +127,20 @@ class VtopSyncWorker(
                         delay(2.seconds)
                     }
                 } catch (_: VtopException.InvalidCredentials) {
-                    Vault.saveCredentials(context, "", "")
-                    NotificationHelper.showNotification(context, "VTOP Sync Failed", "Your password may have changed. Please log in again.", 999)
+                    // WIPE STATE COMPLETELY TO PREVENT AUTO-LOGIN
+                    Vault.saveCredentials(context, "", "") // Nuke password
+                    val sharedPrefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
+                    sharedPrefs.edit().putBoolean("IS_EXPLICITLY_LOGGED_OUT", true).apply()
+
+                    NotificationHelper.showInvalidCredentialsNotification(context)
                     return@withContext Result.failure()
                 } catch (_: VtopException.AuthenticationFailed) {
-                    NotificationHelper.showNotification(context, "VTOP Account Locked", "Max attempts reached. Please login in VTOP manually.", 998)
+                    NotificationHelper.showAccountLockedNotification(context)
                     return@withContext Result.failure()
                 } catch (_: Exception) {
                     attempts++
                     client.reinitializeSession(context)
-                    delay(2000L) // <-- 2-second back-off added here
+                    delay(2000L) // <-- 2-second back-off
                 }
             }
 

@@ -289,6 +289,56 @@ object NotificationHelper {
             e.printStackTrace()
         }
     }
+
+    // 9. Fire Invalid Credentials Notification with Hyperlink
+    fun showInvalidCredentialsNotification(context: Context) {
+        val vtopIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://vtop.vitap.ac.in/vtop/"))
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            0,
+            vtopIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info) // TODO: Replace with app's icon
+            .setContentTitle("VTOP Sync Failed")
+            .setContentText("Your password has changed or is invalid.")
+            .setStyle(NotificationCompat.BigTextStyle().bigText("Your VTOP password has changed or is invalid. Please update it in the app."))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .addAction(android.R.drawable.ic_menu_view, "Open VTOP", pendingIntent)
+
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        telemetry("CREDENTIALS_FAILED_POSTED", "VTOP Sync Failed", 999)
+        notificationManager.notify(999, builder.build())
+    }
+
+    // 10. Fire Account Locked Notification with Hyperlink
+    fun showAccountLockedNotification(context: Context) {
+        val vtopIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://vtop.vitap.ac.in/vtop/"))
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            0,
+            vtopIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info) // TODO: Replace with app's icon
+            .setContentTitle("VTOP Account Locked")
+            .setContentText("Maximum login attempts reached.")
+            .setStyle(NotificationCompat.BigTextStyle().bigText("Maximum failed login attempts reached. Please open VTOP to unlock or reset your password."))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .addAction(android.R.drawable.ic_menu_view, "Open VTOP", pendingIntent)
+
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        telemetry("ACCOUNT_LOCKED_POSTED", "VTOP Account Locked", 998)
+        notificationManager.notify(998, builder.build())
+    }
 }
 
 object BatteryUtils {

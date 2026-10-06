@@ -257,6 +257,8 @@ public class VtopClient {
         return performLogin(context, listener);
     }
 
+    // VtopClient.java
+
     private boolean performLogin(Context context, LoginListener listener) throws Exception {
         if (listener != null) listener.onStatusUpdate("Opening VTOP...");
         Request initReq = new Request.Builder().url(BASE_URL + "/open/page").get().build();
@@ -305,6 +307,7 @@ public class VtopClient {
             String resp = res.body() != null ? res.body().string() : "";
             String finalUrl = res.request().url().toString();
 
+            // 1. Check for success first
             if (finalUrl.contains("/content") || resp.contains("Sign out")) {
                 if (resp.contains("Unable to process") || resp.length() < 1500) throw new VtopException.WafBlocked("Session blocked by VTOP Firewall");
                 persistCsrf(context, extractToken(resp));
@@ -313,17 +316,39 @@ public class VtopClient {
                 return true;
             }
 
-            String lowerResp = resp.toLowerCase(Locale.ENGLISH).replaceAll("\\s+", " ").trim();
+            // 2. Strip all HTML tags and normalize spaces to make error matching bulletproof
+            String cleanText = resp.replaceAll("<[^>]*>", " ").replaceAll("\\s+", " ").toLowerCase(Locale.ENGLISH);
+            boolean isOtpActive = Pattern.compile("var\\s+securityOtpPending\\s*=\\s*'?true'?").matcher(resp).find();
 
-            if (lowerResp.contains("invalid username/password")) throw new VtopException.InvalidCredentials("Invalid username or password.");
-            if (lowerResp.contains("invalid captcha")) throw new VtopException.CaptchaFailed("Invalid captcha.");
-            if (lowerResp.contains("maximum invalid log-in") || lowerResp.contains("locked") || lowerResp.contains("suspended")) {
+            // 3. Check for specific errors in the sanitized text
+            if (cleanText.contains("invalid login") || cleanText.contains("invalid password") || cleanText.contains("invalid username") || cleanText.contains("invalid userid")) {
+                throw new VtopException.InvalidCredentials("Invalid username or password.");
+            }
+
+            // NEW FIX: Catch the explicit maximum attempts hard-lock
+            if (cleanText.contains("maximum fail attempts reached") || cleanText.contains("use forgot password")) {
+                throw new VtopException.AuthenticationFailed("Account locked. Maximum failed attempts reached.");
+            }
+
+            if (cleanText.contains("invalid captcha")) {
+                throw new VtopException.CaptchaFailed("Invalid captcha.");
+            }
+
+            // Keep the generic lock checks just in case
+            if (cleanText.contains("maximum invalid") || cleanText.contains("locked") || cleanText.contains("suspended")) {
                 throw new VtopException.AuthenticationFailed("Account locked or suspended.");
             }
 
-            boolean isOtpActive = Pattern.compile("var\\s+securityOtpPending\\s*=\\s*'?true'?").matcher(resp).find();
+            // 4. Reliable URL Fallback: If it redirected to /login/error and is NOT an OTP prompt
+            if (finalUrl.contains("login/error") && !isOtpActive) {
+                if (cleanText.contains("captcha")) {
+                    throw new VtopException.CaptchaFailed("Invalid captcha.");
+                } else {
+                    throw new VtopException.InvalidCredentials("Invalid username or password.");
+                }
+            }
 
-            // Nested safe OTP null-checks
+            // 5. Handle OTP Flow
             if (isOtpActive) {
                 if (listener != null) {
                     listener.onStatusUpdate("OTP_REQUIRED");
@@ -370,10 +395,11 @@ public class VtopClient {
                     throw new VtopException.SessionExpired("OTP required but no active listener available.");
                 }
             }
+
+            // If all else fails, default to captcha failure to allow retry
             throw new VtopException.CaptchaFailed("Captcha incorrect or session expired.");
         }
     }
-
     public String fetchContentPageRawHtml() {
         try {
             Request request = new Request.Builder().url(BASE_URL + "/content").get().build();
