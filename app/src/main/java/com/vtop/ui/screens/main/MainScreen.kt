@@ -114,8 +114,11 @@ fun MainScreen(
     val syncStatus by viewModel.syncStatus
     val errorMsg by viewModel.appError
 
+    // FIX: Moved remember state outside of LaunchedEffect so it's globally available
+    val sharedPrefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
+    var showHolidaysOnHome by remember { mutableStateOf(sharedPrefs.getBoolean("SHOW_HOLIDAYS_ON_HOME", true)) }
+
     LaunchedEffect(Unit) {
-        val sharedPrefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
         if (sharedPrefs.contains("CUSTOM_ACCENT")) ThemeManager.customAccent.value = Color(sharedPrefs.getInt("CUSTOM_ACCENT", 0))
         if (sharedPrefs.contains("USE_DYNAMIC_COLOR")) ThemeManager.useDynamicColor.value = sharedPrefs.getBoolean("USE_DYNAMIC_COLOR", true)
         sharedPrefs.getString("APP_THEME", null)?.let { try { ThemeManager.themeMode.value = AppThemeMode.valueOf(it) } catch (_: Exception) {} }
@@ -184,7 +187,8 @@ fun MainScreen(
                                 timetable = it,
                                 attendanceData = attendanceData,
                                 examsData = examsData,
-                                vtopClient = SessionManager.getSyncClient() // Inject the live session here!
+                                vtopClient = SessionManager.getSyncClient(),
+                                showHolidays = showHolidaysOnHome
                             )
                         }
                     }
@@ -216,6 +220,8 @@ fun MainScreen(
                                 onMergeMarksChange = { viewModel.setMergeMarks(it) },
                                 showOutings = uiState.showOutings,
                                 onShowOutingsChange = { viewModel.setShowOutings(it) },
+                                showHolidaysOnHome = showHolidaysOnHome,
+                                onShowHolidaysOnHomeChange = { showHolidaysOnHome = it },
                                 onLogout = { onLogoutClick.run() },
                                 profileData = profileMap,
                                 selectedSemester = Vault.getSelectedSemester(context)[1] ?: "",

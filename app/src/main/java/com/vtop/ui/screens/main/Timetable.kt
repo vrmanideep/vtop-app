@@ -276,7 +276,8 @@ fun Timetable(
     attendanceData: List<AttendanceModel>,
     examsData: List<ExamScheduleModel> = emptyList(),
     holidays: Map<String, String> = emptyMap(),
-    vtopClient: VtopClient? = null
+    vtopClient: VtopClient? = null,
+    showHolidays: Boolean = true
 ) {
     LaunchedEffect(Unit) { AnalyticsManager.logScreenView("Timetable_Screen") }
     val context = LocalContext.current
@@ -434,7 +435,9 @@ fun Timetable(
                 val examsToday = sortedExams.filter { it.first == dateStr }.map { it.second }
                 val holidayToday = normalizedHolidays[dateStr]
 
-                val rawCourses = if (examsToday.isNotEmpty() || holidayToday != null) emptyList() else timetable.scheduleMap.entries.firstOrNull { it.key.trim().equals(dayName, ignoreCase = true) }?.value ?: emptyList()
+                val isHolidayVisible = showHolidays && holidayToday != null
+
+                val rawCourses = if (examsToday.isNotEmpty() || isHolidayVisible) emptyList() else timetable.scheduleMap.entries.firstOrNull { it.key.trim().equals(dayName, ignoreCase = true) }?.value ?: emptyList()
                 val isExpanded = expandedDateStr == dateStr
                 val daysOffset = abs(index - todayIndex)
                 val rowAlpha = when (daysOffset) { 0 -> 1f; 1, 2 -> 0.85f; in 3..5 -> 0.6f; in 6..14 -> 0.35f; else -> 0.15f }
@@ -491,8 +494,8 @@ fun Timetable(
                     }
                 } else if (isPrepDay && nextExamForPrep != null) {
                     NextExamGapRow(dateCal, nextExamForPrep, isToday, rowAlpha)
-                } else if (holidayToday != null) {
-                    HolidayRow(dateCal, holidayToday, isToday, rowAlpha)
+                } else if (isHolidayVisible) {
+                    HolidayRow(dateCal, holidayToday!!, isToday, rowAlpha)
                 } else if (rawCourses.isEmpty() && isWeekend && !isExpanded) {
                     WeekendSeparator(dayShort, dateCal.get(Calendar.DAY_OF_MONTH), rowAlpha)
                 } else {
@@ -529,7 +532,8 @@ fun Timetable(
                 allReminders = allReminders,
                 sortedExams = sortedExams,
                 normalizedHolidays = normalizedHolidays,
-                currentTimeStr = currentTimeStr
+                currentTimeStr = currentTimeStr,
+                showHolidays = showHolidays
             )
         }
 
@@ -596,7 +600,8 @@ fun NextClassCard(
     allReminders: List<CourseReminder>,
     sortedExams: List<Pair<String, ExamScheduleModel>>,
     normalizedHolidays: Map<String, String>,
-    currentTimeStr: String
+    currentTimeStr: String,
+    showHolidays: Boolean = true
 ) {
     val context = LocalContext.current
     val sharedPrefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
@@ -605,7 +610,7 @@ fun NextClassCard(
     val themeOnSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
     val sdfDateKey = remember { SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH) }
 
-    val nextEvent: Pair<Any, Pair<String, Color>>? = remember(timetable, sortedExams, normalizedHolidays, currentTimeStr) {
+    val nextEvent: Pair<Any, Pair<String, Color>>? = remember(timetable, sortedExams, normalizedHolidays, currentTimeStr, showHolidays) {
         val mergeLabs = sharedPrefs.getBoolean("MERGE_LABS", true)
         val cal = Calendar.getInstance()
         val todayStrKey = sdfDateKey.format(cal.time)
@@ -614,7 +619,7 @@ fun NextClassCard(
         if (examToday != null) return@remember Pair(examToday, "EXAM TODAY" to themePrimary)
 
         val holidayToday = normalizedHolidays[todayStrKey]
-        if (holidayToday != null) {
+        if (showHolidays && holidayToday != null) {
             return@remember Pair(holidayToday, "HOLIDAY TODAY" to Color(0xFF10B981))
         }
 
@@ -664,7 +669,7 @@ fun NextClassCard(
                 }
             }
 
-            if (normalizedHolidays.containsKey(searchStrKey)) continue
+            if (showHolidays && normalizedHolidays.containsKey(searchStrKey)) continue
 
             val futureDayStr = SimpleDateFormat("EEEE", Locale.ENGLISH).format(searchCal.time)
             val futureCourses = processAndMergeCourses(timetable.scheduleMap.entries.firstOrNull { it.key.trim().equals(futureDayStr, ignoreCase = true) }?.value ?: emptyList(), mergeLabs)

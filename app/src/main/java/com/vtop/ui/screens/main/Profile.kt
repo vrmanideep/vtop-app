@@ -168,6 +168,8 @@ fun Profile(
     onMergeMarksChange: (Boolean) -> Unit,
     showOutings: Boolean,
     onShowOutingsChange: (Boolean) -> Unit,
+    showHolidaysOnHome: Boolean,
+    onShowHolidaysOnHomeChange: (Boolean) -> Unit,
     onLogout: () -> Unit,
     profileData: Map<String, Map<String, String>>,
     selectedSemester: String,
@@ -685,6 +687,28 @@ fun Profile(
                                     onCheckedChange = { newValue ->
                                         sharedPrefs.edit().putBoolean("SHOW_OUTINGS", newValue).apply()
                                         onShowOutingsChange(newValue)
+                                    }
+                                )
+                            }
+
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
+                            // Show Holidays on Home Toggle
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Show Holidays on Home", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                    Spacer(Modifier.height(2.dp))
+                                    Text("Display upcoming holidays and events in Timetable", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Switch(
+                                    checked = showHolidaysOnHome,
+                                    onCheckedChange = { newValue ->
+                                        sharedPrefs.edit().putBoolean("SHOW_HOLIDAYS_ON_HOME", newValue).apply()
+                                        onShowHolidaysOnHomeChange(newValue)
                                     }
                                 )
                             }
