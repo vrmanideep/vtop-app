@@ -1,3 +1,13 @@
+@file:Suppress(
+    "SpellCheckingInspection",
+    "UNUSED_VARIABLE",
+    "UNUSED_PARAMETER",
+    "UseKtx",
+    "RedundantSamConstructor",
+    "RemoveRedundantQualifierName",
+    "CanBeVal"
+)
+
 package com.vtop.ui.screens.sub
 
 import android.annotation.SuppressLint
@@ -73,13 +83,15 @@ data class BunkOccurrence(
         get() = "$date|$courseCode|$courseType|$slot"
 }
 
+
 data class AuditLogEntry(
     val dateStr: String,
     val dayOfWeek: String,
     val reason: String,
     val deltaClasses: Int,
     val isBunk: Boolean,
-    val occurrences: List<BunkOccurrence>
+    val occurrences: List<BunkOccurrence>,
+    val isPosted: Boolean = false
 )
 
 data class CourseTypeBunkUiModel(
@@ -132,8 +144,9 @@ private fun parseAttendanceDate(
 
         if (parts.size != 2) return null
 
-        val day = parts[0].toInt()
-        val month = parts[1].toInt()
+        val (dayStr, monthStr) = parts
+        val day = dayStr.toInt()
+        val month = monthStr.toInt()
 
         LocalDate.of(referenceDate.year, month, day)
     } catch (_: Exception) {
@@ -312,27 +325,44 @@ private fun getClassesForDate(
     date: LocalDate
 ): List<CourseSession> {
     val dayKey = date.dayOfWeek.name
-    return timetable.scheduleMap?.entries?.firstOrNull {
+    return timetable.scheduleMap.entries.firstOrNull {
         it.key.equals(dayKey, ignoreCase = true)
     }?.value.orEmpty()
 }
 
 @SuppressLint("NewApi")
 fun getCalendarContext(context: Context, selectedSemester: String): CalendarContext {
-    val semId = com.vtop.utils.Vault.getSelectedSemester(context)[0]
-    val liveEvents = com.vtop.utils.Vault.getAcademicCalendar(context, semId)
+    val (semId) = com.vtop.utils.Vault.getSelectedSemester(context)
+    val liveEvents = com.vtop.utils.Vault.getAcademicCalendar(context, semId ?: "")
 
     if (liveEvents.isEmpty()) return CalendarContext(semesterName = selectedSemester)
 
-    val sdfParse = java.text.SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH)
+    // 1. Multi-format parsing to catch both "AUG" and "AUGUST"
+    val parseFormats = listOf(
+        java.text.SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH),
+        java.text.SimpleDateFormat("dd-MMMM-yyyy", Locale.ENGLISH)
+    )
+
+    fun parseEventDateSafely(dateStr: String?): java.util.Date? {
+        if (dateStr == null) return null
+        for (f in parseFormats) {
+            try {
+                val d = f.parse(dateStr)
+                if (d != null) return d
+            } catch (_: Exception) {}
+        }
+        return null
+    }
+
     var startDate = java.time.LocalDate.MAX
     var endDate = java.time.LocalDate.MIN
     val holidays = mutableMapOf<LocalDate, String>()
     val weekOffs = listOf("SUNDAY")
 
+    // 2. Safe property access (bypassing the dangerous destructuring order)
     for (event in liveEvents) {
         try {
-            val dateObj = sdfParse.parse(event.date) ?: continue
+            val dateObj = parseEventDateSafely(event.date) ?: continue
             val localDate = Instant.ofEpochMilli(dateObj.time).atZone(ZoneId.systemDefault()).toLocalDate()
             val title = event.particulars.lowercase(Locale.ENGLISH)
 
@@ -343,13 +373,14 @@ fun getCalendarContext(context: Context, selectedSemester: String): CalendarCont
                 if (localDate.isAfter(endDate)) endDate = localDate
             }
 
-            // Refined check to explicitly allow LAB FAT as an instructional day
+            // Exclude holidays and exam days safely, but ensure LAB FAT remains instructional
             val isHoliday = title.contains("holiday") ||
                     title.contains("no instructional") ||
                     title.contains("non instructional") ||
                     title.contains("exam") ||
-                    (title.contains("cat") && !title.contains("vacation")) ||
-                    (title.contains("fat") && !title.contains("lab fat"))
+                    title.contains("assessment") ||
+                    (title.contains("fat") && !title.contains("lab fat")) ||
+                    (title.contains("cat") && !title.contains("vacation"))
 
             if (isHoliday) {
                 holidays[localDate] = event.particulars
@@ -359,14 +390,14 @@ fun getCalendarContext(context: Context, selectedSemester: String): CalendarCont
 
     if (startDate == java.time.LocalDate.MAX) {
         startDate = try {
-            val d = sdfParse.parse(liveEvents.first().date)
+            val d = parseEventDateSafely(liveEvents.first().date)
             Instant.ofEpochMilli(d!!.time).atZone(ZoneId.systemDefault()).toLocalDate()
         } catch (_: Exception) { LocalDate.MIN }
     }
 
     if (endDate == java.time.LocalDate.MIN) {
         endDate = try {
-            val d = sdfParse.parse(liveEvents.last().date)
+            val d = parseEventDateSafely(liveEvents.last().date)
             Instant.ofEpochMilli(d!!.time).atZone(ZoneId.systemDefault()).toLocalDate()
         } catch (_: Exception) { LocalDate.MAX }
     }
@@ -397,8 +428,8 @@ fun BunkSimulatorTab(
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
 
-    val semesterId = remember(selectedSemester) { com.vtop.utils.Vault.getSelectedSemester(context)[0] }
-    val academicCalendar = remember(selectedSemester) { com.vtop.utils.Vault.getAcademicCalendar(context, semesterId) }
+    val (semesterId) = remember(selectedSemester) { com.vtop.utils.Vault.getSelectedSemester(context) }
+    val academicCalendar = remember(selectedSemester) { com.vtop.utils.Vault.getAcademicCalendar(context, semesterId ?: "") }
     val calCtx = remember(selectedSemester) { getCalendarContext(context, selectedSemester) }
     val today = LocalDate.now()
 
@@ -409,7 +440,7 @@ fun BunkSimulatorTab(
     var customTargetDate by remember {
         val savedEpoch = prefs.getLong("BUNK_CUSTOM_DATE", -1L)
         val initialDate = if (savedEpoch != -1L) Instant.ofEpochMilli(savedEpoch).atZone(ZoneId.of("UTC")).toLocalDate() else null
-        mutableStateOf<LocalDate?>(initialDate)
+        mutableStateOf(initialDate)
     }
 
     var showTargetDatePicker by remember { mutableStateOf(false) }
@@ -440,8 +471,8 @@ fun BunkSimulatorTab(
         else -> examTarget?.name ?: "END OF SEMESTER"
     }
 
-    var selectedDates by remember { mutableStateOf<Set<LocalDate>>(emptySet()) }
-    var attendanceOverrides by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var selectedDates by remember { mutableStateOf(emptySet<LocalDate>()) }
+    var attendanceOverrides by remember { mutableStateOf(emptySet<String>()) }
     var showBunkDatePicker by remember { mutableStateOf(false) }
 
     // --- Core Calculation Pipeline (Derived State) ---
@@ -456,7 +487,7 @@ fun BunkSimulatorTab(
             var theoryModel: CourseTypeBunkUiModel? = null
             var labModel: CourseTypeBunkUiModel? = null
 
-            val courseName = timetable.scheduleMap?.values?.flatten()?.firstOrNull { it.courseCode == code }?.courseName
+            val courseName = timetable.scheduleMap.values.flatten().firstOrNull { it.courseCode == code }?.courseName
 
             attList.forEach { att ->
                 val isLab = isLabType(att.courseType)
@@ -464,9 +495,23 @@ fun BunkSimulatorTab(
 
                 val noData = try { att.history.isNullOrEmpty() } catch (_: Exception) { true }
                 val postedDates = getPostedDates(att, today)
-                val lastPostedDate = postedDates.maxOrNull()
 
-                val projectionStartDate = lastPostedDate?.plusDays(1) ?: calCtx.startDate
+                // Robust binary matching for Course Start Dates
+                val specificStartDateStr = timetable.courseStartDates.entries.find { (key, _) ->
+                    if (key.startsWith("$code|")) {
+                        val typePart = key.substringAfter("|").uppercase(Locale.ENGLISH)
+                        val isMapKeyLab = typePart.contains("LAB") || typePart.contains("PRACTICAL") || typePart.contains("ELA") || typePart == "LO" || typePart == "L" || typePart == "P"
+                        isLab == isMapKeyLab
+                    } else false
+                }?.value
+
+                val projectionStartDate = specificStartDateStr?.let {
+                    try {
+                        val formatter = DateTimeFormatter.ofPattern("dd-MMM-yyyy", Locale.ENGLISH)
+                        val parsed = LocalDate.parse(it, formatter)
+                        if (parsed.isAfter(calCtx.startDate.minusMonths(1)) && parsed.isBefore(calCtx.trueEndDate.plusMonths(1))) parsed else calCtx.startDate
+                    } catch (_: Exception) { calCtx.startDate }
+                } ?: calCtx.startDate
 
                 val attended = att.attendedClasses?.toIntOrNull() ?: 0
                 val total = att.totalClasses?.toIntOrNull() ?: 0
@@ -477,15 +522,16 @@ fun BunkSimulatorTab(
                 val selectedOccurrences = mutableListOf<BunkOccurrence>()
                 val auditLog = mutableListOf<AuditLogEntry>()
 
-                val dFormatter = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH)
                 val dateOnlyFmt = DateTimeFormatter.ofPattern("dd MMM", Locale.ENGLISH)
                 val dayOnlyFmt = DateTimeFormatter.ofPattern("EEE", Locale.ENGLISH)
 
-                val auditStartStr = lastPostedDate?.format(dFormatter) ?: "Semester Start"
+                val auditStartStr = "Current Standings"
 
                 var curr = projectionStartDate
                 while (!curr.isAfter(calculationEndDate)) {
-                    if (isInstructionalDay(curr, calCtx)) {
+                    val isPosted = postedDates.contains(curr)
+
+                    if (isInstructionalDay(curr, calCtx) || isPosted) {
                         val matchingClasses = getClassesForDate(timetable, curr).filter {
                             it.courseCode == code && isSameTypeGroup(it.courseType, att.courseType)
                         }
@@ -493,60 +539,58 @@ fun BunkSimulatorTab(
                         val weight = matchingClasses.sumOf { getSlotWeight(it.slot) }
 
                         if (weight > 0) {
-                            remaining += weight
-
-                            val isSelected = selectedDates.contains(curr)
-                            val isGapDay = !curr.isAfter(today)
-
+                            val isPast = !curr.isAfter(today)
                             val dStr = curr.format(dateOnlyFmt)
                             val dayStr = curr.format(dayOnlyFmt)
 
-                            val bunkOccs = mutableListOf<BunkOccurrence>()
-                            val attendOccs = mutableListOf<BunkOccurrence>()
+                            if (isPosted) {
+                                val historyMatches = att.history?.filter { parseAttendanceDate(it.date, today) == curr }.orEmpty()
 
-                            matchingClasses.forEach { session ->
-                                val sessionWeight = getSlotWeight(session.slot)
+                                // Split the weights to track On Duty separately
+                                val presentWeight = historyMatches.count { it.status?.contains("Present", true) == true || it.status?.contains("Attended", true) == true }
+                                val onDutyWeight = historyMatches.count { it.status?.contains("On Duty", true) == true }
+                                val bunkedWeight = historyMatches.count { it.status?.contains("Absent", true) == true }
 
-                                if (sessionWeight > 0) {
-                                    val isDefaultBunk = isSelected
-                                    val occurrence = BunkOccurrence(
-                                        date = curr,
-                                        courseCode = code,
-                                        courseType = att.courseType ?: "",
-                                        slot = session.slot ?: "",
-                                        weight = sessionWeight,
-                                        isDefaultBunk = isDefaultBunk
-                                    )
+                                if (presentWeight > 0) {
+                                    auditLog.add(AuditLogEntry(dStr, dayStr, "Present", presentWeight, false, emptyList(), true))
+                                }
+                                if (onDutyWeight > 0) {
+                                    auditLog.add(AuditLogEntry(dStr, dayStr, "On Duty", onDutyWeight, false, emptyList(), true))
+                                }
+                                if (bunkedWeight > 0) {
+                                    auditLog.add(AuditLogEntry(dStr, dayStr, "Absent", bunkedWeight, true, emptyList(), true))
+                                }
+                                // Fallback if status parsing fails
+                                if (presentWeight == 0 && onDutyWeight == 0 && bunkedWeight == 0) {
+                                    auditLog.add(AuditLogEntry(dStr, dayStr, "Posted", weight, false, emptyList(), true))
+                                }
+                            } else {
+                                remaining += weight
 
-                                    val isBunking = if (isDefaultBunk) {
-                                        occurrence.key !in attendanceOverrides
-                                    } else {
-                                        occurrence.key in attendanceOverrides
-                                    }
+                                val isSelected = selectedDates.contains(curr)
 
-                                    if (isSelected || isGapDay || isBunking) {
-                                        selectedOccurrences += occurrence
-                                    }
+                                val bunkOccs = mutableListOf<BunkOccurrence>()
+                                val attendOccs = mutableListOf<BunkOccurrence>()
 
-                                    if (isBunking) {
-                                        plannedBunks += sessionWeight
-                                        bunkOccs += occurrence
-                                    } else {
-                                        attendOccs += occurrence
+                                matchingClasses.forEach { session ->
+                                    val sessionWeight = getSlotWeight(session.slot)
+
+                                    if (sessionWeight > 0) {
+                                        val occurrence = BunkOccurrence(curr, code, att.courseType ?: "", session.slot ?: "", sessionWeight, isSelected)
+                                        val isBunking = if (isSelected) occurrence.key !in attendanceOverrides else occurrence.key in attendanceOverrides
+
+                                        if (isSelected || isPast || isBunking) selectedOccurrences += occurrence
+                                        if (isBunking) {
+                                            plannedBunks += sessionWeight
+                                            bunkOccs += occurrence
+                                        } else {
+                                            attendOccs += occurrence
+                                        }
                                     }
                                 }
-                            }
 
-                            if (bunkOccs.isNotEmpty()) {
-                                val dWeight = bunkOccs.sumOf { it.weight }
-                                val reason = if (isGapDay) "Not posted (Bunked)" else "Planned Bunk"
-                                auditLog.add(AuditLogEntry(dStr, dayStr, reason, dWeight, true, bunkOccs))
-                            }
-
-                            if (attendOccs.isNotEmpty()) {
-                                val dWeight = attendOccs.sumOf { it.weight }
-                                val reason = if (isGapDay) "Not posted (Attended)" else "Future class"
-                                auditLog.add(AuditLogEntry(dStr, dayStr, reason, dWeight, false, attendOccs))
+                                if (bunkOccs.isNotEmpty()) auditLog.add(AuditLogEntry(dStr, dayStr, if (isPast) "Not posted (Bunked)" else "Planned Bunk", bunkOccs.sumOf { it.weight }, true, bunkOccs))
+                                if (attendOccs.isNotEmpty()) auditLog.add(AuditLogEntry(dStr, dayStr, if (isPast) "Not posted (Attended)" else "Future class", attendOccs.sumOf { it.weight }, false, attendOccs))
                             }
                         }
                     }
@@ -916,7 +960,6 @@ fun BunkSimulatorTab(
                     CourseBunkCard(
                         course = course,
                         examName = examName,
-                        calculationDateStr = calculationEndDate.format(dateFormatter),
                         attendanceOverrides = attendanceOverrides,
                         onAttendanceOverrideChange = { occurrence, wantsToAttend ->
                             val wantsToBunk = !wantsToAttend
@@ -991,7 +1034,6 @@ fun BunkSimulatorTab(
 fun CourseBunkCard(
     course: CourseBunkUiModel,
     examName: String,
-    calculationDateStr: String,
     attendanceOverrides: Set<String>,
     onAttendanceOverrideChange: (BunkOccurrence, Boolean) -> Unit
 ) {
@@ -1000,7 +1042,6 @@ fun CourseBunkCard(
     val activeComponent = if (selectedTab == "Theory") course.theory else course.lab
     if (activeComponent == null) return
 
-    val isSafe = activeComponent.projectedPct >= 75f && !activeComponent.noData
     val isDanger = activeComponent.projectedPct < 75f && !activeComponent.noData
 
     val statusColor = when {
@@ -1011,6 +1052,7 @@ fun CourseBunkCard(
 
     var bunksExpanded by rememberSaveable { mutableStateOf(false) }
     var showDetailsDialog by rememberSaveable { mutableStateOf(false) }
+    var showPostedClasses by rememberSaveable { mutableStateOf(false) }
 
     Card(
         modifier = Modifier.fillMaxWidth().animateContentSize(),
@@ -1136,7 +1178,6 @@ fun CourseBunkCard(
                                 val hasOverride = occurrence.key in attendanceOverrides
                                 val isBunking = if (occurrence.isDefaultBunk) !hasOverride else hasOverride
                                 val isAttending = !isBunking
-                                val wantsToAttend = isBunking
 
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp, horizontal = 4.dp),
@@ -1160,7 +1201,7 @@ fun CourseBunkCard(
                                     }
 
                                     Button(
-                                        onClick = { onAttendanceOverrideChange(occurrence, wantsToAttend) },
+                                        onClick = { onAttendanceOverrideChange(occurrence, isBunking) },
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = if (isAttending) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
                                             contentColor = if (isAttending) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
@@ -1296,6 +1337,22 @@ fun CourseBunkCard(
                         }
                     }
 
+                    // --- Toggle Button & Header ---
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("CLASS BREAKDOWN", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        TextButton(
+                            onClick = { showPostedClasses = !showPostedClasses },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            modifier = Modifier.height(24.dp)
+                        ) {
+                            Text(if (showPostedClasses) "Hide Posted" else "View Posted", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
                     // --- Table Header ---
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
@@ -1308,7 +1365,9 @@ fun CourseBunkCard(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                     // --- Scrollable Table Body ---
-                    if (activeComponent.auditLog.isEmpty()) {
+                    val visibleLog = if (showPostedClasses) activeComponent.auditLog else activeComponent.auditLog.filter { !it.isPosted }
+
+                    if (visibleLog.isEmpty()) {
                         Text(
                             text = "No classes found before target date.",
                             fontSize = 12.sp,
@@ -1317,23 +1376,34 @@ fun CourseBunkCard(
                         )
                     } else {
                         LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
-                            items(activeComponent.auditLog) { entry ->
+                            items(visibleLog) { entry ->
                                 val isInteractive = entry.occurrences.isNotEmpty()
-                                val impactStr = if (entry.isBunk) "-${entry.deltaClasses}" else "+${entry.deltaClasses}"
+                                val impactStr = if (entry.isBunk) "0" else "+${entry.deltaClasses}"
+
+                                // Detect OD for custom styling
+                                val isOD = entry.reason == "On Duty"
+
+                                val rowColor = when {
+                                    entry.isBunk -> MaterialTheme.colorScheme.error
+                                    isOD -> Color(0xFF3B82F6) // Vivid Blue for OD
+                                    else -> MaterialTheme.colorScheme.primary
+                                }
+
+                                val iconTint = when {
+                                    entry.isBunk -> MaterialTheme.colorScheme.error
+                                    isOD -> Color(0xFF3B82F6)
+                                    else -> Color(0xFF10B981) // Green for Present
+                                }
 
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(horizontal = 2.dp, vertical = 4.dp)
                                         .clip(RoundedCornerShape(8.dp))
-                                        .background(
-                                            if (entry.isBunk) MaterialTheme.colorScheme.error.copy(alpha = 0.05f)
-                                            else MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)
-                                        )
+                                        .background(rowColor.copy(alpha = 0.05f))
                                         .border(
                                             width = 1.dp,
-                                            color = if (entry.isBunk) MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
-                                            else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                            color = rowColor.copy(alpha = 0.15f),
                                             shape = RoundedCornerShape(8.dp)
                                         )
                                         .padding(horizontal = 8.dp, vertical = 10.dp),
@@ -1350,12 +1420,12 @@ fun CourseBunkCard(
                                         Icon(
                                             imageVector = if (entry.isBunk) Icons.Default.Close else Icons.Default.Check,
                                             contentDescription = null,
-                                            tint = if (entry.isBunk) MaterialTheme.colorScheme.error else Color(0xFF10B981),
+                                            tint = iconTint,
                                             modifier = Modifier.size(14.dp)
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
-                                            text = "${entry.reason} ($impactStr)",
+                                            text = entry.reason, // Removed the ($impactStr) from here
                                             fontSize = 12.sp,
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
@@ -1369,7 +1439,7 @@ fun CourseBunkCard(
                                                 color = if (isAttending) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
                                                 shape = RoundedCornerShape(6.dp),
                                                 modifier = Modifier.clickable {
-                                                    val newAttendState = entry.isBunk // Toggle the current state
+                                                    val newAttendState = entry.isBunk
                                                     entry.occurrences.forEach { occ ->
                                                         onAttendanceOverrideChange(occ, newAttendState)
                                                     }
@@ -1384,7 +1454,13 @@ fun CourseBunkCard(
                                                 )
                                             }
                                         } else {
-                                            Text("-", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            // Replaced the "-" with the beautifully styled impact number (+1 / -1)
+                                            Text(
+                                                text = impactStr,
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Black,
+                                                color = iconTint
+                                            )
                                         }
                                     }
                                 }

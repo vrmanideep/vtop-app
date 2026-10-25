@@ -8,7 +8,7 @@ import java.util.Map;
 public class TimetableModel {
     public Map<String, List<CourseSession>> scheduleMap = new HashMap<>();
 
-    // NEW: Map to hold exact start dates. Key = "CourseCode|CourseType", Value = "dd-MMM-yyyy"
+    // Map to hold exact start dates. Key = "CourseCode|CourseType", Value = "dd-MMM-yyyy"
     public Map<String, String> courseStartDates = new HashMap<>();
 
     public TimetableModel() {
