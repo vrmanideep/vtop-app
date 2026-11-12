@@ -473,11 +473,13 @@ fun BunkSimulatorTab(
 
     var selectedDates by remember { mutableStateOf(emptySet<LocalDate>()) }
     var attendanceOverrides by remember { mutableStateOf(emptySet<String>()) }
+    var postedOverrides by remember { mutableStateOf(emptyMap<String, Boolean>()) }
     var showBunkDatePicker by remember { mutableStateOf(false) }
 
     // --- Core Calculation Pipeline (Derived State) ---
-    val groupedCourses = remember(selectedDates, attendanceOverrides, timetable, attendanceData, calculationEndDate, calCtx) {
-        val courseMap = mutableMapOf<String, MutableList<AttendanceModel>>()
+    // --- Core Calculation Pipeline (Derived State) ---
+    val groupedCourses = remember(selectedDates, attendanceOverrides, postedOverrides, timetable, attendanceData, calculationEndDate, calCtx) {
+    val courseMap = mutableMapOf<String, MutableList<AttendanceModel>>()
         attendanceData.forEach { att ->
             val code = att.courseCode ?: return@forEach
             courseMap.getOrPut(code) { mutableListOf() }.add(att)
@@ -519,6 +521,9 @@ fun BunkSimulatorTab(
 
                 var remaining = 0
                 var plannedBunks = 0
+                var futureBunks = 0 // Tracks only future bunks for accurate remaining safe bunks
+                var simulatedAttended = attended
+
                 val selectedOccurrences = mutableListOf<BunkOccurrence>()
                 val auditLog = mutableListOf<AuditLogEntry>()
 
@@ -546,27 +551,50 @@ fun BunkSimulatorTab(
                             if (isPosted) {
                                 val historyMatches = att.history?.filter { parseAttendanceDate(it.date, today) == curr }.orEmpty()
 
-                                // Split the weights to track On Duty separately
-                                val presentWeight = historyMatches.count { it.status?.contains("Present", true) == true || it.status?.contains("Attended", true) == true }
-                                val onDutyWeight = historyMatches.count { it.status?.contains("On Duty", true) == true }
-                                val bunkedWeight = historyMatches.count { it.status?.contains("Absent", true) == true }
+                                val bunkOccs = mutableListOf<BunkOccurrence>()
+                                val attendOccs = mutableListOf<BunkOccurrence>()
+                                val odOccs = mutableListOf<BunkOccurrence>()
 
-                                if (presentWeight > 0) {
-                                    auditLog.add(AuditLogEntry(dStr, dayStr, "Present", presentWeight, false, emptyList(), true))
+                                matchingClasses.forEach { session ->
+                                    val sessionWeight = getSlotWeight(session.slot)
+                                    if (sessionWeight > 0) {
+                                        val occurrence = BunkOccurrence(curr, code, att.courseType ?: "", session.slot ?: "", sessionWeight, false)
+
+                                        val overriddenStatus = postedOverrides[occurrence.key]
+                                        val isActuallyPresent = historyMatches.any { it.slot?.contains(session.slot ?: "") == true && (it.status?.contains("Present", true) == true || it.status?.contains("Attended", true) == true) }
+                                        val isActuallyOD = historyMatches.any { it.slot?.contains(session.slot ?: "") == true && it.status?.contains("On Duty", true) == true }
+
+                                        val wasAttended = isActuallyPresent || isActuallyOD
+                                        val finalIsPresent = overriddenStatus ?: wasAttended
+
+                                        // Accurately adjust attendance only if manually changed
+                                        if (wasAttended && !finalIsPresent) {
+                                            simulatedAttended -= sessionWeight
+                                        } else if (!wasAttended && finalIsPresent) {
+                                            simulatedAttended += sessionWeight
+                                        }
+
+                                        if (finalIsPresent) {
+                                            if (isActuallyOD && overriddenStatus == null) odOccs += occurrence else attendOccs += occurrence
+                                        } else {
+                                            bunkOccs += occurrence
+                                        }
+
+                                        // Only add to the UI dropdown if explicitly overridden
+                                        if (overriddenStatus != null) {
+                                            selectedOccurrences += occurrence
+                                            if (!finalIsPresent) plannedBunks += sessionWeight
+                                        }
+                                    }
                                 }
-                                if (onDutyWeight > 0) {
-                                    auditLog.add(AuditLogEntry(dStr, dayStr, "On Duty", onDutyWeight, false, emptyList(), true))
-                                }
-                                if (bunkedWeight > 0) {
-                                    auditLog.add(AuditLogEntry(dStr, dayStr, "Absent", bunkedWeight, true, emptyList(), true))
-                                }
-                                // Fallback if status parsing fails
-                                if (presentWeight == 0 && onDutyWeight == 0 && bunkedWeight == 0) {
-                                    auditLog.add(AuditLogEntry(dStr, dayStr, "Posted", weight, false, emptyList(), true))
-                                }
+
+                                if (attendOccs.isNotEmpty()) auditLog.add(AuditLogEntry(dStr, dayStr, "Present", attendOccs.sumOf { it.weight }, false, attendOccs, true))
+                                if (odOccs.isNotEmpty()) auditLog.add(AuditLogEntry(dStr, dayStr, "On Duty", odOccs.sumOf { it.weight }, false, odOccs, true))
+                                if (bunkOccs.isNotEmpty()) auditLog.add(AuditLogEntry(dStr, dayStr, "Absent", bunkOccs.sumOf { it.weight }, true, bunkOccs, true))
+                                if (attendOccs.isEmpty() && odOccs.isEmpty() && bunkOccs.isEmpty()) auditLog.add(AuditLogEntry(dStr, dayStr, "Posted", weight, false, emptyList(), true))
+
                             } else {
                                 remaining += weight
-
                                 val isSelected = selectedDates.contains(curr)
 
                                 val bunkOccs = mutableListOf<BunkOccurrence>()
@@ -580,10 +608,13 @@ fun BunkSimulatorTab(
                                         val isBunking = if (isSelected) occurrence.key !in attendanceOverrides else occurrence.key in attendanceOverrides
 
                                         if (isSelected || isPast || isBunking) selectedOccurrences += occurrence
+
                                         if (isBunking) {
                                             plannedBunks += sessionWeight
+                                            futureBunks += sessionWeight
                                             bunkOccs += occurrence
                                         } else {
+                                            simulatedAttended += sessionWeight
                                             attendOccs += occurrence
                                         }
                                     }
@@ -597,12 +628,13 @@ fun BunkSimulatorTab(
                     curr = curr.plusDays(1)
                 }
 
-                val projectedAttended = attended + remaining - plannedBunks
+                // Final accurate projection mapping
+                val projectedAttended = simulatedAttended
                 val projectedTotal = total + remaining
                 val projectedPct = if (projectedTotal > 0) projectedAttended.toFloat() / projectedTotal * 100f else 0f
 
                 val rawSafe = floor(projectedAttended - 0.75 * projectedTotal).toInt()
-                val remainingUnselected = (remaining - plannedBunks).coerceAtLeast(0)
+                val remainingUnselected = (remaining - futureBunks).coerceAtLeast(0)
                 val additionalSafeBunks = rawSafe.coerceIn(0, remainingUnselected)
 
                 val model = CourseTypeBunkUiModel(
@@ -961,6 +993,7 @@ fun BunkSimulatorTab(
                         course = course,
                         examName = examName,
                         attendanceOverrides = attendanceOverrides,
+                        postedOverrides = postedOverrides, // NEW: Pass the state
                         onAttendanceOverrideChange = { occurrence, wantsToAttend ->
                             val wantsToBunk = !wantsToAttend
                             val needsOverride = occurrence.isDefaultBunk != wantsToBunk
@@ -970,6 +1003,9 @@ fun BunkSimulatorTab(
                             } else {
                                 attendanceOverrides - occurrence.key
                             }
+                        },
+                        onPostedOverrideChange = { occurrence, newAttendState -> // NEW: Pass the callback
+                            postedOverrides = postedOverrides + (occurrence.key to newAttendState)
                         }
                     )
                 }
@@ -1035,7 +1071,9 @@ fun CourseBunkCard(
     course: CourseBunkUiModel,
     examName: String,
     attendanceOverrides: Set<String>,
-    onAttendanceOverrideChange: (BunkOccurrence, Boolean) -> Unit
+    postedOverrides: Map<String, Boolean>,
+    onAttendanceOverrideChange: (BunkOccurrence, Boolean) -> Unit,
+    onPostedOverrideChange: (BunkOccurrence, Boolean) -> Unit
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(if (course.theory != null) "Theory" else "Lab") }
 
@@ -1353,6 +1391,17 @@ fun CourseBunkCard(
                         }
                     }
 
+                    // NEW: The Micro-Tip (Only shows when posted classes are expanded)
+                    if (showPostedClasses) {
+                        Text(
+                            text = "Tip: Tap a posted class to override its status.",
+                            fontSize = 9.sp,
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 4.dp) // Fixed modifier signature
+                        )
+                    }
+
                     // --- Table Header ---
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
@@ -1441,26 +1490,34 @@ fun CourseBunkCard(
                                                 modifier = Modifier.clickable {
                                                     val newAttendState = entry.isBunk
                                                     entry.occurrences.forEach { occ ->
-                                                        onAttendanceOverrideChange(occ, newAttendState)
+                                                        if (entry.isPosted) {
+                                                            onPostedOverrideChange(occ, newAttendState) // Fixes the unresolved reference!
+                                                        } else {
+                                                            onAttendanceOverrideChange(occ, newAttendState)
+                                                        }
                                                     }
                                                 }
                                             ) {
-                                                Text(
-                                                    text = if (isAttending) "- Bunk" else "+ Add",
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = if (isAttending) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
-                                                )
+                                                if (entry.isPosted) {
+                                                    Text(
+                                                        text = impactStr,
+                                                        fontSize = 12.sp,
+                                                        fontWeight = FontWeight.Black,
+                                                        color = iconTint,
+                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                                    )
+                                                } else {
+                                                    Text(
+                                                        text = if (isAttending) "- Bunk" else "+ Add",
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (isAttending) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                                                    )
+                                                }
                                             }
                                         } else {
-                                            // Replaced the "-" with the beautifully styled impact number (+1 / -1)
-                                            Text(
-                                                text = impactStr,
-                                                fontSize = 14.sp,
-                                                fontWeight = FontWeight.Black,
-                                                color = iconTint
-                                            )
+                                            Text("-", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
                                 }
