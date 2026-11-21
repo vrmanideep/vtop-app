@@ -410,6 +410,27 @@ class MainActivity : ComponentActivity() {
                                         onBack = { navController.popBackStack() }
                                     )
                                 }
+                                composable("faculty") {
+                                    val client = SessionManager.getSyncClient()
+                                    if (client != null) {
+                                        FacultyScreen(
+                                            vtopClient = client,
+                                            onBack = { navController.popBackStack() }
+                                        )
+                                    } else {
+                                        LaunchedEffect(Unit) { navController.popBackStack() }
+                                    }
+                                }
+                                composable("course_page") {
+                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        Text("Course Page", color = MaterialTheme.colorScheme.onBackground)
+                                    }
+                                }
+                                composable("grade_predictor") {
+                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        Text("Grade Predictor", color = MaterialTheme.colorScheme.onBackground)
+                                    }
+                                }
                             }
                         } else {
                             VtopSplashScreen()

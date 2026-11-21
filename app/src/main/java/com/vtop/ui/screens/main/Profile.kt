@@ -9,6 +9,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -205,7 +206,6 @@ fun Profile(
             ProfilePage.ABOUT -> ProfilePage.MAIN
             ProfilePage.TELEMETRY -> ProfilePage.MAIN
             ProfilePage.ACADEMIC_CALENDAR -> ProfilePage.MAIN
-            ProfilePage.FACULTY -> ProfilePage.MAIN
             ProfilePage.PORTAL -> ProfilePage.MAIN
             ProfilePage.CHANGELOG -> ProfilePage.ABOUT
             ProfilePage.LICENSES -> ProfilePage.ABOUT
@@ -224,8 +224,8 @@ fun Profile(
     var availableCalendars by remember { mutableStateOf<List<CalendarInfo>>(emptyList()) }
 
     // Initialize GoogleSignInClient locally
-    val googleSignInClient = remember(context) {
-        val resources = context.resources
+    val resources = LocalResources.current
+    val googleSignInClient = remember(context, resources) {
         val clientIdRes = resources.getIdentifier("default_web_client_id", "string", context.packageName)
         val clientId = if (clientIdRes != 0) resources.getString(clientIdRes) else ""
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
@@ -432,13 +432,6 @@ fun Profile(
                             Icon(Icons.Default.Refresh, contentDescription = "Sync", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                         }
                     }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                    SettingRow(
-                        label = "Faculty Directory",
-                        value = "Find cabins, emails & domains",
-                        actionText = "Open",
-                        onClick = { currentPage = ProfilePage.FACULTY }
-                    )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
                     SettingRow(
                         label = "Change Semester",
@@ -1022,7 +1015,7 @@ fun Profile(
                         ) {
                             Text("Export to Google Calendar", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                             IconButton(onClick = { showCalendarSheet = false }) {
-                                Icon(androidx.compose.material.icons.Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
 
@@ -1047,7 +1040,7 @@ fun Profile(
                                             modifier = Modifier.size(42.dp).background(MaterialTheme.colorScheme.surfaceVariant, CircleShape).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=0.3f), CircleShape),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Icon(androidx.compose.material.icons.Icons.Default.Event, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                                            Icon(Icons.Default.Event, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
                                         }
                                         Column {
                                             Text(selectedCal?.name ?: "Select Calendar", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
@@ -1435,16 +1428,6 @@ fun Profile(
             )
         }
 
-        ProfilePage.FACULTY -> {
-            vtopClient?.let { client ->
-                FacultyScreen(
-                    vtopClient = client,
-                    onBack = {
-                        currentPage = ProfilePage.MAIN
-                    }
-                )
-            }
-        }
 
         ProfilePage.ACADEMIC_CALENDAR -> {
             AcademicCalendarScreen(

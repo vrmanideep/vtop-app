@@ -8,8 +8,6 @@ enum class ProfilePage {
 
     ACADEMIC_CALENDAR,
 
-    FACULTY,
-
     TELEMETRY,
 
     CHANGELOG,

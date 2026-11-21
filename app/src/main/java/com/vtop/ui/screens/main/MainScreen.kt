@@ -65,6 +65,7 @@ import com.composables.icons.lucide.Globe
 import com.composables.icons.lucide.House
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.User
+import com.composables.icons.lucide.LayoutGrid
 import com.vtop.core.*
 import com.vtop.logic.AttendanceSyncEngine
 import com.vtop.logic.AttendanceSyncMode
@@ -131,6 +132,7 @@ fun MainScreen(
     val navItems = remember(uiState.showOutings) {
         val list = mutableListOf("HOME", "ATTENDANCE", "EXAMS", "MARKS")
         if (uiState.showOutings) list.add("OUTINGS")
+        list.add("MORE")
         list.add("PROFILE")
         list
     }
@@ -175,7 +177,7 @@ fun MainScreen(
     Box(modifier = Modifier.fillMaxSize().systemBarsPadding().background(MaterialTheme.colorScheme.background)) {
         Box(modifier = Modifier.fillMaxSize().pullRefresh(pullRefreshState)) {
             val tabPadding = when (uiState.currentTab) {
-                "HOME", "EXAMS", "MARKS", "OUTINGS", "PROFILE", "ATTENDANCE" -> PaddingValues(0.dp)
+                "HOME", "EXAMS", "MARKS", "OUTINGS", "MORE", "PROFILE", "ATTENDANCE" -> PaddingValues(0.dp)
                 else -> PaddingValues(top = 80.dp, bottom = if (uiState.navStyle == "STATIC") 96.dp else 20.dp)
             }
 
@@ -196,6 +198,19 @@ fun MainScreen(
                     "EXAMS" -> { Exams(examsData) }
                     "MARKS" -> { Marks(marksData = marksData, historySummary = historySummary, historyData = historyItems) }
                     "OUTINGS" -> { VtopOutingsTab(outingsData = outingsData, handler = outingHandler) }
+                    "MORE" -> {
+                        MoreScreen(
+                            onOpenFaculty = {
+                                if (SessionManager.getSyncClient() != null) {
+                                    navController.navigate("faculty")
+                                } else {
+                                    Toast.makeText(context, "Session expired. Sync first.", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            onOpenCoursePage = { navController.navigate("course_page") },
+                            onOpenGradePredictor = { navController.navigate("grade_predictor") }
+                        )
+                    }
                     "PROFILE" -> {
                         val profileMap = profileStateValue?.takeIf { it.isNotEmpty() } ?: Vault.getProfile(context)
                         val vtopClient = SessionManager.getSyncClient()
@@ -440,7 +455,7 @@ fun GlobalTopBar(currentScreen: String, onProfileClick: () -> Unit, onExportTime
     val displayTitle = remember(currentScreen) {
         when (currentScreen.uppercase(Locale.ROOT)) {
             "HOME" -> "Timetable"; "ATTENDANCE" -> "Attendance"; "EXAMS" -> "Exam Schedule"
-            "MARKS" -> "Marks & Grades"; "OUTINGS" -> "Outings"; "PROFILE" -> "Settings"
+            "MARKS" -> "Marks & Grades"; "OUTINGS" -> "Outings"; "MORE" -> "More"; "PROFILE" -> "Settings"
             else -> currentScreen
         }
     }
@@ -474,31 +489,75 @@ fun GlobalTopBar(currentScreen: String, onProfileClick: () -> Unit, onExportTime
 @Composable
 fun BottomNavigation(currentTab: String, availableTabs: List<String>, onSelect: (String) -> Unit) {
     val allTabs = listOf(
-        Triple("HOME", "Home", Lucide.House), Triple("ATTENDANCE", "Attendance", Lucide.CircleCheck),
-        Triple("EXAMS", "Exams", Lucide.CalendarDays), Triple("MARKS", "Marks", Lucide.ChartNoAxesColumnIncreasing),
-        Triple("OUTINGS", "Outings", Lucide.ArrowUpRight)
+        Triple("HOME", "Home", Lucide.House),
+        Triple("ATTENDANCE", "Attendance", Lucide.CircleCheck),
+        Triple("EXAMS", "Exams", Lucide.CalendarDays),
+        Triple("MARKS", "Marks", Lucide.ChartNoAxesColumnIncreasing),
+        Triple("OUTINGS", "Outings", Lucide.ArrowUpRight),
+        Triple("MORE", "More", Lucide.LayoutGrid)
     )
 
     val visibleTabs = allTabs.filter { availableTabs.contains(it.first) }
+    val isCompact = visibleTabs.size >= 6
 
-    Surface(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp).clip(RoundedCornerShape(24.dp)), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f), shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))) {
-        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-            visibleTabs.forEach { item ->
-                val (screenId, label, icon) = item
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = if (isCompact) 12.dp else 16.dp, vertical = 12.dp)
+            .clip(RoundedCornerShape(24.dp)),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+        shape = RoundedCornerShape(24.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp, horizontal = 4.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            visibleTabs.forEach { (screenId, label, icon) ->
                 val isSelected = currentTab.equals(screenId, true)
-                val tint by animateColorAsState(targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f), label = "navTint")
-                val scale by animateFloatAsState(targetValue = if (isSelected) 1.15f else 1f, label = "navScale")
+                val tint by animateColorAsState(
+                    targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                    label = "navTint"
+                )
+                val scale by animateFloatAsState(
+                    targetValue = if (isSelected) 1.15f else 1f,
+                    label = "navScale"
+                )
 
-                Column(modifier = Modifier.weight(1f).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onSelect(screenId) }, horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(imageVector = icon, contentDescription = label, tint = tint, modifier = Modifier.size(24.dp).graphicsLayer(scaleX = scale, scaleY = scale))
-                    Spacer(Modifier.height(4.dp))
-                    Text(text = label, color = tint, fontSize = 10.sp, fontWeight = if (isSelected) FontWeight.Black else FontWeight.Medium, maxLines = 1)
+                Column(
+                    modifier = Modifier
+                        .weight(if (isCompact && isSelected) 1.35f else 1f)
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onSelect(screenId) },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = label,
+                        tint = tint,
+                        modifier = Modifier
+                            .size(if (isCompact) 22.dp else 24.dp)
+                            .graphicsLayer(scaleX = scale, scaleY = scale)
+                    )
+                    if (!isCompact || isSelected) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = label,
+                            color = tint,
+                            fontSize = 10.sp,
+                            fontWeight = if (isSelected) FontWeight.Black else FontWeight.Medium,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
                 }
             }
         }
     }
 }
-
 @Composable
 fun FloatingDockContainer(currentScreen: String, items: List<String>, offsetX: Float, offsetY: Float, screenWidthPx: Float, screenHeightPx: Float, onSyncClick: (String, Boolean) -> Unit, onSelect: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
