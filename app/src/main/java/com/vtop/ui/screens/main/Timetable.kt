@@ -618,6 +618,27 @@ fun NextClassCard(
         val examToday = sortedExams.find { it.first == todayStrKey }?.second
         if (examToday != null) return@remember Pair(examToday, "EXAM TODAY" to themePrimary)
 
+        val nextExToday = sortedExams.firstOrNull { it.first > todayStrKey }
+        if (nextExToday != null) {
+            val nextExDate = sdfDateKey.parse(nextExToday.first)
+            val todayDate = sdfDateKey.parse(todayStrKey)
+            if (nextExDate != null && todayDate != null) {
+                val daysUntil = ((nextExDate.time - todayDate.time) / (1000 * 60 * 60 * 24)).toInt()
+                var isPrepToday = daysUntil == 1
+                if (!isPrepToday && daysUntil > 1) {
+                    val prevExToday = sortedExams.lastOrNull { it.first < todayStrKey }
+                    val prevExDate = prevExToday?.let { sdfDateKey.parse(it.first) }
+                    if (prevExDate != null) {
+                        val daysSince = ((todayDate.time - prevExDate.time) / (1000 * 60 * 60 * 24)).toInt()
+                        if ((daysUntil + daysSince) <= 6) isPrepToday = true
+                    }
+                }
+                if (isPrepToday) {
+                    return@remember Pair(nextExToday.second, "TODAY: PREPARATION" to themePrimary)
+                }
+            }
+        }
+
         val holidayToday = normalizedHolidays[todayStrKey]
         if (showHolidays && holidayToday != null) {
             return@remember Pair(holidayToday, "HOLIDAY TODAY" to Color(0xFF10B981))
@@ -691,9 +712,22 @@ fun NextClassCard(
                     Spacer(Modifier.height(4.dp))
                     if (event is ExamScheduleModel) {
                         if (headerText.contains("PREP")) {
-                            Text("PREPARATION DAY", fontSize = 22.sp, fontWeight = FontWeight.Black, color = themeOnSurface)
-                            Text("Next: ${event.courseTitle.clean()}", fontSize = 12.sp, color = themeOnSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        } else {
+                            val examTypeStr = event.examType.clean().takeIf { it.isNotBlank() } ?: "EXAM"
+                            Text(
+                                text = "Prepare for ${event.courseTitle.clean()}- $examTypeStr",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Black,
+                                color = themeOnSurface,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "Exam due on ${event.examDate.clean()}",
+                                fontSize = 12.sp,
+                                color = themeOnSurfaceVariant
+                            )
+                        }
+                        else {
                             Text(event.courseCode.clean(), fontSize = 22.sp, fontWeight = FontWeight.Black, color = themeOnSurface)
                             Text("${event.examType.clean()} · ${event.reportingTime.clean()}", fontSize = 12.sp, color = themeOnSurfaceVariant)
                         }
