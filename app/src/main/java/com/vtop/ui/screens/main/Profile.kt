@@ -518,6 +518,41 @@ fun Profile(
 
                         if (isMoreExpanded) {
                             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                            var saveCourseFilesToDisk by remember {
+                                mutableStateOf(com.vtop.utils.CourseFileManager.isSaveToDiskEnabled(context))
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Save downloaded course files to disk", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        if (saveCourseFilesToDisk) "Saved to Downloads/VTOP" else "Saved to temporary cache (auto-clears)",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = saveCourseFilesToDisk,
+                                    onCheckedChange = { enabled ->
+                                        saveCourseFilesToDisk = enabled
+                                        com.vtop.utils.CourseFileManager.setSaveToDiskEnabled(context, enabled)
+                                    }
+                                )
+                            }
+                            if (saveCourseFilesToDisk) {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                                SettingRow(
+                                    label = "Open course files folder",
+                                    value = "Downloads/VTOP",
+                                    actionText = "Open",
+                                    onClick = { com.vtop.utils.CourseFileManager.openDownloadsFolder(context) }
+                                )
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
                             // Keep PORTAL Responsive During Sync
                             Row(
                                 modifier = Modifier
