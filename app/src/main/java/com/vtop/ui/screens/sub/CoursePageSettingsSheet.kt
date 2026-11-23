@@ -81,6 +81,11 @@ fun CoursePageSettingsSheet(
         } else loaded
         mutableStateOf(withDefaultSem)
     }
+    var showDeletedFilesDialog by remember { mutableStateOf(false) }
+    var isScanningDeleted by remember { mutableStateOf(false) }
+    var deletedRecords by remember { mutableStateOf<List<DownloadedFileRecord>>(emptyList()) }
+    var isRedownloadingDeleted by remember { mutableStateOf(false) }
+    var redownloadProgress by remember { mutableStateOf("") }
 
     var isAutoDownloadExpanded by remember { mutableStateOf(settings.enabled) }
     var showDisableDiskWarning by remember { mutableStateOf(false) }
@@ -109,9 +114,20 @@ fun CoursePageSettingsSheet(
     var intervalText by remember { mutableStateOf(settings.intervalHours.toString()) }
 
     fun persistSettings(updated: AutoDownloadSettings) {
+        val prev = settings
         settings = updated
         CourseAutoDownloadConfig.save(context, updated)
-        onSettingsChanged(updated)
+
+        val scheduleChanged = prev.enabled != updated.enabled ||
+                prev.intervalEnabled != updated.intervalEnabled ||
+                prev.intervalHours != updated.intervalHours ||
+                prev.specificTimeEnabled != updated.specificTimeEnabled ||
+                prev.specificTimes != updated.specificTimes ||
+                prev.wifiOnly != updated.wifiOnly
+
+        if (scheduleChanged) {
+            onSettingsChanged(updated)
+        }
     }
 
     fun syncCoursesForSemester(semId: String) {
@@ -202,6 +218,7 @@ fun CoursePageSettingsSheet(
     }
 
     val missingRegisteredFaculty = remember { mutableStateMapOf<String, Boolean>() }
+    val resolvedRegLabelByKey = remember { mutableStateMapOf<String, String>() }
 
     // Check if registered faculty (by both slot and faculty name) exists on the course page
     LaunchedEffect(settings.enabled, settings.courseConfigs, vtopClient) {
@@ -224,36 +241,44 @@ fun CoursePageSettingsSheet(
                 .filter { it.isNotBlank() }
                 .toSet()
 
-            val found = parsed.any { sec ->
+            val cleanRegFac = regFac.replace(Regex("(?i)\\b(dr|prof|mr|ms|mrs)\\.?\\s*"), " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+
+            // First try exact classId match (works for any semester, including past/extra semesters)
+            val matchedSection = parsed.firstOrNull { sec ->
+                sec.classId.equals(cfg.defaultClassId.trim(), ignoreCase = true)
+            } ?: parsed.firstOrNull { sec ->
                 val secSlotTokens = sec.slot.split("+")
                     .map { it.trim().uppercase() }
                     .filter { it.isNotBlank() }
                     .toSet()
-
                 val slotMatches = regSlotTokens.isNotEmpty() &&
                         secSlotTokens.isNotEmpty() &&
                         regSlotTokens.intersect(secSlotTokens).isNotEmpty()
 
-                val cleanRegFac = regFac.replace(Regex("(?i)\\b(dr|prof|mr|ms|mrs)\\.?\\s*"), " ")
-                    .replace(Regex("\\s+"), " ")
-                    .trim()
                 val cleanSecFac = sec.facultyName.replace(Regex("(?i)\\b(dr|prof|mr|ms|mrs)\\.?\\s*"), " ")
                     .replace(Regex("\\s+"), " ")
                     .trim()
-
                 val facMatches = cleanRegFac.isNotBlank() && cleanSecFac.isNotBlank() && (
                         cleanSecFac.contains(cleanRegFac, ignoreCase = true) ||
                                 cleanRegFac.contains(cleanSecFac, ignoreCase = true)
                         )
 
-                when {
-                    regSlotTokens.isNotEmpty() && cleanRegFac.isNotBlank() -> slotMatches && facMatches
-                    regSlotTokens.isNotEmpty() -> slotMatches
-                    cleanRegFac.isNotBlank() -> facMatches
-                    else -> sec.classId.equals(cfg.defaultClassId, ignoreCase = true)
-                }
+                regSlotTokens.isNotEmpty() && cleanRegFac.isNotBlank() && slotMatches && facMatches
             }
-            missingRegisteredFaculty[cfg.configKey] = !found
+
+            if (matchedSection != null) {
+                missingRegisteredFaculty[cfg.configKey] = false
+                val label = listOf(matchedSection.slot.trim(), matchedSection.facultyName.trim())
+                    .filter { it.isNotBlank() }
+                    .joinToString(" - ")
+                if (label.isNotBlank()) {
+                    resolvedRegLabelByKey[cfg.configKey] = label
+                }
+            } else {
+                missingRegisteredFaculty[cfg.configKey] = true
+            }
         }
     }
 
@@ -665,7 +690,17 @@ fun CoursePageSettingsSheet(
                                     }
                                 }
                                 OutlinedButton(
-                                    onClick = onCheckDeletedFiles,
+                                    onClick = {
+                                        showDeletedFilesDialog = true
+                                        isScanningDeleted = true
+                                        scope.launch {
+                                            deletedRecords = withContext(Dispatchers.IO) {
+                                                com.vtop.sync.CourseAutoDownloadEngine.findDeletedRecords(context)
+                                            }
+                                            isScanningDeleted = false
+                                        }
+                                        onCheckDeletedFiles()
+                                    },
                                     modifier = Modifier.fillMaxWidth(),
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
@@ -803,6 +838,7 @@ fun CoursePageSettingsSheet(
                                                     val regLabel = regInfo?.let { (slot, fac) ->
                                                         listOf(slot, fac).filter { it.isNotBlank() }.joinToString(" - ")
                                                     }?.takeIf { it.isNotBlank() }
+                                                        ?: resolvedRegLabelByKey[cfg.configKey]
                                                     val isRegMissing = cfg.faculties.isEmpty() && missingRegisteredFaculty[cfg.configKey] == true
 
                                                     val facSummary = when {
@@ -1301,6 +1337,200 @@ fun CoursePageSettingsSheet(
             },
             dismissButton = {
                 TextButton(onClick = { editingCourseConfig = null }) { Text("Cancel") }
+            },
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    }
+    // --- DELETED FILES CHECK & SELECTIVE RE-DOWNLOAD / FORGET DIALOG ---
+    if (showDeletedFilesDialog) {
+        val selectedKeys = remember(deletedRecords) {
+            mutableStateMapOf<String, Boolean>().apply {
+                deletedRecords.forEach { put(it.key, true) }
+            }
+        }
+        val selectedCount = selectedKeys.values.count { it }
+
+        AlertDialog(
+            onDismissRequest = {
+                if (!isRedownloadingDeleted) showDeletedFilesDialog = false
+            },
+            title = {
+                Column {
+                    Text("Deleted Files", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    if (!isScanningDeleted && deletedRecords.isNotEmpty()) {
+                        Text(
+                            text = "${deletedRecords.size} missing file${if (deletedRecords.size == 1) "" else "s"} found",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
+            text = {
+                when {
+                    isScanningDeleted -> {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(12.dp))
+                            Text("Scanning disk for missing files...", fontSize = 13.sp)
+                        }
+                    }
+                    isRedownloadingDeleted -> {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                            Text(redownloadProgress.ifBlank { "Re-downloading..." }, fontSize = 12.sp)
+                        }
+                    }
+                    deletedRecords.isEmpty() -> {
+                        Text(
+                            text = "All previously downloaded files are present on disk.",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    else -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                TextButton(
+                                    onClick = {
+                                        val selectAll = selectedCount < deletedRecords.size
+                                        deletedRecords.forEach { selectedKeys[it.key] = selectAll }
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = if (selectedCount < deletedRecords.size) "Select All" else "Deselect All",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Text(
+                                    text = "$selectedCount selected",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            LazyColumn(
+                                modifier = Modifier.heightIn(max = 320.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                items(deletedRecords, key = { it.key }) { rec ->
+                                    val checked = selectedKeys[rec.key] == true
+                                    Card(
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { selectedKeys[rec.key] = !checked }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Checkbox(
+                                                checked = checked,
+                                                onCheckedChange = { selectedKeys[rec.key] = it }
+                                            )
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = rec.fileName,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = "${rec.courseCode} · ${formatSettingsTypeLabel(rec.courseType)}",
+                                                    fontSize = 10.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                if (!isScanningDeleted && !isRedownloadingDeleted && deletedRecords.isNotEmpty()) {
+                    Button(
+                        enabled = selectedCount > 0,
+                        onClick = {
+                            if (vtopClient == null) {
+                                Toast.makeText(context, "Session expired. Sync first.", Toast.LENGTH_SHORT).show()
+                                return@Button
+                            }
+                            val targets = deletedRecords.filter { selectedKeys[it.key] == true }
+                            scope.launch {
+                                isRedownloadingDeleted = true
+                                val (ok, fail) = com.vtop.sync.CourseAutoDownloadEngine.redownloadSelectedRecords(
+                                    context = context,
+                                    client = vtopClient,
+                                    records = targets,
+                                    onProgress = { redownloadProgress = it }
+                                )
+                                isRedownloadingDeleted = false
+                                redownloadProgress = ""
+                                Toast.makeText(
+                                    context,
+                                    if (fail == 0) "Re-downloaded $ok file${if (ok == 1) "" else "s"}"
+                                    else "Re-downloaded $ok · $fail failed",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                deletedRecords = withContext(Dispatchers.IO) {
+                                    com.vtop.sync.CourseAutoDownloadEngine.findDeletedRecords(context)
+                                }
+                                if (deletedRecords.isEmpty()) showDeletedFilesDialog = false
+                            }
+                        }
+                    ) {
+                        Text("Re-download ($selectedCount)", fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            dismissButton = {
+                if (!isRedownloadingDeleted) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (!isScanningDeleted && deletedRecords.isNotEmpty() && selectedCount > 0) {
+                            TextButton(
+                                onClick = {
+                                    val toForget = deletedRecords
+                                        .filter { selectedKeys[it.key] == true }
+                                        .map { it.key }
+                                    CourseAutoDownloadConfig.addForgottenKeys(context, toForget)
+                                    toForget.forEach { CourseFileManager.removeDownloadRecord(context, it) }
+                                    persistSettings(settings.copy(forgottenKeys = settings.forgottenKeys + toForget))
+                                    deletedRecords = deletedRecords.filter { it.key !in toForget }
+                                    Toast.makeText(context, "Forgot ${toForget.size} file${if (toForget.size == 1) "" else "s"}", Toast.LENGTH_SHORT).show()
+                                    if (deletedRecords.isEmpty()) showDeletedFilesDialog = false
+                                }
+                            ) {
+                                Text("Forget", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        TextButton(onClick = { showDeletedFilesDialog = false }) {
+                            Text("Close")
+                        }
+                    }
+                }
             },
             containerColor = MaterialTheme.colorScheme.surface
         )

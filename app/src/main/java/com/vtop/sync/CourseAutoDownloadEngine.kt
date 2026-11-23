@@ -10,6 +10,7 @@ import com.vtop.utils.AutoDownloadSettings
 import com.vtop.utils.CourseAutoDownloadConfig
 import com.vtop.utils.CourseFileManager
 import com.vtop.utils.DownloadedFileRecord
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -76,6 +77,62 @@ object CourseAutoDownloadEngine {
     fun cancel() {
         activeJob?.cancel()
         _progressText.value = "Cancelling..."
+    }
+
+    fun findDeletedRecords(context: Context): List<DownloadedFileRecord> {
+        val settings = CourseAutoDownloadConfig.load(context)
+        return CourseFileManager.getAllDownloadRecords(context)
+            .filter { record ->
+                record.key !in settings.forgottenKeys &&
+                        CourseFileManager.findExistingUri(context, record) == null
+            }
+            .sortedByDescending { it.downloadedAt }
+    }
+
+    suspend fun redownloadSelectedRecords(
+        context: Context,
+        client: VtopClient,
+        records: List<DownloadedFileRecord>,
+        onProgress: (String) -> Unit
+    ): Pair<Int, Int> = withContext(Dispatchers.IO) {
+        var successCount = 0
+        var failCount = 0
+
+        records.forEachIndexed { idx, record ->
+            onProgress("Re-downloading ${idx + 1}/${records.size}: ${record.fileName}")
+            val tempFile = File(context.cacheDir, "redownload_${System.currentTimeMillis()}")
+            val res = client.downloadCourseMaterial(
+                record.relativePath,
+                record.isCoursePlan,
+                record.semSubId,
+                record.classId,
+                tempFile
+            )
+            if (res.success) {
+                val uri = CourseFileManager.persistDownloadedFile(
+                    context = context,
+                    tempFile = tempFile,
+                    finalFileName = record.fileName,
+                    subPath = record.subPath,
+                    mimeType = res.mimeType
+                )
+                if (uri != null) {
+                    CourseFileManager.recordDownloadedFile(
+                        context,
+                        record.copy(downloadedAt = System.currentTimeMillis())
+                    )
+                    successCount++
+                } else {
+                    tempFile.delete()
+                    failCount++
+                }
+            } else {
+                tempFile.delete()
+                failCount++
+            }
+            delay(100.milliseconds)
+        }
+        successCount to failCount
     }
 
     private suspend fun executeInternal(context: Context, client: VtopClient): Boolean {
@@ -172,7 +229,7 @@ object CourseAutoDownloadEngine {
                     }
                 }
 
-                delay(150L) // light breather between courses
+                delay(150.milliseconds)// light breather between courses
             }
 
             val summary = when {

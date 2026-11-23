@@ -35,6 +35,7 @@ object CourseAutoDownloadScheduler {
                 settings.intervalHours.toLong(),
                 TimeUnit.HOURS
             )
+                .setInitialDelay(settings.intervalHours.toLong(), TimeUnit.HOURS)
                 .setConstraints(constraints)
                 .build()
 
