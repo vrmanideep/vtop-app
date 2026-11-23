@@ -304,7 +304,11 @@ fun CoursePageScreen(
                     refreshDownloadTick++
 
                     if (CourseFileManager.isAppInForeground()) {
-                        CourseFileManager.openFile(context, uri, finalName)
+                        if (CourseFileManager.isAutoOpenEnabled(context)) {
+                            CourseFileManager.openFile(context, uri, finalName)
+                        } else {
+                            Toast.makeText(context, "Downloaded $finalName", Toast.LENGTH_SHORT).show()
+                        }
                     } else {
                         val resolvedMime = result.mimeType?.substringBefore(";")?.takeIf { it.isNotBlank() }
                             ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
@@ -360,6 +364,22 @@ fun CoursePageScreen(
             CoursePageStep.COURSES -> onBack()
         }
     }
+
+    if (showSettingsSheet) {
+        CoursePageSettingsSheet(
+            vtopClient = vtopClient,
+            timetable = timetable,
+            semesters = semesters,
+            currentSem = selectedSem,
+            isDevOptionsEnabled = isDevOptionsEnabled,
+            onDismiss = {
+                showSettingsSheet = false
+                saveToDiskEnabled = CourseFileManager.isSaveToDiskEnabled(context)
+            }
+        )
+        return
+    }
+
 
     Column(
         modifier = Modifier
@@ -1041,100 +1061,6 @@ fun CoursePageScreen(
                         }
                     }
                     item(key = "bottom_spacer") { Spacer(Modifier.height(32.dp)) }
-                }
-            }
-        }
-    }
-
-    if (showSettingsSheet) {
-        ModalBottomSheet(
-            onDismissRequest = { showSettingsSheet = false },
-            containerColor = MaterialTheme.colorScheme.surface
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp)
-                    .padding(bottom = 32.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    text = "Course Page Settings",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Black,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = cardContainerColor()),
-                    shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Save downloaded course files to disk",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Spacer(Modifier.height(2.dp))
-                                Text(
-                                    text = if (saveToDiskEnabled) "Saved to Downloads/vtop_course_files" else "Saved to temporary cache (auto-clears)",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = saveToDiskEnabled,
-                                onCheckedChange = { enabled ->
-                                    saveToDiskEnabled = enabled
-                                    CourseFileManager.setSaveToDiskEnabled(context, enabled)
-                                }
-                            )
-                        }
-
-                        if (saveToDiskEnabled) {
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { CourseFileManager.openDownloadsFolder(context) }
-                                    .padding(16.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Open course files folder",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Spacer(Modifier.height(2.dp))
-                                    Text(
-                                        text = "Downloads/vtop_course_files",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Text(
-                                    text = "Open",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    }
                 }
             }
         }

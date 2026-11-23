@@ -70,6 +70,7 @@ data class DownloadedFileRecord(
 
 object CourseFileManager {
     private const val PREF_SAVE_TO_DISK = "SAVE_COURSE_FILES_TO_DISK"
+    private const val PREF_AUTO_OPEN = "AUTO_OPEN_COURSE_FILES"
     private const val PREF_DEV_OPTIONS = "DEV_OPTIONS_ENABLED"
     private const val PREF_FILE_HISTORY = "VTOP_COURSE_FILE_HISTORY_V2"
     private const val ROOT_FOLDER = "vtop_course_files"
@@ -97,6 +98,15 @@ object CourseFileManager {
     fun setSaveToDiskEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
             .edit().putBoolean(PREF_SAVE_TO_DISK, enabled).apply()
+    }
+
+    fun isAutoOpenEnabled(context: Context): Boolean =
+        context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
+            .getBoolean(PREF_AUTO_OPEN, true)
+
+    fun setAutoOpenEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
+            .edit().putBoolean(PREF_AUTO_OPEN, enabled).apply()
     }
 
     // --- Rich Download History ---
