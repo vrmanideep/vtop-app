@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -62,7 +63,7 @@ import java.io.File
 
 private enum class CoursePageStep { COURSES, SECTIONS, DETAIL }
 
-
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CoursePageScreen(
     vtopClient: VtopClient?,
@@ -100,6 +101,9 @@ fun CoursePageScreen(
     var refreshDownloadTick by remember { mutableIntStateOf(0) }
     var sectionSearchQuery by remember { mutableStateOf("") }
     var downloadedKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val isDevOptionsEnabled = remember { CourseFileManager.isDevOptionsEnabled(context) }
+    var showSettingsSheet by remember { mutableStateOf(false) }
+    var saveToDiskEnabled by remember { mutableStateOf(CourseFileManager.isSaveToDiskEnabled(context)) }
 
     LaunchedEffect(courseDetail, refreshDownloadTick) {
         val detail = courseDetail ?: return@LaunchedEffect
@@ -186,7 +190,8 @@ fun CoursePageScreen(
         date: String = "",
         topic: String = "",
         isGeneral: Boolean = false,
-        isLecture: Boolean = false
+        isLecture: Boolean = false,
+        isSyllabus: Boolean = false
     ) {
         if (item.isWebLink) {
             try {
@@ -197,11 +202,11 @@ fun CoursePageScreen(
             return
         }
         val key = item.relativePath.ifBlank { item.label }
-        val savedName = CourseFileManager.getSavedFileName(context, key)
-        if (savedName != null) {
-            val existingUri = CourseFileManager.findExistingUri(context, savedName)
+        val existingRecord = CourseFileManager.getDownloadRecord(context, key)
+        if (existingRecord != null) {
+            val existingUri = CourseFileManager.findExistingUri(context, existingRecord)
             if (existingUri != null) {
-                CourseFileManager.openFile(context, existingUri, savedName)
+                CourseFileManager.openFile(context, existingUri, existingRecord.fileName)
                 return
             }
         }
@@ -270,11 +275,32 @@ fun CoursePageScreen(
                 }
                 val finalName = "$baseName.$ext"
 
+                val subPath = CourseFileManager.buildCourseSubPath(
+                    courseCode = detail.courseCode,
+                    courseTitle = detail.courseTitle,
+                    courseType = detail.courseType,
+                    isSyllabus = isSyllabus
+                )
                 val uri = withContext(Dispatchers.IO) {
-                    CourseFileManager.persistDownloadedFile(context, tempFile, finalName, result.mimeType)
+                    CourseFileManager.persistDownloadedFile(context, tempFile, finalName, subPath, result.mimeType)
                 }
                 if (uri != null) {
-                    CourseFileManager.recordDownloadedFile(context, key, finalName)
+                    CourseFileManager.recordDownloadedFile(
+                        context,
+                        com.vtop.utils.DownloadedFileRecord(
+                            key = key,
+                            courseCode = detail.courseCode,
+                            courseTitle = detail.courseTitle,
+                            courseType = detail.courseType,
+                            semSubId = detail.semSubId,
+                            classId = detail.classId,
+                            relativePath = item.relativePath,
+                            fileName = finalName,
+                            subPath = subPath,
+                            isSyllabus = isSyllabus,
+                            isCoursePlan = item.isCoursePlan
+                        )
+                    )
                     refreshDownloadTick++
 
                     if (CourseFileManager.isAppInForeground()) {
@@ -370,6 +396,13 @@ fun CoursePageScreen(
                 fontWeight = FontWeight.Black,
                 color = MaterialTheme.colorScheme.onBackground
             )
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = {
+                focusManager.clearFocus()
+                showSettingsSheet = true
+            }) {
+                Icon(Icons.Default.Settings, contentDescription = "Course Page Settings", tint = MaterialTheme.colorScheme.onBackground)
+            }
         }
 
         if (isLoading) {
@@ -504,87 +537,122 @@ fun CoursePageScreen(
                             }
                         }
                     }
-
-                    // --- OR: Direct Class ID Lookup ---
-                    item(key = "direct_class_lookup") {
-                        OrDivider()
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = cardContainerColor()),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                            shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text("Lookup Faculty by Class ID", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                                OutlinedTextField(
-                                    value = directClassId,
-                                    onValueChange = { directClassId = it },
-                                    label = { Text("Class ID (e.g. AP2026272000416)") },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-                                Button(
-                                    onClick = {
-                                        val semId = CoursePageParser.extractSemIdFromClassId(directClassId)
-                                        if (semId == null) {
-                                            Toast.makeText(context, "Invalid Class ID", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            loadSections(semId, directClassId)
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) { Text("Fetch Faculty List", fontWeight = FontWeight.Bold) }
+                    if (isDevOptionsEnabled) {
+                        // --- OR: Direct Class ID Lookup ---
+                        item(key = "direct_class_lookup") {
+                            OrDivider()
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = cardContainerColor()),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Text(
+                                        "Lookup Faculty by Class ID",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    OutlinedTextField(
+                                        value = directClassId,
+                                        onValueChange = { directClassId = it },
+                                        label = { Text("Class ID (e.g. AP2026272000416)") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                    Button(
+                                        onClick = {
+                                            val semId = CoursePageParser.extractSemIdFromClassId(
+                                                directClassId
+                                            )
+                                            if (semId == null) {
+                                                Toast.makeText(
+                                                    context,
+                                                    "Invalid Class ID",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            } else {
+                                                loadSections(semId, directClassId)
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) { Text("Fetch Faculty List", fontWeight = FontWeight.Bold) }
+                                }
                             }
                         }
-                    }
 
-                    // --- OR: Direct Class ID + Faculty ID Lookup ---
-                    item(key = "direct_detail_lookup") {
-                        OrDivider()
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = cardContainerColor()),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                            shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text("Direct Course Page Lookup", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                                OutlinedTextField(
-                                    value = directClassId2,
-                                    onValueChange = { directClassId2 = it },
-                                    label = { Text("Class ID") },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-                                OutlinedTextField(
-                                    value = directFacultyId,
-                                    onValueChange = { directFacultyId = it },
-                                    label = { Text("Faculty ID / ERP ID (e.g. 70640)") },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-                                Button(
-                                    onClick = {
-                                        val semId = CoursePageParser.extractSemIdFromClassId(directClassId2)
-                                        if (semId == null || directFacultyId.isBlank()) {
-                                            Toast.makeText(context, "Enter valid Class ID and Faculty ID", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            sections = emptyList()
-                                            loadDetail(semId, directFacultyId, directClassId2)
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) { Text("Open Course Page", fontWeight = FontWeight.Bold) }
+                        // --- OR: Direct Class ID + Faculty ID Lookup ---
+                        item(key = "direct_detail_lookup") {
+                            OrDivider()
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = cardContainerColor()),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Text(
+                                        "Direct Course Page Lookup",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    OutlinedTextField(
+                                        value = directClassId2,
+                                        onValueChange = { directClassId2 = it },
+                                        label = { Text("Class ID") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                    OutlinedTextField(
+                                        value = directFacultyId,
+                                        onValueChange = { directFacultyId = it },
+                                        label = { Text("Faculty ID / ERP ID (e.g. 70640)") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                    Button(
+                                        onClick = {
+                                            val semId = CoursePageParser.extractSemIdFromClassId(
+                                                directClassId2
+                                            )
+                                            if (semId == null || directFacultyId.isBlank()) {
+                                                Toast.makeText(
+                                                    context,
+                                                    "Enter valid Class ID and Faculty ID",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            } else {
+                                                sections = emptyList()
+                                                loadDetail(semId, directFacultyId, directClassId2)
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) { Text("Open Course Page", fontWeight = FontWeight.Bold) }
+                                }
                             }
+                            Spacer(Modifier.height(32.dp))
                         }
-                        Spacer(Modifier.height(32.dp))
                     }
                 }
             }
@@ -767,7 +835,7 @@ fun CoursePageScreen(
                                             item = CourseMaterialItem("Syllabus", path, "Syllabus.pdf"),
                                             downloadingKeys = downloadingKeys,
                                             downloadedKeys = downloadedKeys,
-                                            onClick = { handleMaterialClick(detail, it) }
+                                            onClick = { handleMaterialClick(detail, it, isSyllabus = true) }
                                         )
                                     }
                                     MaterialActionChip(
@@ -973,6 +1041,100 @@ fun CoursePageScreen(
                         }
                     }
                     item(key = "bottom_spacer") { Spacer(Modifier.height(32.dp)) }
+                }
+            }
+        }
+    }
+
+    if (showSettingsSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showSettingsSheet = false },
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Course Page Settings",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Black,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = cardContainerColor()),
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Save downloaded course files to disk",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = if (saveToDiskEnabled) "Saved to Downloads/vtop_course_files" else "Saved to temporary cache (auto-clears)",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = saveToDiskEnabled,
+                                onCheckedChange = { enabled ->
+                                    saveToDiskEnabled = enabled
+                                    CourseFileManager.setSaveToDiskEnabled(context, enabled)
+                                }
+                            )
+                        }
+
+                        if (saveToDiskEnabled) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { CourseFileManager.openDownloadsFolder(context) }
+                                    .padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Open course files folder",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        text = "Downloads/vtop_course_files",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Text(
+                                    text = "Open",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

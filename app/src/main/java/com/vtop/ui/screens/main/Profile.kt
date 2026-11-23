@@ -351,12 +351,35 @@ fun Profile(
                 }
 
                 // --- PROFILE HERO CARD ---
+                var devTapCount by remember { mutableIntStateOf(0) }
+                var lastDevTapTime by remember { mutableLongStateOf(0L) }
+
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     shape = RoundedCornerShape(16.dp),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
-                    modifier = Modifier.fillMaxWidth() // Removed the 5-tap clickable logic here
-                )  {
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            val now = System.currentTimeMillis()
+                            if (now - lastDevTapTime > 1500L) {
+                                devTapCount = 1
+                            } else {
+                                devTapCount++
+                            }
+                            lastDevTapTime = now
+                            if (devTapCount >= 5) {
+                                devTapCount = 0
+                                val nextState = !com.vtop.utils.CourseFileManager.isDevOptionsEnabled(context)
+                                com.vtop.utils.CourseFileManager.setDevOptionsEnabled(context, nextState)
+                                Toast.makeText(
+                                    context,
+                                    if (nextState) "Developer options enabled" else "Developer options disabled",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -518,41 +541,7 @@ fun Profile(
 
                         if (isMoreExpanded) {
                             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                            var saveCourseFilesToDisk by remember {
-                                mutableStateOf(com.vtop.utils.CourseFileManager.isSaveToDiskEnabled(context))
-                            }
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text("Save downloaded course files to disk", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                                    Spacer(Modifier.height(2.dp))
-                                    Text(
-                                        if (saveCourseFilesToDisk) "Saved to Downloads/VTOP" else "Saved to temporary cache (auto-clears)",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Switch(
-                                    checked = saveCourseFilesToDisk,
-                                    onCheckedChange = { enabled ->
-                                        saveCourseFilesToDisk = enabled
-                                        com.vtop.utils.CourseFileManager.setSaveToDiskEnabled(context, enabled)
-                                    }
-                                )
-                            }
-                            if (saveCourseFilesToDisk) {
-                                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                                SettingRow(
-                                    label = "Open course files folder",
-                                    value = "Downloads/VTOP",
-                                    actionText = "Open",
-                                    onClick = { com.vtop.utils.CourseFileManager.openDownloadsFolder(context) }
-                                )
-                            }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
                             // Keep PORTAL Responsive During Sync
                             Row(
                                 modifier = Modifier
