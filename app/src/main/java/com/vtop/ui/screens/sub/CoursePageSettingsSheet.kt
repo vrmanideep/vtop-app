@@ -70,7 +70,6 @@ fun CoursePageSettingsSheet(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    BackHandler { onDismiss() }
 
     var saveToDisk by remember { mutableStateOf(CourseFileManager.isSaveToDiskEnabled(context)) }
     var autoOpenFiles by remember { mutableStateOf(CourseFileManager.isAutoOpenEnabled(context)) }
@@ -105,6 +104,7 @@ fun CoursePageSettingsSheet(
     var pickerSections by remember { mutableStateOf<List<CourseSection>>(emptyList()) }
     var isLoadingPicker by remember { mutableStateOf(false) }
 
+    BackHandler(enabled = editingCourseConfig == null && !showDeletedFilesDialog) { onDismiss() }
     // Custom Class ID state (Dev Options)
     var customClassIdInput by remember { mutableStateOf("") }
     var isAddingCustomClass by remember { mutableStateOf(false) }
@@ -197,12 +197,13 @@ fun CoursePageSettingsSheet(
             ?.groupBy { it.classId!!.trim() }
             ?.mapValues { (_, entries) ->
                 val combinedSlots = entries
-                    .flatMap { it.slot.split("+") }
+                    .asSequence()
+                    .flatMap { it.slot.split("+").asSequence() }
                     .map { it.trim() }
                     .filter { it.isNotBlank() }
                     .distinct()
                     .sortedWith(
-                        compareBy<String>(
+                        compareBy(
                             { it.uppercase().startsWith("L") && it.drop(1).toIntOrNull() != null },
                             { it.uppercase().startsWith("T") },
                             { it.length },
@@ -227,9 +228,7 @@ fun CoursePageSettingsSheet(
             it.faculties.isEmpty() && !missingRegisteredFaculty.containsKey(it.configKey)
         }
         for (cfg in toCheck) {
-            val regInfo = defaultRegInfoByClassId[cfg.defaultClassId.trim()]
-            val regSlot = regInfo?.first ?: ""
-            val regFac = regInfo?.second ?: ""
+            val (regSlot, regFac) = defaultRegInfoByClassId[cfg.defaultClassId.trim()] ?: ("" to "")
 
             val html = withContext(Dispatchers.IO) {
                 vtopClient.fetchSlotSectionsRawHtml(cfg.semId, cfg.defaultClassId)
@@ -280,6 +279,485 @@ fun CoursePageSettingsSheet(
                 missingRegisteredFaculty[cfg.configKey] = true
             }
         }
+    }
+
+    // --- FULL-SCREEN SUB-VIEW: MULTI-FACULTY PICKER ---
+    editingCourseConfig?.let { targetCfg ->
+        BackHandler { editingCourseConfig = null }
+
+        var searchQuery by remember { mutableStateOf("") }
+        val selectedMap = remember(targetCfg) {
+            mutableStateMapOf<String, AutoDownloadFacultyTarget>().apply {
+                targetCfg.faculties.forEach { put("${it.classId}_${it.erpId}", it) }
+            }
+        }
+        val registeredSlot = remember(pickerSections, targetCfg, userClassIds) {
+            pickerSections.firstOrNull {
+                it.classId.equals(targetCfg.defaultClassId, ignoreCase = true) || userClassIds.contains(it.classId)
+            }?.slot
+        }
+        val expandedSlots = remember(registeredSlot) {
+            mutableStateMapOf<String, Boolean>().apply {
+                if (registeredSlot != null) put(registeredSlot, true)
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .systemBarsPadding()
+                .imePadding()
+        ) {
+            // Top Bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { editingCourseConfig = null }) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = MaterialTheme.colorScheme.onBackground
+                    )
+                }
+                Spacer(Modifier.width(4.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "${targetCfg.courseCode} · Select Faculties",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "Choose one or more faculties for auto-download",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
+            if (isLoadingPicker) {
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+            } else if (pickerSections.isEmpty()) {
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "No faculties found for this course.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                val filtered = remember(pickerSections, searchQuery) {
+                    val q = searchQuery.trim()
+                    if (q.isEmpty()) pickerSections
+                    else pickerSections.filter {
+                        it.facultyName.contains(q, ignoreCase = true) ||
+                                it.slot.contains(q, ignoreCase = true) ||
+                                it.erpId.contains(q, ignoreCase = true)
+                    }
+                }
+                val grouped = remember(filtered) { filtered.groupBy { it.slot } }
+
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Search faculty or slot...", fontSize = 13.sp) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    shape = RoundedCornerShape(12.dp)
+                )
+
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    grouped.forEach { (slot, slotSections) ->
+                        val isExpanded = searchQuery.isNotBlank() || expandedSlots[slot] == true
+                        item(key = "pick_slot_$slot") {
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = containerBg),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (slot == registeredSlot) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+                                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { expandedSlots[slot] = !isExpanded }
+                                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("$slot (${slotSections.size})", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Icon(
+                                            if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    if (isExpanded) {
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                                        slotSections.forEach { sec ->
+                                            val key = "${sec.classId}_${sec.erpId}"
+                                            val isChecked = selectedMap.containsKey(key)
+                                            val isUserFaculty = sec.classId.equals(targetCfg.defaultClassId, ignoreCase = true) ||
+                                                    userClassIds.contains(sec.classId)
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .background(
+                                                        if (isUserFaculty) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                                                        else Color.Transparent
+                                                    )
+                                                    .clickable {
+                                                        if (isChecked) selectedMap.remove(key)
+                                                        else selectedMap[key] = AutoDownloadFacultyTarget(
+                                                            erpId = sec.erpId,
+                                                            classId = sec.classId,
+                                                            facultyName = sec.facultyName,
+                                                            slot = sec.slot
+                                                        )
+                                                    }
+                                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Checkbox(
+                                                    checked = isChecked,
+                                                    onCheckedChange = { checked ->
+                                                        if (checked) {
+                                                            selectedMap[key] = AutoDownloadFacultyTarget(
+                                                                erpId = sec.erpId,
+                                                                classId = sec.classId,
+                                                                facultyName = sec.facultyName,
+                                                                slot = sec.slot
+                                                            )
+                                                        } else {
+                                                            selectedMap.remove(key)
+                                                        }
+                                                    }
+                                                )
+                                                Spacer(Modifier.width(4.dp))
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = sec.facultyName,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = if (isUserFaculty) FontWeight.Black else FontWeight.SemiBold,
+                                                        color = if (isUserFaculty) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    Text(
+                                                        text = "${sec.erpId} · ${sec.classId}",
+                                                        fontSize = 11.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { editingCourseConfig = null },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Cancel", fontWeight = FontWeight.Bold)
+                    }
+                    Button(
+                        onClick = {
+                            val updated = settings.courseConfigs.map {
+                                if (it.configKey == targetCfg.configKey) {
+                                    it.copy(faculties = selectedMap.values.toList())
+                                } else it
+                            }
+                            persistSettings(settings.copy(courseConfigs = updated))
+                            editingCourseConfig = null
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text(
+                            text = if (selectedMap.isEmpty()) "Save" else "Save (${selectedMap.size})",
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+        return
+    }
+
+    // --- FULL-SCREEN SUB-VIEW: DELETED FILES CHECK & SELECTIVE RE-DOWNLOAD / FORGET ---
+    if (showDeletedFilesDialog) {
+        BackHandler(enabled = !isRedownloadingDeleted) { showDeletedFilesDialog = false }
+
+        val selectedKeys = remember(deletedRecords) {
+            mutableStateMapOf<String, Boolean>().apply {
+                deletedRecords.forEach { put(it.key, true) }
+            }
+        }
+        val selectedCount = selectedKeys.values.count { it }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .systemBarsPadding()
+        ) {
+            // Top Bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    enabled = !isRedownloadingDeleted,
+                    onClick = { showDeletedFilesDialog = false }
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = MaterialTheme.colorScheme.onBackground
+                    )
+                }
+                Spacer(Modifier.width(4.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Deleted Files",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    if (!isScanningDeleted && deletedRecords.isNotEmpty()) {
+                        Text(
+                            text = "${deletedRecords.size} missing file${if (deletedRecords.size == 1) "" else "s"} found",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
+            when {
+                isScanningDeleted -> {
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                            Text("Scanning disk for missing files...", fontSize = 13.sp)
+                        }
+                    }
+                }
+                isRedownloadingDeleted -> {
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
+                            Text(
+                                text = redownloadProgress.ifBlank { "Re-downloading..." },
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+                deletedRecords.isEmpty() -> {
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "All previously downloaded files are present on disk.",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                else -> {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(
+                            onClick = {
+                                val selectAll = selectedCount < deletedRecords.size
+                                deletedRecords.forEach { selectedKeys[it.key] = selectAll }
+                            },
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = if (selectedCount < deletedRecords.size) "Select All" else "Deselect All",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Text(
+                            text = "$selectedCount selected",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    LazyColumn(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(deletedRecords, key = { it.key }) { rec ->
+                            val checked = selectedKeys[rec.key] == true
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = containerBg),
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { selectedKeys[rec.key] = !checked }
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 10.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = checked,
+                                        onCheckedChange = { selectedKeys[rec.key] = it }
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = rec.fileName,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(
+                                            text = "${rec.courseCode} · ${formatSettingsTypeLabel(rec.courseType)}",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            enabled = selectedCount > 0,
+                            onClick = {
+                                val toForget = deletedRecords
+                                    .filter { selectedKeys[it.key] == true }
+                                    .map { it.key }
+                                CourseAutoDownloadConfig.addForgottenKeys(context, toForget)
+                                toForget.forEach { CourseFileManager.removeDownloadRecord(context, it) }
+                                persistSettings(settings.copy(forgottenKeys = settings.forgottenKeys + toForget))
+                                deletedRecords = deletedRecords.filter { it.key !in toForget }
+                                Toast.makeText(context, "Forgot ${toForget.size} file${if (toForget.size == 1) "" else "s"}", Toast.LENGTH_SHORT).show()
+                                if (deletedRecords.isEmpty()) showDeletedFilesDialog = false
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Forget", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                        }
+                        Button(
+                            enabled = selectedCount > 0,
+                            onClick = {
+                                if (vtopClient == null) {
+                                    Toast.makeText(context, "Session expired. Sync first.", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                val targets = deletedRecords.filter { selectedKeys[it.key] == true }
+                                scope.launch {
+                                    isRedownloadingDeleted = true
+                                    val (ok, fail) = com.vtop.sync.CourseAutoDownloadEngine.redownloadSelectedRecords(
+                                        context = context,
+                                        client = vtopClient,
+                                        records = targets,
+                                        onProgress = { redownloadProgress = it }
+                                    )
+                                    isRedownloadingDeleted = false
+                                    redownloadProgress = ""
+                                    Toast.makeText(
+                                        context,
+                                        if (fail == 0) "Re-downloaded $ok file${if (ok == 1) "" else "s"}"
+                                        else "Re-downloaded $ok · $fail failed",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                    deletedRecords = withContext(Dispatchers.IO) {
+                                        com.vtop.sync.CourseAutoDownloadEngine.findDeletedRecords(context)
+                                    }
+                                    if (deletedRecords.isEmpty()) showDeletedFilesDialog = false
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Re-download ($selectedCount)", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+        return
     }
 
     Column(
@@ -1167,370 +1645,6 @@ fun CoursePageSettingsSheet(
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { showAddSemDialog = false }) { Text("Close") }
-            },
-            containerColor = MaterialTheme.colorScheme.surface
-        )
-    }
-
-    // --- MULTI-FACULTY PICKER DIALOG ---
-    editingCourseConfig?.let { targetCfg ->
-        var searchQuery by remember { mutableStateOf("") }
-        val selectedMap = remember(targetCfg) {
-            mutableStateMapOf<String, AutoDownloadFacultyTarget>().apply {
-                targetCfg.faculties.forEach { put("${it.classId}_${it.erpId}", it) }
-            }
-        }
-        val registeredSlot = remember(pickerSections, targetCfg, userClassIds) {
-            pickerSections.firstOrNull {
-                it.classId.equals(targetCfg.defaultClassId, ignoreCase = true) || userClassIds.contains(it.classId)
-            }?.slot
-        }
-        val expandedSlots = remember(registeredSlot) {
-            mutableStateMapOf<String, Boolean>().apply {
-                if (registeredSlot != null) put(registeredSlot, true)
-            }
-        }
-
-        AlertDialog(
-            onDismissRequest = { editingCourseConfig = null },
-            title = {
-                Column {
-                    Text("${targetCfg.courseCode} · Select Faculties", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    Text("Choose one or more faculties for auto-download", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            },
-            text = {
-                if (isLoadingPicker) {
-                    Box(modifier = Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
-                } else if (pickerSections.isEmpty()) {
-                    Text("No faculties found for this course.", fontSize = 13.sp)
-                } else {
-                    val filtered = remember(pickerSections, searchQuery) {
-                        val q = searchQuery.trim()
-                        if (q.isEmpty()) pickerSections
-                        else pickerSections.filter {
-                            it.facultyName.contains(q, ignoreCase = true) ||
-                                    it.slot.contains(q, ignoreCase = true) ||
-                                    it.erpId.contains(q, ignoreCase = true)
-                        }
-                    }
-                    val grouped = remember(filtered) { filtered.groupBy { it.slot } }
-
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            placeholder = { Text("Search faculty or slot...", fontSize = 12.sp) },
-                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp)
-                        )
-                        LazyColumn(
-                            modifier = Modifier.heightIn(max = 320.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            grouped.forEach { (slot, slotSections) ->
-                                val isExpanded = searchQuery.isNotBlank() || expandedSlots[slot] == true
-                                item(key = "pick_slot_$slot") {
-                                    Card(
-                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-                                        shape = RoundedCornerShape(10.dp),
-                                        border = BorderStroke(
-                                            1.dp,
-                                            if (slot == registeredSlot) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
-                                            else Color.Transparent
-                                        ),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Column {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .clickable { expandedSlots[slot] = !isExpanded }
-                                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text("$slot (${slotSections.size})", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                                Icon(
-                                                    if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(18.dp)
-                                                )
-                                            }
-                                            if (isExpanded) {
-                                                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
-                                                slotSections.forEach { sec ->
-                                                    val key = "${sec.classId}_${sec.erpId}"
-                                                    val isChecked = selectedMap.containsKey(key)
-                                                    val isUserFaculty = sec.classId.equals(targetCfg.defaultClassId, ignoreCase = true) ||
-                                                            userClassIds.contains(sec.classId)
-                                                    Row(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .background(
-                                                                if (isUserFaculty) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-                                                                else Color.Transparent
-                                                            )
-                                                            .clickable {
-                                                                if (isChecked) selectedMap.remove(key)
-                                                                else selectedMap[key] = AutoDownloadFacultyTarget(
-                                                                    erpId = sec.erpId,
-                                                                    classId = sec.classId,
-                                                                    facultyName = sec.facultyName,
-                                                                    slot = sec.slot
-                                                                )
-                                                            }
-                                                            .padding(horizontal = 8.dp, vertical = 6.dp),
-                                                        verticalAlignment = Alignment.CenterVertically
-                                                    ) {
-                                                        Checkbox(
-                                                            checked = isChecked,
-                                                            onCheckedChange = { checked ->
-                                                                if (checked) {
-                                                                    selectedMap[key] = AutoDownloadFacultyTarget(
-                                                                        erpId = sec.erpId,
-                                                                        classId = sec.classId,
-                                                                        facultyName = sec.facultyName,
-                                                                        slot = sec.slot
-                                                                    )
-                                                                } else {
-                                                                    selectedMap.remove(key)
-                                                                }
-                                                            }
-                                                        )
-                                                        Column(modifier = Modifier.weight(1f)) {
-                                                            Text(
-                                                                text = sec.facultyName,
-                                                                fontSize = 12.sp,
-                                                                fontWeight = if (isUserFaculty) FontWeight.Black else FontWeight.SemiBold,
-                                                                color = if (isUserFaculty) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                                            )
-                                                            Text("${sec.erpId} · ${sec.classId}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    val updated = settings.courseConfigs.map {
-                        if (it.configKey == targetCfg.configKey) {
-                            it.copy(faculties = selectedMap.values.toList())
-                        } else it
-                    }
-                    persistSettings(settings.copy(courseConfigs = updated))
-                    editingCourseConfig = null
-                }) {
-                    Text("Save", fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { editingCourseConfig = null }) { Text("Cancel") }
-            },
-            containerColor = MaterialTheme.colorScheme.surface
-        )
-    }
-    // --- DELETED FILES CHECK & SELECTIVE RE-DOWNLOAD / FORGET DIALOG ---
-    if (showDeletedFilesDialog) {
-        val selectedKeys = remember(deletedRecords) {
-            mutableStateMapOf<String, Boolean>().apply {
-                deletedRecords.forEach { put(it.key, true) }
-            }
-        }
-        val selectedCount = selectedKeys.values.count { it }
-
-        AlertDialog(
-            onDismissRequest = {
-                if (!isRedownloadingDeleted) showDeletedFilesDialog = false
-            },
-            title = {
-                Column {
-                    Text("Deleted Files", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                    if (!isScanningDeleted && deletedRecords.isNotEmpty()) {
-                        Text(
-                            text = "${deletedRecords.size} missing file${if (deletedRecords.size == 1) "" else "s"} found",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            },
-            text = {
-                when {
-                    isScanningDeleted -> {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.width(12.dp))
-                            Text("Scanning disk for missing files...", fontSize = 13.sp)
-                        }
-                    }
-                    isRedownloadingDeleted -> {
-                        Column(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                            Text(redownloadProgress.ifBlank { "Re-downloading..." }, fontSize = 12.sp)
-                        }
-                    }
-                    deletedRecords.isEmpty() -> {
-                        Text(
-                            text = "All previously downloaded files are present on disk.",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    else -> {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                TextButton(
-                                    onClick = {
-                                        val selectAll = selectedCount < deletedRecords.size
-                                        deletedRecords.forEach { selectedKeys[it.key] = selectAll }
-                                    },
-                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                                ) {
-                                    Text(
-                                        text = if (selectedCount < deletedRecords.size) "Select All" else "Deselect All",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                                Text(
-                                    text = "$selectedCount selected",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-
-                            LazyColumn(
-                                modifier = Modifier.heightIn(max = 320.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                items(deletedRecords, key = { it.key }) { rec ->
-                                    val checked = selectedKeys[rec.key] == true
-                                    Card(
-                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable { selectedKeys[rec.key] = !checked }
-                                    ) {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Checkbox(
-                                                checked = checked,
-                                                onCheckedChange = { selectedKeys[rec.key] = it }
-                                            )
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    text = rec.fileName,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = MaterialTheme.colorScheme.onSurface,
-                                                    maxLines = 2,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                Text(
-                                                    text = "${rec.courseCode} · ${formatSettingsTypeLabel(rec.courseType)}",
-                                                    fontSize = 10.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                if (!isScanningDeleted && !isRedownloadingDeleted && deletedRecords.isNotEmpty()) {
-                    Button(
-                        enabled = selectedCount > 0,
-                        onClick = {
-                            if (vtopClient == null) {
-                                Toast.makeText(context, "Session expired. Sync first.", Toast.LENGTH_SHORT).show()
-                                return@Button
-                            }
-                            val targets = deletedRecords.filter { selectedKeys[it.key] == true }
-                            scope.launch {
-                                isRedownloadingDeleted = true
-                                val (ok, fail) = com.vtop.sync.CourseAutoDownloadEngine.redownloadSelectedRecords(
-                                    context = context,
-                                    client = vtopClient,
-                                    records = targets,
-                                    onProgress = { redownloadProgress = it }
-                                )
-                                isRedownloadingDeleted = false
-                                redownloadProgress = ""
-                                Toast.makeText(
-                                    context,
-                                    if (fail == 0) "Re-downloaded $ok file${if (ok == 1) "" else "s"}"
-                                    else "Re-downloaded $ok · $fail failed",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                                deletedRecords = withContext(Dispatchers.IO) {
-                                    com.vtop.sync.CourseAutoDownloadEngine.findDeletedRecords(context)
-                                }
-                                if (deletedRecords.isEmpty()) showDeletedFilesDialog = false
-                            }
-                        }
-                    ) {
-                        Text("Re-download ($selectedCount)", fontWeight = FontWeight.Bold)
-                    }
-                }
-            },
-            dismissButton = {
-                if (!isRedownloadingDeleted) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        if (!isScanningDeleted && deletedRecords.isNotEmpty() && selectedCount > 0) {
-                            TextButton(
-                                onClick = {
-                                    val toForget = deletedRecords
-                                        .filter { selectedKeys[it.key] == true }
-                                        .map { it.key }
-                                    CourseAutoDownloadConfig.addForgottenKeys(context, toForget)
-                                    toForget.forEach { CourseFileManager.removeDownloadRecord(context, it) }
-                                    persistSettings(settings.copy(forgottenKeys = settings.forgottenKeys + toForget))
-                                    deletedRecords = deletedRecords.filter { it.key !in toForget }
-                                    Toast.makeText(context, "Forgot ${toForget.size} file${if (toForget.size == 1) "" else "s"}", Toast.LENGTH_SHORT).show()
-                                    if (deletedRecords.isEmpty()) showDeletedFilesDialog = false
-                                }
-                            ) {
-                                Text("Forget", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                        TextButton(onClick = { showDeletedFilesDialog = false }) {
-                            Text("Close")
-                        }
-                    }
-                }
             },
             containerColor = MaterialTheme.colorScheme.surface
         )
