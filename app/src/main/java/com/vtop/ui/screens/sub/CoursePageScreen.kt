@@ -365,6 +365,9 @@ fun CoursePageScreen(
         }
     }
 
+    val isRunningAutoDownload by com.vtop.sync.CourseAutoDownloadEngine.isRunning.collectAsState()
+    val runProgressText by com.vtop.sync.CourseAutoDownloadEngine.progressText.collectAsState()
+
     if (showSettingsSheet) {
         CoursePageSettingsSheet(
             vtopClient = vtopClient,
@@ -372,6 +375,21 @@ fun CoursePageScreen(
             semesters = semesters,
             currentSem = selectedSem,
             isDevOptionsEnabled = isDevOptionsEnabled,
+            isRunningAutoDownload = isRunningAutoDownload,
+            runProgressText = runProgressText,
+            onRunNow = {
+                if (vtopClient == null) {
+                    Toast.makeText(context, "Session expired. Sync first.", Toast.LENGTH_SHORT).show()
+                } else {
+                    com.vtop.sync.CourseAutoDownloadEngine.startManualRun(context, vtopClient)
+                }
+            },
+            onCancelRun = {
+                com.vtop.sync.CourseAutoDownloadEngine.cancel()
+            },
+            onSettingsChanged = { updated ->
+                com.vtop.sync.CourseAutoDownloadScheduler.syncSchedules(context, updated)
+            },
             onDismiss = {
                 showSettingsSheet = false
                 saveToDiskEnabled = CourseFileManager.isSaveToDiskEnabled(context)

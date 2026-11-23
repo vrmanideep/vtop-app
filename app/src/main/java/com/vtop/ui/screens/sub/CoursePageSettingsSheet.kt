@@ -174,8 +174,8 @@ fun CoursePageSettingsSheet(
         timetable?.scheduleMap?.values?.flatten()?.mapNotNull { it.classId?.trim() }?.toSet() ?: emptySet()
     }
 
-    // Group by classId and combine all distinct slots (e.g., D1+TD1, L37+L38)
-    val defaultFacultyByClassId = remember(timetable) {
+    // Map classId -> Pair(combinedSlots, facultyName)
+    val defaultRegInfoByClassId = remember(timetable) {
         timetable?.scheduleMap?.values?.flatten()
             ?.filter { !it.classId.isNullOrBlank() }
             ?.groupBy { it.classId!!.trim() }
@@ -185,12 +185,76 @@ fun CoursePageSettingsSheet(
                     .map { it.trim() }
                     .filter { it.isNotBlank() }
                     .distinct()
+                    .sortedWith(
+                        compareBy<String>(
+                            { it.uppercase().startsWith("L") && it.drop(1).toIntOrNull() != null },
+                            { it.uppercase().startsWith("T") },
+                            { it.length },
+                            { it.drop(1).toIntOrNull() ?: Int.MAX_VALUE },
+                            { it }
+                        )
+                    )
                     .joinToString("+")
                 val fac = entries.firstOrNull { it.faculty.isNotBlank() }?.faculty?.trim() ?: ""
-                listOf(combinedSlots, fac).filter { it.isNotBlank() }.joinToString(" - ")
+                combinedSlots to fac
             }
-            ?.filterValues { it.isNotBlank() }
             ?: emptyMap()
+    }
+
+    val missingRegisteredFaculty = remember { mutableStateMapOf<String, Boolean>() }
+
+    // Check if registered faculty (by both slot and faculty name) exists on the course page
+    LaunchedEffect(settings.enabled, settings.courseConfigs, vtopClient) {
+        if (!settings.enabled || vtopClient == null) return@LaunchedEffect
+        val toCheck = settings.courseConfigs.filter {
+            it.faculties.isEmpty() && !missingRegisteredFaculty.containsKey(it.configKey)
+        }
+        for (cfg in toCheck) {
+            val regInfo = defaultRegInfoByClassId[cfg.defaultClassId.trim()]
+            val regSlot = regInfo?.first ?: ""
+            val regFac = regInfo?.second ?: ""
+
+            val html = withContext(Dispatchers.IO) {
+                vtopClient.fetchSlotSectionsRawHtml(cfg.semId, cfg.defaultClassId)
+            }
+            val parsed = html?.let { CoursePageParser.parseSlotSections(it) } ?: emptyList()
+
+            val regSlotTokens = regSlot.split("+")
+                .map { it.trim().uppercase() }
+                .filter { it.isNotBlank() }
+                .toSet()
+
+            val found = parsed.any { sec ->
+                val secSlotTokens = sec.slot.split("+")
+                    .map { it.trim().uppercase() }
+                    .filter { it.isNotBlank() }
+                    .toSet()
+
+                val slotMatches = regSlotTokens.isNotEmpty() &&
+                        secSlotTokens.isNotEmpty() &&
+                        regSlotTokens.intersect(secSlotTokens).isNotEmpty()
+
+                val cleanRegFac = regFac.replace(Regex("(?i)\\b(dr|prof|mr|ms|mrs)\\.?\\s*"), " ")
+                    .replace(Regex("\\s+"), " ")
+                    .trim()
+                val cleanSecFac = sec.facultyName.replace(Regex("(?i)\\b(dr|prof|mr|ms|mrs)\\.?\\s*"), " ")
+                    .replace(Regex("\\s+"), " ")
+                    .trim()
+
+                val facMatches = cleanRegFac.isNotBlank() && cleanSecFac.isNotBlank() && (
+                        cleanSecFac.contains(cleanRegFac, ignoreCase = true) ||
+                                cleanRegFac.contains(cleanSecFac, ignoreCase = true)
+                        )
+
+                when {
+                    regSlotTokens.isNotEmpty() && cleanRegFac.isNotBlank() -> slotMatches && facMatches
+                    regSlotTokens.isNotEmpty() -> slotMatches
+                    cleanRegFac.isNotBlank() -> facMatches
+                    else -> sec.classId.equals(cfg.defaultClassId, ignoreCase = true)
+                }
+            }
+            missingRegisteredFaculty[cfg.configKey] = !found
+        }
     }
 
     Column(
@@ -605,7 +669,7 @@ fun CoursePageSettingsSheet(
                                     modifier = Modifier.fillMaxWidth(),
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
-                                    Text("Re-download Deleted Files", fontWeight = FontWeight.Bold)
+                                    Text("Re-download Deleted Files Right Now", fontWeight = FontWeight.Bold)
                                 }
                             }
 
@@ -735,10 +799,19 @@ fun CoursePageSettingsSheet(
                                                     if (idx > 0) {
                                                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
                                                     }
-                                                    val facSummary = if (cfg.faculties.isEmpty()) {
-                                                        defaultFacultyByClassId[cfg.defaultClassId.trim()] ?: "Default registered faculty"
-                                                    } else {
-                                                        cfg.faculties.joinToString("\n") { "${it.slot} - ${it.facultyName}" }
+                                                    val regInfo = defaultRegInfoByClassId[cfg.defaultClassId.trim()]
+                                                    val regLabel = regInfo?.let { (slot, fac) ->
+                                                        listOf(slot, fac).filter { it.isNotBlank() }.joinToString(" - ")
+                                                    }?.takeIf { it.isNotBlank() }
+                                                    val isRegMissing = cfg.faculties.isEmpty() && missingRegisteredFaculty[cfg.configKey] == true
+
+                                                    val facSummary = when {
+                                                        cfg.faculties.isNotEmpty() ->
+                                                            cfg.faculties.joinToString("\n") { "${it.slot} - ${it.facultyName}" }
+                                                        isRegMissing ->
+                                                            "Please change the faculty — your registered faculty did not update the course page."
+                                                        else ->
+                                                            regLabel ?: "Default registered faculty"
                                                     }
 
                                                     Row(
@@ -760,7 +833,7 @@ fun CoursePageSettingsSheet(
                                                                 Text(
                                                                     text = facSummary,
                                                                     fontSize = 11.sp,
-                                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                    color = if (isRegMissing) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                                                                     lineHeight = 15.sp,
                                                                     modifier = Modifier.weight(1f, fill = false)
                                                                 )
