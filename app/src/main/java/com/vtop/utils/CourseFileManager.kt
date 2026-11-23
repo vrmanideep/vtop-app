@@ -171,6 +171,51 @@ object CourseFileManager {
         return if (componentDir != null) "$courseDir/$componentDir" else courseDir
     }
 
+    fun buildMaterialFileName(
+        courseCode: String,
+        slot: String,
+        facultyName: String,
+        label: String,
+        ext: String,
+        slNo: String = "",
+        date: String = "",
+        topic: String = "",
+        relativePath: String = "",
+        isZip: Boolean = false,
+        isCoursePlan: Boolean = false,
+        isLecture: Boolean = false,
+        isGeneral: Boolean = false,
+        includeFacultySuffix: Boolean = false
+    ): String {
+        val code = sanitizePart(courseCode, 20)
+        val snoPadded = slNo.toIntOrNull()?.let { "%02d".format(it) } ?: slNo.padStart(2, '0')
+        val customDate = sanitizePart(date, 20)
+        val safeTopic = sanitizePart(topic.ifBlank { label }, 40)
+        val safeSlot = sanitizePart(slot, 20)
+        val facOnly = facultyName.split(" - ").getOrNull(1) ?: facultyName
+        val safeFac = sanitizePart(facOnly, 30)
+        val facSuffix = if (includeFacultySuffix) {
+            listOf(safeSlot, safeFac).filter { it.isNotBlank() }.joinToString("_")
+        } else ""
+
+        val baseName = when {
+            isZip -> "${code}_all_${safeSlot}_${safeFac}"
+            isLecture -> listOf("${code}_L${snoPadded}", customDate, safeTopic, facSuffix)
+                .filter { it.isNotBlank() }
+                .joinToString("_")
+            isGeneral -> {
+                val pathDate = relativePath.substringAfterLast('/', "").takeIf { it.contains("-") } ?: ""
+                val gmDate = sanitizePart(date.ifBlank { pathDate }, 20)
+                listOf("${code}_GM${snoPadded}", gmDate, safeTopic, facSuffix)
+                    .filter { it.isNotBlank() }
+                    .joinToString("_")
+            }
+            isCoursePlan -> "${code}_${safeSlot}_${safeFac}_CoursePlan"
+            else -> "${code}_${sanitizePart(label, 30)}"
+        }
+        return "$baseName.$ext"
+    }
+
     // --- Cache Management ---
 
     fun getCacheDir(context: Context): File =
