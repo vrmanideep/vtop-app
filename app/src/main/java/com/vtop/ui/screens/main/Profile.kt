@@ -34,6 +34,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.BiasAlignment
+import androidx.compose.material.icons.filled.Colorize
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
@@ -286,6 +295,7 @@ fun Profile(
 
     var showSemesterDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
+    var showColorPickerDialog by remember { mutableStateOf(false) }
     var showCredDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
 
@@ -786,12 +796,25 @@ fun Profile(
                             Column(modifier = Modifier.padding(16.dp)) {
                                 Text("Accent Color", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                                 Spacer(Modifier.height(12.dp))
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                val isCustomPickedSelected = !useDynamicColor && com.vtop.ui.theme.AccentColors.none { it == customAccent }
+                                val rainbowBrush = Brush.sweepGradient(
+                                    listOf(
+                                        Color(0xFFE11D48),
+                                        Color(0xFFF59E0B),
+                                        Color(0xFF10B981),
+                                        Color(0xFF327FD1),
+                                        Color(0xFF8B5CF6),
+                                        Color(0xFFE11D48)
+                                    )
+                                )
+
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
 
                                     // Dynamic Color Bubble
                                     Box(
                                         modifier = Modifier
                                             .size(36.dp)
+                                            .clip(CircleShape)
                                             .background(
                                                 if (useDynamicColor) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color.Transparent,
                                                 CircleShape
@@ -815,12 +838,13 @@ fun Profile(
                                         )
                                     }
 
-                                    // Custom Color Bubbles
+                                    // Preset Accent Color Bubbles
                                     com.vtop.ui.theme.AccentColors.forEach { color ->
                                         val isSelected = !useDynamicColor && customAccent == color
                                         Box(
                                             modifier = Modifier
                                                 .size(36.dp)
+                                                .clip(CircleShape)
                                                 .background(color, CircleShape)
                                                 .border(
                                                     width = if (isSelected) 3.dp else 0.dp,
@@ -834,6 +858,37 @@ fun Profile(
                                                     onDynamicColorChange(false)
                                                     onAccentChange(color)
                                                 }
+                                        )
+                                    }
+
+                                    // Appended Custom Color Picker Bubble
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .clip(CircleShape)
+                                            .then(
+                                                if (isCustomPickedSelected) {
+                                                    Modifier
+                                                        .background(customAccent, CircleShape)
+                                                        .border(3.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
+                                                } else {
+                                                    Modifier
+                                                        .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
+                                                        .border(2.dp, rainbowBrush, CircleShape)
+                                                }
+                                            )
+                                            .clickable { showColorPickerDialog = true },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Colorize,
+                                            contentDescription = "Pick Custom Color",
+                                            tint = if (isCustomPickedSelected) {
+                                                if (customAccent.luminance() > 0.5f) Color.Black else Color.White
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
+                                            modifier = Modifier.size(17.dp)
                                         )
                                     }
                                 }
@@ -1246,6 +1301,22 @@ fun Profile(
                 )
             }
 
+            if (showColorPickerDialog) {
+                CustomAccentColorPickerDialog(
+                    initialColor = customAccent,
+                    onDismiss = { showColorPickerDialog = false },
+                    onColorSelected = { pickedColor ->
+                        sharedPrefs.edit()
+                            .putBoolean("USE_DYNAMIC_COLOR", false)
+                            .putInt("CUSTOM_ACCENT", pickedColor.toArgb())
+                            .apply()
+                        onDynamicColorChange(false)
+                        onAccentChange(pickedColor)
+                        showColorPickerDialog = false
+                    }
+                )
+            }
+
             if (showSemesterDialog) {
                 AlertDialog(
                     onDismissRequest = { showSemesterDialog = false },
@@ -1520,6 +1591,235 @@ private fun ThemeChip(icon: String, label: String, isSelected: Boolean, modifier
             Text(icon, fontSize = 20.sp)
             Spacer(Modifier.height(8.dp))
             Text(label, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun CustomAccentColorPickerDialog(
+    initialColor: Color,
+    onDismiss: () -> Unit,
+    onColorSelected: (Color) -> Unit
+) {
+    val initialHsv = remember(initialColor) {
+        FloatArray(3).also { android.graphics.Color.colorToHSV(initialColor.toArgb(), it) }
+    }
+
+    var hue by remember { mutableFloatStateOf(initialHsv[0]) }
+    var saturation by remember { mutableFloatStateOf(initialHsv[1]) }
+    var brightness by remember { mutableFloatStateOf(initialHsv[2]) }
+
+    val selectedColor = remember(hue, saturation, brightness) {
+        Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, brightness)))
+    }
+
+    var hexInput by remember {
+        mutableStateOf(String.format(Locale.US, "%06X", 0xFFFFFF and initialColor.toArgb()))
+    }
+
+    val hueColors = remember {
+        listOf(
+            Color(0xFFFF0000),
+            Color(0xFFFFFF00),
+            Color(0xFF00FF00),
+            Color(0xFF00FFFF),
+            Color(0xFF0000FF),
+            Color(0xFFFF00FF),
+            Color(0xFFFF0000)
+        )
+    }
+
+    val pureHueColor = remember(hue) {
+        Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, 1f, 1f)))
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("Custom Accent Color", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                // Live Preview Banner
+                Surface(
+                    color = selectedColor,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth().height(56.dp)
+                ) {
+                    val previewTextColor = if (selectedColor.luminance() > 0.5f) Color.Black else Color.White
+                    Row(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Preview Accent",
+                            color = previewTextColor,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                        Text(
+                            text = "#${String.format(Locale.US, "%06X", 0xFFFFFF and selectedColor.toArgb())}",
+                            color = previewTextColor.copy(alpha = 0.85f),
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+
+                // Hue Slider
+                ColorGradientSlider(
+                    label = "Hue",
+                    value = hue,
+                    valueRange = 0f..360f,
+                    gradientColors = hueColors,
+                    thumbColor = pureHueColor,
+                    onValueChange = { newHue ->
+                        hue = newHue
+                        val c = android.graphics.Color.HSVToColor(floatArrayOf(newHue, saturation, brightness))
+                        hexInput = String.format(Locale.US, "%06X", 0xFFFFFF and c)
+                    }
+                )
+
+                // Saturation Slider
+                ColorGradientSlider(
+                    label = "Saturation",
+                    value = saturation,
+                    valueRange = 0f..1f,
+                    gradientColors = listOf(
+                        Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, 0f, brightness))),
+                        Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, 1f, brightness)))
+                    ),
+                    thumbColor = selectedColor,
+                    onValueChange = { newSat ->
+                        saturation = newSat
+                        val c = android.graphics.Color.HSVToColor(floatArrayOf(hue, newSat, brightness))
+                        hexInput = String.format(Locale.US, "%06X", 0xFFFFFF and c)
+                    }
+                )
+
+                // Brightness Slider
+                ColorGradientSlider(
+                    label = "Brightness",
+                    value = brightness,
+                    valueRange = 0f..1f,
+                    gradientColors = listOf(
+                        Color.Black,
+                        Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, 1f)))
+                    ),
+                    thumbColor = selectedColor,
+                    onValueChange = { newVal ->
+                        brightness = newVal
+                        val c = android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, newVal))
+                        hexInput = String.format(Locale.US, "%06X", 0xFFFFFF and c)
+                    }
+                )
+
+                // Hex Code Input
+                OutlinedTextField(
+                    value = hexInput,
+                    onValueChange = { raw ->
+                        val cleaned = raw.removePrefix("#").uppercase(Locale.US).filter { it in '0'..'9' || it in 'A'..'F' }.take(6)
+                        hexInput = cleaned
+                        if (cleaned.length == 6) {
+                            try {
+                                val parsedInt = android.graphics.Color.parseColor("#$cleaned")
+                                val parsedHsv = FloatArray(3)
+                                android.graphics.Color.colorToHSV(parsedInt, parsedHsv)
+                                hue = parsedHsv[0]
+                                saturation = parsedHsv[1]
+                                brightness = parsedHsv[2]
+                            } catch (_: Exception) {}
+                        }
+                    },
+                    label = { Text("Hex Code", fontSize = 12.sp) },
+                    prefix = { Text("#", fontWeight = FontWeight.Bold) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onColorSelected(selectedColor) },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = selectedColor,
+                    contentColor = if (selectedColor.luminance() > 0.5f) Color.Black else Color.White
+                )
+            ) {
+                Text("Apply", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        containerColor = MaterialTheme.colorScheme.surface
+    )
+}
+
+@Composable
+private fun ColorGradientSlider(
+    label: String,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    gradientColors: List<Color>,
+    thumbColor: Color,
+    onValueChange: (Float) -> Unit
+) {
+    val fraction = ((value - valueRange.start) / (valueRange.endInclusive - valueRange.start)).coerceIn(0f, 1f)
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                text = if (valueRange.endInclusive > 1f) "${value.toInt()}°" else "${(fraction * 100).toInt()}%",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(28.dp)
+                .pointerInput(valueRange) {
+                    detectTapGestures { offset ->
+                        val f = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
+                        onValueChange(valueRange.start + f * (valueRange.endInclusive - valueRange.start))
+                    }
+                }
+                .pointerInput(valueRange) {
+                    detectHorizontalDragGestures { change, _ ->
+                        change.consume()
+                        val f = (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
+                        onValueChange(valueRange.start + f * (valueRange.endInclusive - valueRange.start))
+                    }
+                }
+        ) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .fillMaxWidth()
+                    .height(14.dp)
+                    .clip(CircleShape)
+                    .background(Brush.horizontalGradient(gradientColors))
+                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f), CircleShape)
+            )
+            Box(
+                modifier = Modifier
+                    .align(BiasAlignment(horizontalBias = (fraction * 2f) - 1f, verticalBias = 0f))
+                    .size(22.dp)
+                    .background(thumbColor, CircleShape)
+                    .border(2.5.dp, Color.White, CircleShape)
+                    .border(1.dp, Color.Black.copy(alpha = 0.35f), CircleShape)
+            )
         }
     }
 }
