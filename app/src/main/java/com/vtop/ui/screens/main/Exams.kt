@@ -212,25 +212,26 @@ private fun ExamListScreen(exams: List<ExamScheduleModel>, onExamClick: (ExamSch
             }
             items(filteredExams) { exam ->
                 val hasValidDate = exam.examDate.isNotBlank() && exam.examDate != "-"
-
                 val urgencyColor = if (!hasValidDate) {
                     Color.Transparent
                 } else {
                     val targetDate = try {
                         val safeTime = getSafeStartTime(exam)
                         val parseableTime = if (safeTime == "TBC") "11:59 PM" else safeTime
-                        sdfFull.parse("${exam.examDate} $parseableTime") ?: currentTime
-                    } catch (e: Exception) { currentTime }
+                        sdfFull.parse("${exam.examDate} $parseableTime")
+                    } catch (_: Exception) { null }
 
-                    val diffDays = ((targetDate.time - currentTime.time) / (1000 * 60 * 60 * 24)).toInt()
-                    when {
-                        diffDays < 0 -> Color.Transparent
-                        diffDays <= 3 -> Color(0xFFF59E0B) // Amber
-                        diffDays <= 7 -> Color(0xFF60A5FA) // Blue
-                        else -> Color.Transparent
+                    if (targetDate == null || targetDate.before(currentTime)) {
+                        Color.Transparent
+                    } else {
+                        val diffDays = ((targetDate.time - currentTime.time) / (1000 * 60 * 60 * 24)).toInt()
+                        when {
+                            diffDays <= 3 -> Color(0xFFF59E0B) // Amber
+                            diffDays <= 7 -> Color(0xFF60A5FA) // Blue
+                            else -> Color.Transparent
+                        }
                     }
                 }
-
                 Box(modifier = Modifier.padding(horizontal = 20.dp)) {
                     StandardExamCard(exam = exam, urgencyColor = urgencyColor, isClashing = clashingExams.contains(exam), onClick = { onExamClick(exam) })
                 }
