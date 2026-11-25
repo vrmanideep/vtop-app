@@ -35,11 +35,14 @@ public class TimetableParser {
             // 1. Build course info lookup
             List<CourseInfo> courseInfoList = getCourseInfo(doc);
 
-            // Populate the courseStartDates map with the binary compKey
+            // Populate courseStartDates and registeredCourses
             for (CourseInfo info : courseInfoList) {
                 if (info.attendanceDate != null && !info.attendanceDate.isEmpty()) {
                     timetable.courseStartDates.put(info.courseCode + "|" + info.compKey, info.attendanceDate);
                 }
+                timetable.registeredCourses.add(
+                        new TimetableModel.RegisteredCourse(info.courseCode, info.courseName, info.courseType, info.credits)
+                );
             }
 
             // 2. Locate timetable grid
@@ -172,6 +175,7 @@ public class TimetableParser {
         String courseCode;
         String courseName;
         String courseType;
+        double credits;
         String slot;
         String venue;
         String faculty;
@@ -179,12 +183,13 @@ public class TimetableParser {
         String attendanceDate;
         String compKey;
 
-        CourseInfo(String courseCode, String courseName, String courseType,
+        CourseInfo(String courseCode, String courseName, String courseType, double credits,
                    String slot, String venue, String faculty, String classId,
                    String attendanceDate, String compKey) {
             this.courseCode = courseCode;
             this.courseName = courseName;
             this.courseType = courseType;
+            this.credits    = credits;
             this.slot       = slot;
             this.venue      = venue;
             this.faculty    = faculty;
@@ -227,6 +232,16 @@ public class TimetableParser {
                     else if (rawType.contains("EMBEDDED PROJECT")) parsedType = "EPJ";
                     else if (rawType.contains("THEORY"))           parsedType = "TH";
                     else if (rawType.contains("LAB"))              parsedType = "LO";
+                    else if (rawType.contains("PROJECT"))          parsedType = "PJT";
+                }
+
+                double credits = 0.0;
+                String ltpjc = cells.get(3).text().trim();
+                String[] creditTokens = ltpjc.split("\\s+");
+                if (creditTokens.length > 0) {
+                    try {
+                        credits = Double.parseDouble(creditTokens[creditTokens.length - 1]);
+                    } catch (NumberFormatException ignored) {}
                 }
 
                 // Determine binary component key
@@ -273,7 +288,7 @@ public class TimetableParser {
                     }
                 }
 
-                list.add(new CourseInfo(courseCode, courseName, parsedType,
+                list.add(new CourseInfo(courseCode, courseName, parsedType, credits,
                         slot, venue, faculty, classId, attendanceDate, compKey));
             } catch (Exception ignored) {}
         }
@@ -293,7 +308,7 @@ public class TimetableParser {
 
         if (parts.length < 5) {
             return new CourseSession("Unknown", "N/A", "N/A", "N/A",
-                    gridText, "N/A", timeSlot, gridText, "N/A");
+                    gridText, "N/A", timeSlot, gridText, "N/A", 0.0);
         }
 
         String actualSlot    = parts[0].trim();
@@ -320,7 +335,7 @@ public class TimetableParser {
 
             if (cleanGridVenue.equalsIgnoreCase(cleanInfoVenue)) {
                 return new CourseSession(info.courseName, courseCode, courseType,
-                        actualSlot, info.venue, info.faculty, timeSlot, cleanText, info.classId);
+                        actualSlot, info.venue, info.faculty, timeSlot, cleanText, info.classId, info.credits);
             }
         }
 
@@ -328,19 +343,19 @@ public class TimetableParser {
             if (!info.courseCode.equals(courseCode)) continue;
             if (info.courseType.equalsIgnoreCase(courseType)) {
                 return new CourseSession(info.courseName, courseCode, courseType,
-                        actualSlot, expectedVenue, info.faculty, timeSlot, cleanText, info.classId);
+                        actualSlot, expectedVenue, info.faculty, timeSlot, cleanText, info.classId, info.credits);
             }
         }
 
         for (CourseInfo info : courseInfoList) {
             if (info.courseCode.equals(courseCode)) {
                 return new CourseSession(info.courseName, courseCode, courseType,
-                        actualSlot, expectedVenue, info.faculty, timeSlot, cleanText, info.classId);
+                        actualSlot, expectedVenue, info.faculty, timeSlot, cleanText, info.classId, info.credits);
             }
         }
 
         Log.w(TAG, "[MATCH FAILED] Could not find ClassID for Grid Text: " + gridText);
         return new CourseSession("Unknown", courseCode, courseType,
-                actualSlot, expectedVenue, "N/A", timeSlot, cleanText, "N/A");
+                actualSlot, expectedVenue, "N/A", timeSlot, cleanText, "N/A", 0.0);
     }
 }
