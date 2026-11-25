@@ -77,7 +77,7 @@ object AttendanceSyncEngine {
                     Log.w(logTag, "DETAIL INVALID ${course.courseCode} $cType - courseId/type missing")
 
                     if (old != null) {
-                        course.history = ArrayList(old.history)
+                        course.history = ArrayList(old.history.orEmpty())
                         if (!old.classId.isNullOrBlank()) {
                             course.classId = old.classId
                         }
@@ -102,7 +102,7 @@ object AttendanceSyncEngine {
                 } else {
                     syncSuccessful = false
                     if (old != null) {
-                        course.history = ArrayList(old.history)
+                        course.history = ArrayList(old.history.orEmpty())
                         if (!old.classId.isNullOrBlank()) {
                             course.classId = old.classId
                         }
@@ -110,7 +110,7 @@ object AttendanceSyncEngine {
                     Log.w(logTag, "DETAIL REJECTED ${course.courseCode} $cType - preserving cached history")
                 }
             } else {
-                course.history = ArrayList(old!!.history)
+                course.history = ArrayList(old!!.history.orEmpty())
                 if (!old.classId.isNullOrBlank()) {
                     course.classId = old.classId
                 }

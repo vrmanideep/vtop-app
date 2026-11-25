@@ -12,6 +12,7 @@ package com.vtop.ui.screens.sub
 
 import android.annotation.SuppressLint
 import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -51,6 +52,7 @@ import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -77,7 +79,8 @@ data class BunkOccurrence(
     val courseType: String,
     val slot: String,
     val weight: Int,
-    val isDefaultBunk: Boolean = true
+    val isDefaultBunk: Boolean = true,
+    val isPosted: Boolean = false
 ) {
     val key: String
         get() = "$date|$courseCode|$courseType|$slot"
@@ -476,10 +479,14 @@ fun BunkSimulatorTab(
     var postedOverrides by remember { mutableStateOf(emptyMap<String, Boolean>()) }
     var showBunkDatePicker by remember { mutableStateOf(false) }
 
-    // --- Core Calculation Pipeline (Derived State) ---
+    // Full-screen View Calculation sub-view state
+    var viewingCourseCode by rememberSaveable { mutableStateOf<String?>(null) }
+    var viewingDisplayType by rememberSaveable { mutableStateOf<String?>(null) }
+    var showPostedClassesInDetails by rememberSaveable { mutableStateOf(false) }
+
     // --- Core Calculation Pipeline (Derived State) ---
     val groupedCourses = remember(selectedDates, attendanceOverrides, postedOverrides, timetable, attendanceData, calculationEndDate, calCtx) {
-    val courseMap = mutableMapOf<String, MutableList<AttendanceModel>>()
+        val courseMap = mutableMapOf<String, MutableList<AttendanceModel>>()
         attendanceData.forEach { att ->
             val code = att.courseCode ?: return@forEach
             courseMap.getOrPut(code) { mutableListOf() }.add(att)
@@ -558,7 +565,7 @@ fun BunkSimulatorTab(
                                 matchingClasses.forEach { session ->
                                     val sessionWeight = getSlotWeight(session.slot)
                                     if (sessionWeight > 0) {
-                                        val occurrence = BunkOccurrence(curr, code, att.courseType ?: "", session.slot ?: "", sessionWeight, false)
+                                        val occurrence = BunkOccurrence(curr, code, att.courseType ?: "", session.slot ?: "", sessionWeight, isDefaultBunk = false, isPosted = true)
 
                                         val overriddenStatus = postedOverrides[occurrence.key]
                                         val isActuallyPresent = historyMatches.any { it.slot?.contains(session.slot ?: "") == true && (it.status?.contains("Present", true) == true || it.status?.contains("Attended", true) == true) }
@@ -580,7 +587,7 @@ fun BunkSimulatorTab(
                                             bunkOccs += occurrence
                                         }
 
-                                        // Only add to the UI dropdown if explicitly overridden
+                                        // Only add to the card dropdown if explicitly overridden
                                         if (overriddenStatus != null) {
                                             selectedOccurrences += occurrence
                                             if (!finalIsPresent) plannedBunks += sessionWeight
@@ -604,7 +611,7 @@ fun BunkSimulatorTab(
                                     val sessionWeight = getSlotWeight(session.slot)
 
                                     if (sessionWeight > 0) {
-                                        val occurrence = BunkOccurrence(curr, code, att.courseType ?: "", session.slot ?: "", sessionWeight, isSelected)
+                                        val occurrence = BunkOccurrence(curr, code, att.courseType ?: "", session.slot ?: "", sessionWeight, isDefaultBunk = isSelected, isPosted = false)
                                         val isBunking = if (isSelected) occurrence.key !in attendanceOverrides else occurrence.key in attendanceOverrides
 
                                         if (isSelected || isPast || isBunking) selectedOccurrences += occurrence
@@ -662,6 +669,299 @@ fun BunkSimulatorTab(
             if (theoryModel == null && labModel == null) return@mapNotNull null
             CourseBunkUiModel(code, courseName, theoryModel, labModel)
         }.sortedBy { it.courseCode }
+    }
+
+    val activeDetailsCourse = remember(viewingCourseCode, groupedCourses) {
+        viewingCourseCode?.let { code -> groupedCourses.firstOrNull { it.courseCode == code } }
+    }
+    val activeDetailsComponent = remember(activeDetailsCourse, viewingDisplayType) {
+        if (activeDetailsCourse == null) null
+        else if (viewingDisplayType == "Lab") activeDetailsCourse.lab else activeDetailsCourse.theory
+    }
+
+    // --- FULL-SCREEN SUB-VIEW: VIEW CALCULATION ---
+    if (activeDetailsCourse != null && activeDetailsComponent != null) {
+        BackHandler {
+            viewingCourseCode = null
+            viewingDisplayType = null
+        }
+
+        val isProjectedDanger = activeDetailsComponent.projectedPct < 75f
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+        ) {
+            // Top Bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = {
+                    viewingCourseCode = null
+                    viewingDisplayType = null
+                }) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = MaterialTheme.colorScheme.onBackground
+                    )
+                }
+                Spacer(Modifier.width(4.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "${activeDetailsCourse.courseCode} · ${activeDetailsComponent.displayType}",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (!activeDetailsCourse.courseName.isNullOrBlank()) {
+                        Text(
+                            text = activeDetailsCourse.courseName,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(top = 12.dp)
+            ) {
+                // Header Card: Starting Point
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("STARTING POINT", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.height(4.dp))
+                        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                            Text(activeDetailsComponent.auditStartDateStr, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                            Text("${activeDetailsComponent.auditStartAttended} / ${activeDetailsComponent.auditStartTotal}", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
+                }
+
+                // Toggle Button & Header
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("CLASS BREAKDOWN", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    TextButton(
+                        onClick = { showPostedClassesInDetails = !showPostedClassesInDetails },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        modifier = Modifier.height(26.dp)
+                    ) {
+                        Text(if (showPostedClassesInDetails) "Hide Posted" else "View Posted", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                if (showPostedClassesInDetails) {
+                    Text(
+                        text = "Tip: Tap a posted class to override its status.",
+                        fontSize = 10.sp,
+                        fontStyle = FontStyle.Italic,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 6.dp)
+                    )
+                }
+
+                // Table Header
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("DATE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(0.22f))
+                    Text("DETAILS", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(0.48f))
+                    Text("ACTION", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(0.30f), textAlign = TextAlign.End)
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            }
+
+            // Scrollable Table Body
+            val visibleLog = if (showPostedClassesInDetails) activeDetailsComponent.auditLog else activeDetailsComponent.auditLog.filter { !it.isPosted }
+
+            if (visibleLog.isEmpty()) {
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "No classes found before target date.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(visibleLog) { entry ->
+                        val isInteractive = entry.occurrences.isNotEmpty()
+                        val impactStr = if (entry.isBunk) "0" else "+${entry.deltaClasses}"
+                        val isOD = entry.reason == "On Duty"
+
+                        val rowColor = when {
+                            entry.isBunk -> MaterialTheme.colorScheme.error
+                            isOD -> Color(0xFF3B82F6)
+                            else -> MaterialTheme.colorScheme.primary
+                        }
+
+                        val iconTint = when {
+                            entry.isBunk -> MaterialTheme.colorScheme.error
+                            isOD -> Color(0xFF3B82F6)
+                            else -> Color(0xFF10B981)
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(rowColor.copy(alpha = 0.06f))
+                                .border(
+                                    width = 1.dp,
+                                    color = rowColor.copy(alpha = 0.16f),
+                                    shape = RoundedCornerShape(10.dp)
+                                )
+                                .padding(horizontal = 10.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Date Column
+                            Column(modifier = Modifier.weight(0.22f)) {
+                                Text(entry.dateStr, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                Text(entry.dayOfWeek, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+
+                            // Details Column
+                            Row(modifier = Modifier.weight(0.48f), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = if (entry.isBunk) Icons.Default.Close else Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = iconTint,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = entry.reason,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+
+                            // Action Column
+                            Box(modifier = Modifier.weight(0.30f), contentAlignment = Alignment.CenterEnd) {
+                                if (isInteractive) {
+                                    val isAttending = !entry.isBunk
+                                    Surface(
+                                        color = if (isAttending) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                                        shape = RoundedCornerShape(6.dp),
+                                        modifier = Modifier.clickable {
+                                            val newAttendState = entry.isBunk
+                                            entry.occurrences.forEach { occ ->
+                                                if (entry.isPosted) {
+                                                    postedOverrides = postedOverrides + (occ.key to newAttendState)
+                                                } else {
+                                                    val wantsToBunk = !newAttendState
+                                                    val needsOverride = occ.isDefaultBunk != wantsToBunk
+                                                    attendanceOverrides = if (needsOverride) {
+                                                        attendanceOverrides + occ.key
+                                                    } else {
+                                                        attendanceOverrides - occ.key
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    ) {
+                                        if (entry.isPosted) {
+                                            Text(
+                                                text = impactStr,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Black,
+                                                color = iconTint,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                            )
+                                        } else {
+                                            Text(
+                                                text = if (isAttending) "- Bunk" else "+ Add",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isAttending) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    Text("-", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Pinned Footer Card: Final Projected
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            ) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            text = "FINAL PROJECTED · UNTIL $examName",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.Bottom
+                        ) {
+                            Text(
+                                text = "${activeDetailsComponent.projectedPct.roundToInt()}%",
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Black,
+                                color = if (isProjectedDanger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Text(
+                                text = "${activeDetailsComponent.projectedAttended} / ${activeDetailsComponent.projectedTotal}",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        return
     }
 
     fun getSimulatableClassCount(date: LocalDate): Int {
@@ -942,7 +1242,7 @@ fun BunkSimulatorTab(
                         )
                     }
 
-                    if (selectedDates.isNotEmpty()) {
+                    if (selectedDates.isNotEmpty() || postedOverrides.isNotEmpty()) {
                         Row(
                             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 4.dp),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -969,10 +1269,33 @@ fun BunkSimulatorTab(
                                 }
                             }
 
+                            if (postedOverrides.isNotEmpty()) {
+                                val count = postedOverrides.size
+                                Row(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f))
+                                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                        .clickable { postedOverrides = emptyMap() }
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "$count posted override${if (count == 1) "" else "s"}",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(Icons.Default.Close, contentDescription = "Clear posted overrides", modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                                }
+                            }
+
                             TextButton(
                                 onClick = {
                                     selectedDates = emptySet()
                                     attendanceOverrides = emptySet()
+                                    postedOverrides = emptyMap()
                                 },
                                 contentPadding = PaddingValues(0.dp)
                             ) {
@@ -993,7 +1316,7 @@ fun BunkSimulatorTab(
                         course = course,
                         examName = examName,
                         attendanceOverrides = attendanceOverrides,
-                        postedOverrides = postedOverrides, // NEW: Pass the state
+                        postedOverrides = postedOverrides,
                         onAttendanceOverrideChange = { occurrence, wantsToAttend ->
                             val wantsToBunk = !wantsToAttend
                             val needsOverride = occurrence.isDefaultBunk != wantsToBunk
@@ -1004,8 +1327,13 @@ fun BunkSimulatorTab(
                                 attendanceOverrides - occurrence.key
                             }
                         },
-                        onPostedOverrideChange = { occurrence, newAttendState -> // NEW: Pass the callback
+                        onPostedOverrideChange = { occurrence, newAttendState ->
                             postedOverrides = postedOverrides + (occurrence.key to newAttendState)
+                        },
+                        onViewCalculation = { displayType ->
+                            showPostedClassesInDetails = false
+                            viewingCourseCode = course.courseCode
+                            viewingDisplayType = displayType
                         }
                     )
                 }
@@ -1073,7 +1401,8 @@ fun CourseBunkCard(
     attendanceOverrides: Set<String>,
     postedOverrides: Map<String, Boolean>,
     onAttendanceOverrideChange: (BunkOccurrence, Boolean) -> Unit,
-    onPostedOverrideChange: (BunkOccurrence, Boolean) -> Unit
+    onPostedOverrideChange: (BunkOccurrence, Boolean) -> Unit,
+    onViewCalculation: (String) -> Unit
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(if (course.theory != null) "Theory" else "Lab") }
 
@@ -1089,8 +1418,6 @@ fun CourseBunkCard(
     }
 
     var bunksExpanded by rememberSaveable { mutableStateOf(false) }
-    var showDetailsDialog by rememberSaveable { mutableStateOf(false) }
-    var showPostedClasses by rememberSaveable { mutableStateOf(false) }
 
     Card(
         modifier = Modifier.fillMaxWidth().animateContentSize(),
@@ -1213,8 +1540,12 @@ fun CourseBunkCard(
                         if (bunksExpanded) {
                             Spacer(Modifier.height(8.dp))
                             activeComponent.selectedOccurrences.forEach { occurrence ->
-                                val hasOverride = occurrence.key in attendanceOverrides
-                                val isBunking = if (occurrence.isDefaultBunk) !hasOverride else hasOverride
+                                val isBunking = if (occurrence.isPosted) {
+                                    !(postedOverrides[occurrence.key] ?: true)
+                                } else {
+                                    val hasOverride = occurrence.key in attendanceOverrides
+                                    if (occurrence.isDefaultBunk) !hasOverride else hasOverride
+                                }
                                 val isAttending = !isBunking
 
                                 Row(
@@ -1231,15 +1562,26 @@ fun CourseBunkCard(
                                             fontWeight = FontWeight.Bold
                                         )
                                         val slotStr = if (occurrence.weight == 1) occurrence.slot else "${occurrence.slot} · ${occurrence.weight} classes"
+                                        val statusTag = when {
+                                            occurrence.isPosted -> " (Posted override)"
+                                            !occurrence.isDefaultBunk -> " (Not posted)"
+                                            else -> ""
+                                        }
                                         Text(
-                                            if (!occurrence.isDefaultBunk) "$slotStr (Not posted)" else slotStr,
+                                            text = "$slotStr$statusTag",
                                             fontSize = 11.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
 
                                     Button(
-                                        onClick = { onAttendanceOverrideChange(occurrence, isBunking) },
+                                        onClick = {
+                                            if (occurrence.isPosted) {
+                                                onPostedOverrideChange(occurrence, isBunking)
+                                            } else {
+                                                onAttendanceOverrideChange(occurrence, isBunking)
+                                            }
+                                        },
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = if (isAttending) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
                                             contentColor = if (isAttending) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
@@ -1339,216 +1681,11 @@ fun CourseBunkCard(
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
-                            .clickable { showDetailsDialog = true }
+                            .clickable { onViewCalculation(activeComponent.displayType) }
                             .padding(horizontal = 4.dp, vertical = 2.dp)
                     )
                 }
             }
         }
-    }
-
-    if (showDetailsDialog) {
-        AlertDialog(
-            onDismissRequest = { showDetailsDialog = false },
-            title = {
-                Text(
-                    text = "${course.courseCode} (${activeComponent.displayType})",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Black
-                )
-            },
-            text = {
-                Column(modifier = Modifier.fillMaxWidth()) {
-
-                    // --- Header Card: Starting Point ---
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text("STARTING POINT", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.height(4.dp))
-                            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                                Text(activeComponent.auditStartDateStr, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                                Text("${activeComponent.auditStartAttended} / ${activeComponent.auditStartTotal}", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                            }
-                        }
-                    }
-
-                    // --- Toggle Button & Header ---
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("CLASS BREAKDOWN", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                        TextButton(
-                            onClick = { showPostedClasses = !showPostedClasses },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                            modifier = Modifier.height(24.dp)
-                        ) {
-                            Text(if (showPostedClasses) "Hide Posted" else "View Posted", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    // NEW: The Micro-Tip (Only shows when posted classes are expanded)
-                    if (showPostedClasses) {
-                        Text(
-                            text = "Tip: Tap a posted class to override its status.",
-                            fontSize = 9.sp,
-                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 4.dp) // Fixed modifier signature
-                        )
-                    }
-
-                    // --- Table Header ---
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("DATE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(0.20f))
-                        Text("DETAILS", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(0.50f))
-                        Text("ACTION", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(0.30f), textAlign = TextAlign.End)
-                    }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                    // --- Scrollable Table Body ---
-                    val visibleLog = if (showPostedClasses) activeComponent.auditLog else activeComponent.auditLog.filter { !it.isPosted }
-
-                    if (visibleLog.isEmpty()) {
-                        Text(
-                            text = "No classes found before target date.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 16.dp).align(Alignment.CenterHorizontally)
-                        )
-                    } else {
-                        LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
-                            items(visibleLog) { entry ->
-                                val isInteractive = entry.occurrences.isNotEmpty()
-                                val impactStr = if (entry.isBunk) "0" else "+${entry.deltaClasses}"
-
-                                // Detect OD for custom styling
-                                val isOD = entry.reason == "On Duty"
-
-                                val rowColor = when {
-                                    entry.isBunk -> MaterialTheme.colorScheme.error
-                                    isOD -> Color(0xFF3B82F6) // Vivid Blue for OD
-                                    else -> MaterialTheme.colorScheme.primary
-                                }
-
-                                val iconTint = when {
-                                    entry.isBunk -> MaterialTheme.colorScheme.error
-                                    isOD -> Color(0xFF3B82F6)
-                                    else -> Color(0xFF10B981) // Green for Present
-                                }
-
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 2.dp, vertical = 4.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(rowColor.copy(alpha = 0.05f))
-                                        .border(
-                                            width = 1.dp,
-                                            color = rowColor.copy(alpha = 0.15f),
-                                            shape = RoundedCornerShape(8.dp)
-                                        )
-                                        .padding(horizontal = 8.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    // Date Column
-                                    Column(modifier = Modifier.weight(0.20f)) {
-                                        Text(entry.dateStr, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                                        Text(entry.dayOfWeek, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-
-                                    // Details Column
-                                    Row(modifier = Modifier.weight(0.50f), verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = if (entry.isBunk) Icons.Default.Close else Icons.Default.Check,
-                                            contentDescription = null,
-                                            tint = iconTint,
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = entry.reason, // Removed the ($impactStr) from here
-                                            fontSize = 12.sp,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-
-                                    // Action Column
-                                    Box(modifier = Modifier.weight(0.30f), contentAlignment = Alignment.CenterEnd) {
-                                        if (isInteractive) {
-                                            val isAttending = !entry.isBunk
-                                            Surface(
-                                                color = if (isAttending) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
-                                                shape = RoundedCornerShape(6.dp),
-                                                modifier = Modifier.clickable {
-                                                    val newAttendState = entry.isBunk
-                                                    entry.occurrences.forEach { occ ->
-                                                        if (entry.isPosted) {
-                                                            onPostedOverrideChange(occ, newAttendState) // Fixes the unresolved reference!
-                                                        } else {
-                                                            onAttendanceOverrideChange(occ, newAttendState)
-                                                        }
-                                                    }
-                                                }
-                                            ) {
-                                                if (entry.isPosted) {
-                                                    Text(
-                                                        text = impactStr,
-                                                        fontSize = 12.sp,
-                                                        fontWeight = FontWeight.Black,
-                                                        color = iconTint,
-                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                                    )
-                                                } else {
-                                                    Text(
-                                                        text = if (isAttending) "- Bunk" else "+ Add",
-                                                        fontSize = 11.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = if (isAttending) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
-                                                    )
-                                                }
-                                            }
-                                        } else {
-                                            Text("-", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // --- Footer Card: Final Projected ---
-                    Spacer(Modifier.height(8.dp))
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text("FINAL PROJECTED", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha=0.7f))
-                            Spacer(Modifier.height(4.dp))
-                            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                                Text("${activeComponent.projectedPct.roundToInt()}%", fontSize = 24.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                                Text("${activeComponent.projectedAttended} / ${activeComponent.projectedTotal}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showDetailsDialog = false }) {
-                    Text("Close", fontWeight = FontWeight.Bold)
-                }
-            },
-            containerColor = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(16.dp)
-        )
     }
 }
