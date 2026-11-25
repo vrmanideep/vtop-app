@@ -254,12 +254,6 @@ private fun NextUpCard(exam: ExamScheduleModel, currentTime: Date, onClick: () -
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(
-                elevation = 8.dp,
-                shape = RoundedCornerShape(20.dp),
-                spotColor = MaterialTheme.colorScheme.onSurface,
-                ambientColor = MaterialTheme.colorScheme.onSurface
-            )
             .clickable { onClick() }
     ) {
         Column(modifier = Modifier.padding(20.dp)) {
@@ -350,12 +344,6 @@ private fun StandardExamCard(exam: ExamScheduleModel, urgencyColor: Color, isCla
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(
-                elevation = 4.dp,
-                shape = RoundedCornerShape(16.dp),
-                spotColor = MaterialTheme.colorScheme.onSurface,
-                ambientColor = MaterialTheme.colorScheme.onSurface
-            )
             .clickable { onClick() }
     ) {
         Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
