@@ -115,9 +115,10 @@ fun MainScreen(
     val syncStatus by viewModel.syncStatus
     val errorMsg by viewModel.appError
 
-    // FIX: Moved remember state outside of LaunchedEffect so it's globally available
+    // Moved remember state outside LaunchedEffect so it's globally available
     val sharedPrefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
     var showHolidaysOnHome by remember { mutableStateOf(sharedPrefs.getBoolean("SHOW_HOLIDAYS_ON_HOME", true)) }
+    var showCalculator by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         if (sharedPrefs.contains("CUSTOM_ACCENT")) ThemeManager.customAccent.value = Color(sharedPrefs.getInt("CUSTOM_ACCENT", 0))
@@ -155,7 +156,7 @@ fun MainScreen(
         Unit
     }
 
-    BackHandler(enabled = uiState.showPortal || (uiState.currentTab != "HOME" && !uiState.isProfileSubPage)) {
+    BackHandler(enabled = !showCalculator && (uiState.showPortal || (uiState.currentTab != "HOME" && !uiState.isProfileSubPage))) {
         if (uiState.showPortal) viewModel.updatePortalVisibility(false) else viewModel.updateTab("HOME")
     }
 
@@ -201,7 +202,8 @@ fun MainScreen(
                             marksData = marksData,
                             historySummary = historySummary,
                             historyData = historyItems,
-                            timetable = timetable
+                            timetable = timetable,
+                            onOpenCalculator = { showCalculator = true }
                         )
                     }
                     "OUTINGS" -> { VtopOutingsTab(outingsData = outingsData, handler = outingHandler) }
@@ -425,6 +427,21 @@ fun MainScreen(
                     Text("Preparing VTOP Session...", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+        }
+
+        AnimatedVisibility(
+            visible = showCalculator,
+            enter = fadeIn(tween(150)) + slideInVertically(tween(300)) { it / 8 },
+            exit = fadeOut(tween(150)) + slideOutVertically(tween(300)) { it / 8 },
+            modifier = Modifier.fillMaxSize().zIndex(50f)
+        ) {
+            CGPACalculatorSubView(
+                historySummary = historySummary,
+                historyData = historyItems,
+                marksData = marksData,
+                timetable = timetable,
+                onBack = { showCalculator = false }
+            )
         }
     }
 }
