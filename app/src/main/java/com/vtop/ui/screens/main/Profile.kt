@@ -351,12 +351,35 @@ fun Profile(
                 }
 
                 // --- PROFILE HERO CARD ---
+                var devTapCount by remember { mutableIntStateOf(0) }
+                var lastDevTapTime by remember { mutableLongStateOf(0L) }
+
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     shape = RoundedCornerShape(16.dp),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
-                    modifier = Modifier.fillMaxWidth() // Removed the 5-tap clickable logic here
-                )  {
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            val now = System.currentTimeMillis()
+                            if (now - lastDevTapTime > 1500L) {
+                                devTapCount = 1
+                            } else {
+                                devTapCount++
+                            }
+                            lastDevTapTime = now
+                            if (devTapCount >= 5) {
+                                devTapCount = 0
+                                val nextState = !com.vtop.utils.CourseFileManager.isDevOptionsEnabled(context)
+                                com.vtop.utils.CourseFileManager.setDevOptionsEnabled(context, nextState)
+                                Toast.makeText(
+                                    context,
+                                    if (nextState) "Developer options enabled" else "Developer options disabled",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -518,6 +541,7 @@ fun Profile(
 
                         if (isMoreExpanded) {
                             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
                             // Keep PORTAL Responsive During Sync
                             Row(
                                 modifier = Modifier

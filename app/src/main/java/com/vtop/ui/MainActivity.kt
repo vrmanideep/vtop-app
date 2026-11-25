@@ -422,9 +422,12 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                                 composable("course_page") {
-                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                        Text("Course Page", color = MaterialTheme.colorScheme.onBackground)
-                                    }
+                                    val timetable by TimetableRepository.timetable.collectAsState()
+                                    CoursePageScreen(
+                                        vtopClient = SessionManager.getSyncClient(),
+                                        timetable = timetable,
+                                        onBack = { navController.popBackStack() }
+                                    )
                                 }
                                 composable("grade_predictor") {
                                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

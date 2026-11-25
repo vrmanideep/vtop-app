@@ -752,6 +752,124 @@ public class VtopClient {
         return new FacultyDetails(email, office, research);
     }
 
+    public String fetchCoursePageSemestersRawHtml() {
+        RequestBody body = new FormBody.Builder()
+                .add("verifyMenu", "true")
+                .add("authorizedID", authorizedId)
+                .add("_csrf", csrfToken)
+                .add("nocache", "@(" + System.currentTimeMillis() + ")")
+                .build();
+        return executeWafFetch("/academics/common/StudentCoursePage", body, "/content?");
+    }
+
+    public String fetchCoursesForCoursePageRawHtml(String semSubId) {
+        RequestBody body = new FormBody.Builder()
+                .add("_csrf", csrfToken)
+                .add("paramReturnId", "getCourseForCoursePage")
+                .add("semSubId", semSubId)
+                .add("authorizedID", authorizedId)
+                .add("x", getGmtTimestamp())
+                .build();
+        return executeWafFetch("/getCourseForCoursePage", body, "/content?");
+    }
+
+    public String fetchSlotSectionsRawHtml(String semSubId, String classId) {
+        RequestBody body = new FormBody.Builder()
+                .add("_csrf", csrfToken)
+                .add("classId", classId)
+                .add("praType", "source")
+                .add("paramReturnId", "getSlotIdForCoursePage")
+                .add("semSubId", semSubId)
+                .add("authorizedID", authorizedId)
+                .add("x", getGmtTimestamp())
+                .build();
+        return executeWafFetch("/getSlotIdForCoursePage", body, "/content?");
+    }
+
+    public String fetchCourseDetailRawHtml(String semSubId, String erpId, String classId) {
+        RequestBody body = new FormBody.Builder()
+                .add("_csrf", csrfToken)
+                .add("semSubId", semSubId)
+                .add("erpId", erpId)
+                .add("classId", classId)
+                .add("authorizedID", authorizedId)
+                .add("x", getGmtTimestamp())
+                .build();
+        return executeWafFetch("/processViewStudentCourseDetail", body, "/content?");
+    }
+
+    public static class DownloadResult {
+        public final boolean success;
+        public final String serverFileName;
+        public final String mimeType;
+        public final String error;
+
+        public DownloadResult(boolean success, String serverFileName, String mimeType, String error) {
+            this.success = success;
+            this.serverFileName = serverFileName;
+            this.mimeType = mimeType;
+            this.error = error;
+        }
+    }
+
+    public DownloadResult downloadCourseMaterial(String relativePath, boolean isCoursePlan, String semSubId, String classId, File outputFile) {
+        try {
+            HttpUrl.Builder urlBuilder;
+            if (isCoursePlan) {
+                HttpUrl base = HttpUrl.parse(BASE_URL + "/academics/common/CoursePlanExcelDownload");
+                if (base == null) return new DownloadResult(false, null, null, "Invalid URL");
+                urlBuilder = base.newBuilder()
+                        .addQueryParameter("semesterSubId", semSubId)
+                        .addQueryParameter("classId", classId)
+                        .addQueryParameter("authorizedID", authorizedId)
+                        .addQueryParameter("x", getGmtTimestamp());
+            } else {
+                String cleanPath = relativePath.startsWith("/") ? relativePath : "/" + relativePath;
+                HttpUrl base = HttpUrl.parse(BASE_URL + cleanPath);
+                if (base == null) return new DownloadResult(false, null, null, "Invalid URL");
+                urlBuilder = base.newBuilder()
+                        .addQueryParameter("authorizedID", authorizedId)
+                        .addQueryParameter("_csrf", csrfToken)
+                        .addQueryParameter("x", getGmtTimestamp());
+            }
+
+            Request req = new Request.Builder()
+                    .url(urlBuilder.build())
+                    .get()
+                    .header("Referer", BASE_URL + "/content?")
+                    .build();
+
+            try (Response res = client.newCall(req).execute()) {
+                if (!res.isSuccessful() || res.body() == null) {
+                    return new DownloadResult(false, null, null, "HTTP " + res.code());
+                }
+                String contentType = res.header("Content-Type", "application/octet-stream");
+                if (contentType != null && contentType.contains("text/html")) {
+                    return new DownloadResult(false, null, null, "Session expired or file unavailable");
+                }
+                String disposition = res.header("Content-Disposition", "");
+                String fileName = null;
+                if (disposition != null) {
+                    Matcher m = Pattern.compile("filename=\"?([^\";]+)\"?").matcher(disposition);
+                    if (m.find()) fileName = m.group(1).trim();
+                }
+
+                byte[] bytes = res.body().bytes();
+                if (bytes.length == 0) return new DownloadResult(false, null, null, "Empty file");
+
+                File parent = outputFile.getParentFile();
+                if (parent != null && !parent.exists()) parent.mkdirs();
+                try (FileOutputStream fos = new FileOutputStream(outputFile)) {
+                    fos.write(bytes);
+                }
+                return new DownloadResult(true, fileName, contentType, null);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "downloadCourseMaterial exception", e);
+            return new DownloadResult(false, null, null, e.getMessage());
+        }
+    }
+
     @SuppressLint("CustomX509TrustManager")
     private static OkHttpClient.Builder getUnsafeOkHttpClientBuilder() {
         try {
