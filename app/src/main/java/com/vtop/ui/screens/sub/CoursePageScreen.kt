@@ -10,8 +10,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -779,17 +777,6 @@ fun CoursePageScreen(
                                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                                 Text(slot, fontSize = 15.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
                                                 Text("(${slotSections.size})", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                if (slot == userSlot) {
-                                                    Text(
-                                                        "YOUR SLOT",
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Black,
-                                                        color = MaterialTheme.colorScheme.primary,
-                                                        modifier = Modifier
-                                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
-                                                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                                                    )
-                                                }
                                             }
                                             Icon(
                                                 if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
