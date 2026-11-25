@@ -2,6 +2,17 @@ package com.vtop.sync
 
 import android.content.Context
 import android.util.Log
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.DocumentsContract
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.vtop.logic.CoursePageParser
 import com.vtop.models.CourseDetailData
 import com.vtop.models.CourseMaterialItem
@@ -11,6 +22,8 @@ import com.vtop.utils.CourseAutoDownloadConfig
 import com.vtop.utils.CourseFileManager
 import com.vtop.utils.DownloadedFileRecord
 import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -57,7 +70,7 @@ object CourseAutoDownloadEngine {
             return
         }
         activeJob = engineScope.launch {
-            executeInternal(context.applicationContext, client)
+            executeInternal(context.applicationContext, client, notifyOnNewFiles = false)
         }
     }
 
@@ -70,7 +83,7 @@ object CourseAutoDownloadEngine {
             return true
         }
         return withContext(Dispatchers.IO) {
-            executeInternal(context.applicationContext, client)
+            executeInternal(context.applicationContext, client, notifyOnNewFiles = true)
         }
     }
 
@@ -135,12 +148,17 @@ object CourseAutoDownloadEngine {
         successCount to failCount
     }
 
-    private suspend fun executeInternal(context: Context, client: VtopClient): Boolean {
+    private suspend fun executeInternal(
+        context: Context,
+        client: VtopClient,
+        notifyOnNewFiles: Boolean
+    ): Boolean {
         _isRunning.value = true
         _progressText.value = "Preparing targets..."
         var downloadedCount = 0
         var skippedCount = 0
         var failedCount = 0
+        val updatedCourses = linkedSetOf<String>()
 
         try {
             if (!CourseFileManager.isSaveToDiskEnabled(context)) {
@@ -157,14 +175,21 @@ object CourseAutoDownloadEngine {
 
             val total = targets.size
             targets.forEachIndexed { idx, target ->
+                currentCoroutineContext().ensureActive()
                 _progressText.value = "Checking ${target.label} (${idx + 1}/$total)..."
 
                 val detailHtml = client.fetchCourseDetailRawHtml(target.semId, target.erpId, target.classId)
                 val detail = detailHtml?.let { CoursePageParser.parseCourseDetail(it) }
                 if (detail == null) {
+                    Log.w(TAG, "Failed to parse detail for ${target.label} (htmlLen=${detailHtml?.length ?: 0})")
                     failedCount++
                     return@forEachIndexed
                 }
+                Log.d(
+                    TAG,
+                    "${detail.courseCode}: syllabus=${!detail.syllabusPath.isNullOrBlank()}, " +
+                            "general=${detail.generalMaterials.size}, lectures=${detail.lectures.size}"
+                )
 
                 val multiFaculty = CourseAutoDownloadConfig.countActiveFacultiesForCourse(
                     settings = settings,
@@ -172,11 +197,15 @@ object CourseAutoDownloadEngine {
                     courseType = detail.courseType
                 ) > 1
 
+                currentCoroutineContext().ensureActive()
                 // 1. Syllabus (always saved in course root folder)
                 detail.syllabusPath?.takeIf { it.isNotBlank() }?.let { path ->
                     val item = CourseMaterialItem("Syllabus", path, "Syllabus.pdf")
                     when (downloadIfNeeded(context, client, settings, detail, item, isSyllabus = true, includeFacultySuffix = false)) {
-                        DownloadOutcome.DOWNLOADED -> downloadedCount++
+                        DownloadOutcome.DOWNLOADED -> {
+                            downloadedCount++
+                            updatedCourses.add(detail.courseCode)
+                        }
                         DownloadOutcome.SKIPPED -> skippedCount++
                         DownloadOutcome.FAILED -> failedCount++
                     }
@@ -184,6 +213,7 @@ object CourseAutoDownloadEngine {
 
                 // 2. General Materials (skips Course Plan & Download All ZIP)
                 detail.generalMaterials.forEachIndexed { gmIdx, mat ->
+                    currentCoroutineContext().ensureActive()
                     if (mat.isWebLink || mat.isCoursePlan || mat.isZip) return@forEachIndexed
                     when (
                         downloadIfNeeded(
@@ -198,7 +228,10 @@ object CourseAutoDownloadEngine {
                             includeFacultySuffix = multiFaculty
                         )
                     ) {
-                        DownloadOutcome.DOWNLOADED -> downloadedCount++
+                        DownloadOutcome.DOWNLOADED -> {
+                            downloadedCount++
+                            updatedCourses.add(detail.courseCode)
+                        }
                         DownloadOutcome.SKIPPED -> skippedCount++
                         DownloadOutcome.FAILED -> failedCount++
                     }
@@ -207,6 +240,7 @@ object CourseAutoDownloadEngine {
                 // 3. Lecture Materials
                 detail.lectures.forEach { lec ->
                     lec.materials.forEach { mat ->
+                        currentCoroutineContext().ensureActive()
                         if (mat.isWebLink || mat.isCoursePlan || mat.isZip) return@forEach
                         when (
                             downloadIfNeeded(
@@ -222,7 +256,10 @@ object CourseAutoDownloadEngine {
                                 includeFacultySuffix = multiFaculty
                             )
                         ) {
-                            DownloadOutcome.DOWNLOADED -> downloadedCount++
+                            DownloadOutcome.DOWNLOADED -> {
+                                downloadedCount++
+                                updatedCourses.add(detail.courseCode)
+                            }
                             DownloadOutcome.SKIPPED -> skippedCount++
                             DownloadOutcome.FAILED -> failedCount++
                         }
@@ -238,6 +275,9 @@ object CourseAutoDownloadEngine {
                 else -> "Up to date"
             }
             CourseAutoDownloadConfig.updateLastRun(context, summary)
+            if (notifyOnNewFiles && downloadedCount > 0) {
+                postSummaryNotification(context, downloadedCount, updatedCourses)
+            }
             return true
         } catch (_: CancellationException) {
             CourseAutoDownloadConfig.updateLastRun(context, "Cancelled ($downloadedCount downloaded)")
@@ -322,18 +362,29 @@ object CourseAutoDownloadEngine {
         includeFacultySuffix: Boolean = false
     ): DownloadOutcome {
         val key = item.relativePath.ifBlank { item.label }
-        if (key in settings.forgottenKeys) return DownloadOutcome.SKIPPED
+        if (key in settings.forgottenKeys) {
+            Log.d(TAG, "SKIP (forgotten): $key")
+            return DownloadOutcome.SKIPPED
+        }
 
         val existingRecord = CourseFileManager.getDownloadRecord(context, key)
         if (existingRecord != null) {
             val existsOnDisk = CourseFileManager.findExistingUri(context, existingRecord) != null
-            if (existsOnDisk) return DownloadOutcome.SKIPPED
-            if (!settings.redownloadDeleted) return DownloadOutcome.SKIPPED
+            if (existsOnDisk) {
+                Log.d(TAG, "SKIP (exists on disk): ${existingRecord.fileName}")
+                return DownloadOutcome.SKIPPED
+            }
+            if (!settings.redownloadDeleted) {
+                Log.d(TAG, "SKIP (deleted & redownload off): ${existingRecord.fileName}")
+                return DownloadOutcome.SKIPPED
+            }
         }
 
-        val tempFile = File(context.cacheDir, "autodl_${System.currentTimeMillis()}")
+        _progressText.value = "Downloading ${detail.courseCode}: ${item.label}..."
+        val tempFile = File(context.cacheDir, "auto_download_${System.currentTimeMillis()}")
         val res = client.downloadCourseMaterial(item.relativePath, false, detail.semSubId, detail.classId, tempFile)
         if (!res.success) {
+            Log.w(TAG, "FAIL download: ${item.label} (${item.relativePath})")
             tempFile.delete()
             return DownloadOutcome.FAILED
         }
@@ -382,5 +433,69 @@ object CourseAutoDownloadEngine {
         }
         tempFile.delete()
         return DownloadOutcome.FAILED
+    }
+
+    private fun postSummaryNotification(
+        context: Context,
+        downloadedCount: Int,
+        courses: Set<String>
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) return
+        }
+
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        val channelId = "course_auto_dl_summary"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                channelId,
+                "Course Auto-Download",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Summary notifications when scheduled auto-download fetches new course files"
+            }
+            manager.createNotificationChannel(channel)
+        }
+
+        val folderUri = Uri.parse("content://com.android.externalstorage.documents/document/primary%3ADownload%2Fvtop_course_files")
+        val openFolderIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(folderUri, DocumentsContract.Document.MIME_TYPE_DIR)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val tapIntent = if (openFolderIntent.resolveActivity(context.packageManager) != null) {
+            openFolderIntent
+        } else {
+            context.packageManager.getLaunchIntentForPackage(context.packageName)
+        }
+
+        val pendingIntent = tapIntent?.let {
+            PendingIntent.getActivity(
+                context,
+                4021,
+                it,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
+
+        val title = "$downloadedCount new course file${if (downloadedCount == 1) "" else "s"} downloaded"
+        val body = if (courses.isNotEmpty()) {
+            courses.joinToString(", ")
+        } else {
+            "Saved to Downloads/vtop_course_files"
+        }
+
+        val notification = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setAutoCancel(true)
+            .apply { if (pendingIntent != null) setContentIntent(pendingIntent) }
+            .build()
+
+        manager.notify(4021, notification)
     }
 }

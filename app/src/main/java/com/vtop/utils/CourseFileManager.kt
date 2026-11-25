@@ -89,8 +89,55 @@ object CourseFileManager {
             .edit().putBoolean(PREF_DEV_OPTIONS, enabled).apply()
     }
 
-    // --- Storage Mode ---
+    fun computeCourseFilesFolderSizeBytes(context: Context): Long {
+        return try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                var total = 0L
+                val projection = arrayOf(android.provider.MediaStore.Downloads.SIZE)
+                val selection = "${android.provider.MediaStore.Downloads.RELATIVE_PATH} LIKE ?"
+                val selectionArgs = arrayOf("Download/vtop_course_files%")
+                context.contentResolver.query(
+                    android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    projection,
+                    selection,
+                    selectionArgs,
+                    null
+                )?.use { cursor ->
+                    val sizeCol = cursor.getColumnIndex(android.provider.MediaStore.Downloads.SIZE)
+                    if (sizeCol != -1) {
+                        while (cursor.moveToNext()) {
+                            total += cursor.getLong(sizeCol).coerceAtLeast(0L)
+                        }
+                    }
+                }
+                total
+            } else {
+                val root = File(
+                    android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS),
+                    "vtop_course_files"
+                )
+                if (!root.exists()) 0L
+                else root.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            }
+        } catch (_: Exception) {
+            0L
+        }
+    }
 
+    fun formatFileSize(bytes: Long): String {
+        if (bytes <= 0L) return "0 B"
+        val kb = bytes / 1024.0
+        val mb = kb / 1024.0
+        val gb = mb / 1024.0
+        return when {
+            gb >= 1.0 -> "%.2f GB".format(gb)
+            mb >= 1.0 -> "%.1f MB".format(mb)
+            kb >= 1.0 -> "%.0f KB".format(kb)
+            else -> "$bytes B"
+        }
+    }
+
+    // --- Storage Mode ---
     fun isSaveToDiskEnabled(context: Context): Boolean =
         context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
             .getBoolean(PREF_SAVE_TO_DISK, true)

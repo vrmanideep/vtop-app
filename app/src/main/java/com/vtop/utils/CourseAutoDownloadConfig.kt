@@ -35,7 +35,8 @@ data class AutoDownloadCourseConfig(
     val defaultClassId: String,
     val enabled: Boolean = true,
     val faculties: List<AutoDownloadFacultyTarget> = emptyList()
-) {
+)
+{
     val configKey: String get() = "${semId}_${courseCode}_${courseType.trim().uppercase()}"
 
     fun toJson(): JSONObject = JSONObject().apply {
@@ -77,7 +78,8 @@ data class CustomClassIdTarget(
     val courseTitle: String,
     val courseType: String,
     val enabled: Boolean = true
-) {
+)
+{
     val targetKey: String get() = "${semId}_${classId}_${erpId}"
 
     fun toJson(): JSONObject = JSONObject().apply {
@@ -112,6 +114,18 @@ data class LastRunStatus(
     val summary: String = ""
 )
 
+data class ForgottenFileMeta(
+    val key: String,
+    val semId: String = "",
+    val courseCode: String,
+    val courseTitle: String,
+    val courseType: String,
+    val slot: String,
+    val facultyName: String,
+    val lectureLabel: String,
+    val fileName: String
+)
+
 data class AutoDownloadSettings(
     val enabled: Boolean = false,
     val activeSemId: String = "",
@@ -144,6 +158,78 @@ object CourseAutoDownloadConfig {
     private const val KEY_FORGOTTEN_KEYS = "forgotten_keys"
     private const val KEY_LAST_RUN_TIME = "last_run_time"
     private const val KEY_LAST_RUN_SUMMARY = "last_run_summary"
+
+    private const val KEY_FORGOTTEN_META = "forgotten_file_meta_json"
+
+    fun loadForgottenMeta(context: Context): Map<String, ForgottenFileMeta> {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_FORGOTTEN_META, null) ?: return emptyMap()
+        return try {
+            val root = org.json.JSONObject(raw)
+            val result = mutableMapOf<String, ForgottenFileMeta>()
+            val keys = root.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val obj = root.optJSONObject(k) ?: continue
+                result[k] = ForgottenFileMeta(
+                    key = k,
+                    courseCode = obj.optString("courseCode", ""),
+                    courseTitle = obj.optString("courseTitle", ""),
+                    courseType = obj.optString("courseType", ""),
+                    semId = obj.optString("semId", ""),
+                    slot = obj.optString("slot", ""),
+                    facultyName = obj.optString("facultyName", ""),
+                    lectureLabel = obj.optString("lectureLabel", ""),
+                    fileName = obj.optString("fileName", "")
+                )
+            }
+            result
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    fun saveForgottenMeta(context: Context, items: List<ForgottenFileMeta>) {
+        if (items.isEmpty()) return
+        val existing = loadForgottenMeta(context).toMutableMap()
+        items.forEach { existing[it.key] = it }
+        writeForgottenMeta(context, existing)
+    }
+
+    fun removeForgottenMeta(context: Context, keys: Collection<String>) {
+        if (keys.isEmpty()) return
+        val existing = loadForgottenMeta(context).toMutableMap()
+        keys.forEach { existing.remove(it) }
+        writeForgottenMeta(context, existing)
+    }
+
+    fun clearForgottenMeta(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove(KEY_FORGOTTEN_META)
+            .apply()
+    }
+
+    private fun writeForgottenMeta(context: Context, map: Map<String, ForgottenFileMeta>) {
+        val root = org.json.JSONObject()
+        map.forEach { (k, v) ->
+            val obj = org.json.JSONObject().apply {
+                put("semId", v.semId)
+                put("courseCode", v.courseCode)
+                put("courseTitle", v.courseTitle)
+                put("courseType", v.courseType)
+                put("slot", v.slot)
+                put("facultyName", v.facultyName)
+                put("lectureLabel", v.lectureLabel)
+                put("fileName", v.fileName)
+            }
+            root.put(k, obj)
+        }
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_FORGOTTEN_META, root.toString())
+            .apply()
+    }
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

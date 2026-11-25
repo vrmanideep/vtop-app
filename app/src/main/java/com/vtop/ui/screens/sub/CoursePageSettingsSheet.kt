@@ -72,6 +72,7 @@ fun CoursePageSettingsSheet(
 
 
     var saveToDisk by remember { mutableStateOf(CourseFileManager.isSaveToDiskEnabled(context)) }
+    var folderSizeLabel by remember { mutableStateOf("") }
     var autoOpenFiles by remember { mutableStateOf(CourseFileManager.isAutoOpenEnabled(context)) }
     var settings by remember {
         val loaded = CourseAutoDownloadConfig.load(context)
@@ -81,10 +82,20 @@ fun CoursePageSettingsSheet(
         mutableStateOf(withDefaultSem)
     }
     var showDeletedFilesDialog by remember { mutableStateOf(false) }
+    var showForgottenFilesView by remember { mutableStateOf(false) }
     var isScanningDeleted by remember { mutableStateOf(false) }
     var deletedRecords by remember { mutableStateOf<List<DownloadedFileRecord>>(emptyList()) }
     var isRedownloadingDeleted by remember { mutableStateOf(false) }
     var redownloadProgress by remember { mutableStateOf("") }
+
+    LaunchedEffect(saveToDisk, isRunningAutoDownload, isRedownloadingDeleted) {
+        if (saveToDisk && !isRunningAutoDownload && !isRedownloadingDeleted) {
+            val bytes = withContext(Dispatchers.IO) {
+                CourseFileManager.computeCourseFilesFolderSizeBytes(context)
+            }
+            folderSizeLabel = CourseFileManager.formatFileSize(bytes)
+        }
+    }
 
     var isAutoDownloadExpanded by remember { mutableStateOf(settings.enabled) }
     var showDisableDiskWarning by remember { mutableStateOf(false) }
@@ -104,7 +115,7 @@ fun CoursePageSettingsSheet(
     var pickerSections by remember { mutableStateOf<List<CourseSection>>(emptyList()) }
     var isLoadingPicker by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = editingCourseConfig == null && !showDeletedFilesDialog) { onDismiss() }
+    BackHandler(enabled = editingCourseConfig == null && !showDeletedFilesDialog && !showForgottenFilesView) { onDismiss() }
     // Custom Class ID state (Dev Options)
     var customClassIdInput by remember { mutableStateOf("") }
     var isAddingCustomClass by remember { mutableStateOf(false) }
@@ -385,6 +396,41 @@ fun CoursePageSettingsSheet(
                     shape = RoundedCornerShape(12.dp)
                 )
 
+                if (selectedMap.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp)
+                            .padding(bottom = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        selectedMap.entries.toList().forEach { (key, fac) ->
+                            InputChip(
+                                selected = true,
+                                onClick = { selectedMap.remove(key) },
+                                label = {
+                                    Text(
+                                        text = "${fac.slot} · ${fac.facultyName}",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                },
+                                trailingIcon = {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Remove faculty",
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+
                 LazyColumn(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
@@ -648,45 +694,144 @@ fun CoursePageSettingsSheet(
                         )
                     }
 
+                    val groupedDeletedBySem = remember(deletedRecords, settings.courseConfigs, defaultRegInfoByClassId) {
+                        deletedRecords
+                            .map { rec ->
+                                val cfgMatch = settings.courseConfigs.firstOrNull { cfg ->
+                                    cfg.defaultClassId.equals(rec.classId, ignoreCase = true) ||
+                                            cfg.faculties.any { it.classId.equals(rec.classId, ignoreCase = true) }
+                                }
+                                val facMatch = cfgMatch?.faculties?.firstOrNull {
+                                    it.classId.equals(rec.classId, ignoreCase = true)
+                                }
+                                val (regSlot, regFac) = defaultRegInfoByClassId[rec.classId.trim()] ?: ("" to "")
+                                val semId = rec.semSubId.ifBlank { cfgMatch?.semId ?: "" }
+                                val slot = facMatch?.slot?.ifBlank { regSlot } ?: regSlot
+                                val fac = facMatch?.facultyName?.ifBlank { regFac } ?: regFac
+                                Triple(rec, semId, slot to fac)
+                            }
+                            .sortedWith(
+                                compareByDescending<Triple<DownloadedFileRecord, String, Pair<String, String>>> { it.second }
+                                    .thenBy { it.first.courseCode.uppercase() }
+                                    .thenBy { if (formatSettingsTypeLabel(it.first.courseType) == "Theory") 0 else 1 }
+                                    .thenBy { it.first.courseType.uppercase() }
+                                    .thenBy { it.third.first.uppercase() }
+                                    .thenBy { it.third.second.uppercase() }
+                                    .thenBy { it.first.fileName.lowercase() }
+                            )
+                            .groupBy { it.second.ifBlank { "Other" } }
+                    }
+
                     LazyColumn(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        items(deletedRecords, key = { it.key }) { rec ->
-                            val checked = selectedKeys[rec.key] == true
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = containerBg),
-                                shape = RoundedCornerShape(10.dp),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { selectedKeys[rec.key] = !checked }
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 10.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Checkbox(
-                                        checked = checked,
-                                        onCheckedChange = { selectedKeys[rec.key] = it }
-                                    )
-                                    Spacer(Modifier.width(4.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = rec.fileName,
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Spacer(Modifier.height(2.dp))
-                                        Text(
-                                            text = "${rec.courseCode} · ${formatSettingsTypeLabel(rec.courseType)}",
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                        groupedDeletedBySem.forEach { (semId, semEntries) ->
+                            val semName = semesters.find { it.id == semId }?.name ?: semId
+                            item(key = "del_sem_$semId") {
+                                Text(
+                                    text = semName.uppercase(),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    letterSpacing = 0.8.sp,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+
+                            val byCourse = semEntries.groupBy { it.first.courseCode.ifBlank { "Other" } }
+                            byCourse.forEach { (courseCode, courseEntries) ->
+                                val courseTitle = courseEntries.firstOrNull { it.first.courseTitle.isNotBlank() }?.first?.courseTitle ?: ""
+                                item(key = "del_course_${semId}_$courseCode") {
+                                    Card(
+                                        colors = CardDefaults.cardColors(containerColor = containerBg),
+                                        shape = RoundedCornerShape(12.dp),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(14.dp),
+                                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Column {
+                                                Text(
+                                                    text = courseCode,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Black,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                                if (courseTitle.isNotBlank()) {
+                                                    Text(
+                                                        text = courseTitle,
+                                                        fontSize = 12.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = MaterialTheme.colorScheme.onSurface,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                            }
+
+                                            val byType = courseEntries.groupBy { formatSettingsTypeLabel(it.first.courseType) }
+                                            byType.forEach { (typeLabel, typeEntries) ->
+                                                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                                                Text(
+                                                    text = typeLabel.uppercase(),
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Black,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    letterSpacing = 0.8.sp
+                                                )
+
+                                                val bySlotFac = typeEntries.groupBy { it.third }
+                                                bySlotFac.forEach { (slotFac, facEntries) ->
+                                                    val (slot, faculty) = slotFac
+                                                    val slotFacHeader = listOf(slot, faculty)
+                                                        .filter { it.isNotBlank() }
+                                                        .joinToString(" · ")
+
+                                                    if (slotFacHeader.isNotBlank()) {
+                                                        Text(
+                                                            text = slotFacHeader,
+                                                            fontSize = 11.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = MaterialTheme.colorScheme.onSurface
+                                                        )
+                                                    }
+
+                                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                        facEntries.forEach { (rec, _, _) ->
+                                                            val checked = selectedKeys[rec.key] == true
+                                                            Row(
+                                                                modifier = Modifier
+                                                                    .fillMaxWidth()
+                                                                    .clip(RoundedCornerShape(8.dp))
+                                                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                                                                    .clickable { selectedKeys[rec.key] = !checked }
+                                                                    .padding(horizontal = 6.dp, vertical = 6.dp),
+                                                                verticalAlignment = Alignment.CenterVertically
+                                                            ) {
+                                                                Checkbox(
+                                                                    checked = checked,
+                                                                    onCheckedChange = { selectedKeys[rec.key] = it }
+                                                                )
+                                                                Spacer(Modifier.width(4.dp))
+                                                                Text(
+                                                                    text = rec.fileName,
+                                                                    fontSize = 12.sp,
+                                                                    fontWeight = FontWeight.SemiBold,
+                                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                                    modifier = Modifier.weight(1f)
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -703,14 +848,35 @@ fun CoursePageSettingsSheet(
                         OutlinedButton(
                             enabled = selectedCount > 0,
                             onClick = {
-                                val toForget = deletedRecords
-                                    .filter { selectedKeys[it.key] == true }
-                                    .map { it.key }
-                                CourseAutoDownloadConfig.addForgottenKeys(context, toForget)
-                                toForget.forEach { CourseFileManager.removeDownloadRecord(context, it) }
-                                persistSettings(settings.copy(forgottenKeys = settings.forgottenKeys + toForget))
-                                deletedRecords = deletedRecords.filter { it.key !in toForget }
-                                Toast.makeText(context, "Forgot ${toForget.size} file${if (toForget.size == 1) "" else "s"}", Toast.LENGTH_SHORT).show()
+                                val toForgetRecords = deletedRecords.filter { selectedKeys[it.key] == true }
+                                val toForgetKeys = toForgetRecords.map { it.key }
+                                val metaToSave = toForgetRecords.map { rec ->
+                                    val cfgMatch = settings.courseConfigs.firstOrNull { cfg ->
+                                        cfg.defaultClassId.equals(rec.classId, ignoreCase = true) ||
+                                                cfg.faculties.any { it.classId.equals(rec.classId, ignoreCase = true) }
+                                    }
+                                    val facMatch = cfgMatch?.faculties?.firstOrNull {
+                                        it.classId.equals(rec.classId, ignoreCase = true)
+                                    }
+                                    val (regSlot, regFac) = defaultRegInfoByClassId[rec.classId.trim()] ?: ("" to "")
+                                    ForgottenFileMeta(
+                                        key = rec.key,
+                                        semId = rec.semSubId.ifBlank { cfgMatch?.semId ?: "" },
+                                        courseCode = rec.courseCode.ifBlank { cfgMatch?.courseCode ?: "Unknown" },
+                                        courseTitle = rec.courseTitle.ifBlank { cfgMatch?.courseTitle ?: "" },
+                                        courseType = rec.courseType.ifBlank { cfgMatch?.courseType ?: "" },
+                                        slot = facMatch?.slot?.ifBlank { regSlot } ?: regSlot.ifBlank { "Unknown Slot" },
+                                        facultyName = facMatch?.facultyName?.ifBlank { regFac } ?: regFac.ifBlank { "Registered Faculty" },
+                                        lectureLabel = extractMaterialLabel(rec.key, rec.isSyllabus, rec.fileName),
+                                        fileName = rec.fileName
+                                    )
+                                }
+                                CourseAutoDownloadConfig.saveForgottenMeta(context, metaToSave)
+                                CourseAutoDownloadConfig.addForgottenKeys(context, toForgetKeys)
+                                toForgetKeys.forEach { CourseFileManager.removeDownloadRecord(context, it) }
+                                persistSettings(settings.copy(forgottenKeys = settings.forgottenKeys + toForgetKeys))
+                                deletedRecords = deletedRecords.filter { it.key !in toForgetKeys }
+                                Toast.makeText(context, "Forgot ${toForgetKeys.size} file${if (toForgetKeys.size == 1) "" else "s"}", Toast.LENGTH_SHORT).show()
                                 if (deletedRecords.isEmpty()) showDeletedFilesDialog = false
                             },
                             modifier = Modifier.weight(1f),
@@ -753,6 +919,249 @@ fun CoursePageSettingsSheet(
                         ) {
                             Text("Re-download ($selectedCount)", fontWeight = FontWeight.Bold)
                         }
+                    }
+                }
+            }
+        }
+        return
+    }
+
+    // --- FULL-SCREEN SUB-VIEW: MANAGE FORGOTTEN FILES ---
+    if (showForgottenFilesView) {
+        BackHandler { showForgottenFilesView = false }
+
+        val savedMeta = remember(settings.forgottenKeys) {
+            CourseAutoDownloadConfig.loadForgottenMeta(context)
+        }
+
+        // Resolve metadata for every forgotten key (with fallback for legacy keys)
+        val resolvedItems = remember(settings.forgottenKeys, savedMeta, settings.courseConfigs, defaultRegInfoByClassId) {
+            settings.forgottenKeys.map { key ->
+                savedMeta[key] ?: buildFallbackForgottenMeta(
+                    key = key,
+                    courseConfigs = settings.courseConfigs,
+                    defaultRegInfoByClassId = defaultRegInfoByClassId
+                )
+            }
+        }
+
+        // Sort: Semester (newest first) -> Course -> Course Type (Theory before Lab) -> Slot -> Faculty -> Date/Lecture
+        val groupedBySemester = remember(resolvedItems) {
+            resolvedItems
+                .sortedWith(
+                    compareByDescending<ForgottenFileMeta> { it.semId }
+                        .thenBy { it.courseCode.uppercase() }
+                        .thenBy { if (formatSettingsTypeLabel(it.courseType) == "Theory") 0 else 1 }
+                        .thenBy { it.courseType.uppercase() }
+                        .thenBy { it.slot.uppercase() }
+                        .thenBy { it.facultyName.uppercase() }
+                        .thenBy { extractMaterialSortKey(it.key, it.lectureLabel) }
+                )
+                .groupBy { it.semId.ifBlank { "Other" } }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .systemBarsPadding()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { showForgottenFilesView = false }) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = MaterialTheme.colorScheme.onBackground
+                    )
+                }
+                Spacer(Modifier.width(4.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Forgotten Files",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = "${resolvedItems.size} file${if (resolvedItems.size == 1) "" else "s"} ignored by auto-download",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
+            if (resolvedItems.isEmpty()) {
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "No forgotten files.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    groupedBySemester.forEach { (semId, semItems) ->
+                        val semName = semesters.find { it.id == semId }?.name ?: semId
+                        item(key = "fg_sem_$semId") {
+                            Text(
+                                text = semName.uppercase(),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Black,
+                                color = MaterialTheme.colorScheme.primary,
+                                letterSpacing = 0.8.sp,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+
+                        val byCourse = semItems.groupBy { it.courseCode.ifBlank { "Other" } }
+                        byCourse.forEach { (courseCode, courseItems) ->
+                            val courseTitle = courseItems.firstOrNull { it.courseTitle.isNotBlank() }?.courseTitle ?: ""
+                            item(key = "fg_course_${semId}_$courseCode") {
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = containerBg),
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(14.dp),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Column {
+                                            Text(
+                                                text = courseCode,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Black,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            if (courseTitle.isNotBlank()) {
+                                                Text(
+                                                    text = courseTitle,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+
+                                        val byType = courseItems.groupBy { formatSettingsTypeLabel(it.courseType) }
+                                        byType.forEach { (typeLabel, typeItems) ->
+                                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                                            Text(
+                                                text = typeLabel.uppercase(),
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Black,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                letterSpacing = 0.8.sp
+                                            )
+
+                                            val bySlotFaculty = typeItems.groupBy { it.slot to it.facultyName }
+                                            bySlotFaculty.forEach { (slotFac, facItems) ->
+                                                val (slot, faculty) = slotFac
+                                                val slotFacHeader = listOf(slot, faculty)
+                                                    .filter { it.isNotBlank() }
+                                                    .joinToString(" · ")
+
+                                                if (slotFacHeader.isNotBlank()) {
+                                                    Text(
+                                                        text = slotFacHeader,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                }
+
+                                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                    facItems.forEach { item ->
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .clip(RoundedCornerShape(8.dp))
+                                                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                                                                .padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Column(modifier = Modifier.weight(1f)) {
+                                                                Text(
+                                                                    text = item.lectureLabel.ifBlank { "Course Material" },
+                                                                    fontSize = 12.sp,
+                                                                    fontWeight = FontWeight.SemiBold,
+                                                                    color = MaterialTheme.colorScheme.onSurface
+                                                                )
+                                                                if (item.fileName.isNotBlank()) {
+                                                                    Text(
+                                                                        text = item.fileName,
+                                                                        fontSize = 11.sp,
+                                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                        maxLines = 1,
+                                                                        overflow = TextOverflow.Ellipsis
+                                                                    )
+                                                                }
+                                                            }
+                                                            IconButton(
+                                                                onClick = {
+                                                                    CourseAutoDownloadConfig.removeForgottenMeta(context, listOf(item.key))
+                                                                    val updatedKeys = settings.forgottenKeys - item.key
+                                                                    persistSettings(settings.copy(forgottenKeys = updatedKeys))
+                                                                    Toast.makeText(context, "Removed from forgotten list", Toast.LENGTH_SHORT).show()
+                                                                    if (updatedKeys.isEmpty()) showForgottenFilesView = false
+                                                                },
+                                                                modifier = Modifier.size(32.dp)
+                                                            ) {
+                                                                Icon(
+                                                                    Icons.Default.DeleteOutline,
+                                                                    contentDescription = "Remove from forgotten",
+                                                                    tint = MaterialTheme.colorScheme.error,
+                                                                    modifier = Modifier.size(18.dp)
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            CourseAutoDownloadConfig.clearForgottenMeta(context)
+                            persistSettings(settings.copy(forgottenKeys = emptySet()))
+                            Toast.makeText(context, "Cleared all forgotten files", Toast.LENGTH_SHORT).show()
+                            showForgottenFilesView = false
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Restore All", fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -858,7 +1267,11 @@ fun CoursePageSettingsSheet(
                                 )
                                 Spacer(Modifier.height(2.dp))
                                 Text(
-                                    text = "Downloads/vtop_course_files",
+                                    text = if (folderSizeLabel.isNotBlank()) {
+                                        "Downloads/vtop_course_files · $folderSizeLabel"
+                                    } else {
+                                        "Downloads/vtop_course_files"
+                                    },
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1143,6 +1556,39 @@ fun CoursePageSettingsSheet(
                                     checked = settings.redownloadDeleted,
                                     onCheckedChange = { persistSettings(settings.copy(redownloadDeleted = it)) }
                                 )
+                            }
+
+                            if (settings.forgottenKeys.isNotEmpty()) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                                        .clickable { showForgottenFilesView = true }
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Forgotten files (${settings.forgottenKeys.size})",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = "Ignored by auto-download · Tap to restore",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Text(
+                                        text = "Manage",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
                             }
 
                             // --- ACTION BUTTONS (FULL WIDTH, NO TRUNCATION) ---
@@ -1668,4 +2114,97 @@ private fun format24To12(time24: String): String {
         else -> h
     }
     return "%d:%02d %s".format(h12, m, amPm)
+}
+
+private fun extractMaterialLabel(key: String, isSyllabus: Boolean = false, fileName: String = ""): String {
+    if (isSyllabus || key.startsWith("courseSyllabusDownload/", ignoreCase = true)) {
+        return "Syllabus"
+    }
+    // If we have the saved filename, extract real lecture number if present (e.g. "01_..." or "Lec01_...")
+    if (fileName.isNotBlank()) {
+        val lecMatch = Regex("^(?:Lec[_\\s-]?)?(\\d{1,3})[_\\s-]").find(fileName.trim())
+        if (lecMatch != null) {
+            val num = lecMatch.groupValues[1].toIntOrNull()
+            if (num != null) return "Lecture $num"
+        }
+    }
+    // Fallback from VTOP URL: downloadPdf/{sem}/{classId}/{typeId}/{date}
+    val parts = key.split("/")
+    if (parts.size >= 4 && parts[0].equals("downloadPdf", ignoreCase = true)) {
+        val typeId = parts[3].trim()
+        val date = parts.getOrNull(4)?.trim().orEmpty()
+        val slotTag = when (typeId) {
+            "19" -> "Ref 1"
+            "20" -> "Ref 2"
+            "21" -> "Ref 3"
+            "2", "3", "4" -> "General Material"
+            else -> "Material"
+        }
+        return if (date.isNotBlank()) "$date · $slotTag" else slotTag
+    }
+    return "Course Material"
+}
+
+private fun extractMaterialSortKey(key: String, label: String): String {
+    if (label.equals("Syllabus", ignoreCase = true)) return "0000-00-00"
+    // Sort chronologically by dd-MM-yyyy date in the key if present
+    val dateMatch = Regex("(\\d{2})-(\\d{2})-(\\d{4})").find(key)
+    if (dateMatch != null) {
+        val (dd, mm, yyyy) = dateMatch.destructured
+        return "$yyyy-$mm-$dd-$key"
+    }
+    return "9999-99-99-$label"
+}
+
+private fun buildFallbackForgottenMeta(
+    key: String,
+    courseConfigs: List<AutoDownloadCourseConfig>,
+    defaultRegInfoByClassId: Map<String, Pair<String, String>>
+): ForgottenFileMeta {
+    val parts = key.split("/")
+    var semId = ""
+    var courseCode = ""
+    var courseTitle = ""
+    var courseType = ""
+    var slot = ""
+    var faculty = ""
+
+    if (key.startsWith("courseSyllabusDownload/", ignoreCase = true) && parts.size >= 2) {
+        courseCode = parts[1].split("_").getOrNull(1) ?: ""
+        courseType = parts.getOrNull(2) ?: ""
+        val cfg = courseConfigs.firstOrNull { it.courseCode.equals(courseCode, ignoreCase = true) }
+        if (cfg != null) {
+            semId = cfg.semId
+            courseTitle = cfg.courseTitle
+            val (regSlot, regFac) = defaultRegInfoByClassId[cfg.defaultClassId.trim()] ?: ("" to "")
+            slot = cfg.faculties.firstOrNull()?.slot ?: regSlot
+            faculty = cfg.faculties.firstOrNull()?.facultyName ?: regFac
+        }
+    } else if (parts.size >= 3 && parts[0].equals("downloadPdf", ignoreCase = true)) {
+        semId = parts[1].trim()
+        val classId = parts[2].trim()
+        val cfg = courseConfigs.firstOrNull { c ->
+            c.defaultClassId.equals(classId, ignoreCase = true) ||
+                    c.faculties.any { it.classId.equals(classId, ignoreCase = true) }
+        }
+        val facTarget = cfg?.faculties?.firstOrNull { it.classId.equals(classId, ignoreCase = true) }
+        val (regSlot, regFac) = defaultRegInfoByClassId[classId] ?: ("" to "")
+        courseCode = cfg?.courseCode ?: "Unknown"
+        courseTitle = cfg?.courseTitle ?: ""
+        courseType = cfg?.courseType ?: ""
+        slot = facTarget?.slot ?: regSlot
+        faculty = facTarget?.facultyName ?: regFac
+    }
+
+    return ForgottenFileMeta(
+        key = key,
+        semId = semId,
+        courseCode = courseCode.ifBlank { "Other" },
+        courseTitle = courseTitle,
+        courseType = courseType,
+        slot = slot,
+        facultyName = faculty,
+        lectureLabel = extractMaterialLabel(key),
+        fileName = ""
+    )
 }
