@@ -18,15 +18,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.BookOpen
-import com.composables.icons.lucide.Calculator
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Users
 
 @Composable
 fun MoreScreen(
     onOpenFaculty: () -> Unit,
-    onOpenCoursePage: () -> Unit,
-    onOpenGradePredictor: () -> Unit
+    onOpenCoursePage: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -46,12 +44,6 @@ fun MoreScreen(
             subtitle = "Syllabus, lecture topics & reference materials",
             icon = Lucide.BookOpen,
             onClick = onOpenCoursePage
-        )
-        MoreFeatureCard(
-            title = "Grade Predictor",
-            subtitle = "Estimate final grades & GPA impact",
-            icon = Lucide.Calculator,
-            onClick = onOpenGradePredictor
         )
     }
 }

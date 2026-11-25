@@ -196,7 +196,14 @@ fun MainScreen(
                     }
                     "ATTENDANCE" -> { Attendance(attendanceData = attendanceData, onLaunchSimulator = { navController.navigate("simulator") }) }
                     "EXAMS" -> { Exams(examsData) }
-                    "MARKS" -> { Marks(marksData = marksData, historySummary = historySummary, historyData = historyItems) }
+                    "MARKS" -> {
+                        Marks(
+                            marksData = marksData,
+                            historySummary = historySummary,
+                            historyData = historyItems,
+                            timetable = timetable
+                        )
+                    }
                     "OUTINGS" -> { VtopOutingsTab(outingsData = outingsData, handler = outingHandler) }
                     "MORE" -> {
                         MoreScreen(
@@ -207,8 +214,7 @@ fun MainScreen(
                                     Toast.makeText(context, "Session expired. Sync first.", Toast.LENGTH_SHORT).show()
                                 }
                             },
-                            onOpenCoursePage = { navController.navigate("course_page") },
-                            onOpenGradePredictor = { navController.navigate("grade_predictor") }
+                            onOpenCoursePage = { navController.navigate("course_page") }
                         )
                     }
                     "PROFILE" -> {

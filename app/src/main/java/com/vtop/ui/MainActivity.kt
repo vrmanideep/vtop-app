@@ -429,11 +429,6 @@ class MainActivity : ComponentActivity() {
                                         onBack = { navController.popBackStack() }
                                     )
                                 }
-                                composable("grade_predictor") {
-                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                        Text("Grade Predictor", color = MaterialTheme.colorScheme.onBackground)
-                                    }
-                                }
                             }
                         } else {
                             VtopSplashScreen()
