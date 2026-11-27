@@ -493,6 +493,17 @@ public class VtopClient {
         return executeWafFetch("/examinations/examGradeView/doStudentGradeView", body, "/examinations/examGradeView/StudentGradeView");
     }
 
+    public String fetchGradeViewDetailsRawHtml(String semId, String courseId) {
+        RequestBody body = new FormBody.Builder()
+                .add("authorizedID", authorizedId)
+                .add("x", getGmtTimestamp())
+                .add("semesterSubId", semId)
+                .add("courseId", courseId)
+                .add("_csrf", csrfToken)
+                .build();
+        return executeWafFetch("/examinations/examGradeView/getGradeViewDetails", body, "/content?");
+    }
+
     public String fetchHistoryRawHtml(StatusListener listener) {
         activateMenu("/examinations/examGradeView/StudentGradeHistory");
         RequestBody body = new FormBody.Builder().add("verifyMenu", "true").add("authorizedID", authorizedId).add("_csrf", csrfToken).build();
