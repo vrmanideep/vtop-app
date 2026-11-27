@@ -29,7 +29,6 @@ import com.vtop.utils.AnalyticsManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.ui.draw.shadow
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -193,53 +192,162 @@ private fun ExamListScreen(exams: List<ExamScheduleModel>, onExamClick: (ExamSch
 
         if (filteredExams.isEmpty()) {
             item {
-                Column(modifier = Modifier.fillMaxWidth().padding(top = 60.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Lucide.CalendarDays, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), modifier = Modifier.size(64.dp))
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(top = 60.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        Lucide.CalendarDays,
+                        null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.size(64.dp)
+                    )
                     Spacer(Modifier.height(16.dp))
-                    Text("No exams found", color = MaterialTheme.colorScheme.onBackground, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "No exams found",
+                        color = MaterialTheme.colorScheme.onBackground,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         } else {
-            if (selectedFilter == "All" && nextExam != null) {
-                item {
-                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-                        Text("Next Up", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp, modifier = Modifier.padding(bottom = 4.dp))
-                        NextUpCard(exam = nextExam, currentTime = currentTime, onClick = { onExamClick(nextExam) })
-                        Spacer(modifier = Modifier.height(16.dp))
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha=0.1f))
-                    }
-                }
-            }
-            items(filteredExams) { exam ->
-                val hasValidDate = exam.examDate.isNotBlank() && exam.examDate != "-"
-                val urgencyColor = if (!hasValidDate) {
-                    Color.Transparent
-                } else {
-                    val targetDate = try {
-                        val safeTime = getSafeStartTime(exam)
-                        val parseableTime = if (safeTime == "TBC") "11:59 PM" else safeTime
-                        sdfFull.parse("${exam.examDate} $parseableTime")
-                    } catch (_: Exception) { null }
-
-                    if (targetDate == null || targetDate.before(currentTime)) {
-                        Color.Transparent
-                    } else {
-                        val diffDays = ((targetDate.time - currentTime.time) / (1000 * 60 * 60 * 24)).toInt()
-                        when {
-                            diffDays <= 3 -> Color(0xFFF59E0B) // Amber
-                            diffDays <= 7 -> Color(0xFF60A5FA) // Blue
-                            else -> Color.Transparent
+            if (selectedFilter == "All") {
+                if (nextExam != null) {
+                    item {
+                        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+                            Text(
+                                "Next Up",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 1.sp,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                            NextUpCard(
+                                exam = nextExam,
+                                currentTime = currentTime,
+                                onClick = { onExamClick(nextExam) })
                         }
                     }
                 }
-                Box(modifier = Modifier.padding(horizontal = 20.dp)) {
-                    StandardExamCard(exam = exam, urgencyColor = urgencyColor, isClashing = clashingExams.contains(exam), onClick = { onExamClick(exam) })
+
+                val groupedExams = filteredExams.groupBy { it.examType.ifBlank { "Other" } }
+                groupedExams.forEach { (examType, examsInGroup) ->
+                    item(key = "sep_$examType") {
+                        ExamTypeSeparator(
+                            examType = examType,
+                            modifier = Modifier.padding(horizontal = 20.dp)
+                        )
+                    }
+                    items(examsInGroup) { exam ->
+                        val urgencyColor = remember(exam, currentTime) {
+                            val hasValidDate = exam.examDate.isNotBlank() && exam.examDate != "-"
+                            if (!hasValidDate) {
+                                Color.Transparent
+                            } else {
+                                val targetDate = try {
+                                    val safeTime = getSafeStartTime(exam)
+                                    val parseableTime =
+                                        if (safeTime == "TBC") "11:59 PM" else safeTime
+                                    sdfFull.parse("${exam.examDate} $parseableTime")
+                                } catch (_: Exception) {
+                                    null
+                                }
+
+                                if (targetDate == null || targetDate.before(currentTime)) {
+                                    Color.Transparent
+                                } else {
+                                    val diffDays =
+                                        ((targetDate.time - currentTime.time) / (1000 * 60 * 60 * 24)).toInt()
+                                    when {
+                                        diffDays <= 3 -> Color(0xFFF59E0B) // Amber
+                                        diffDays <= 7 -> Color(0xFF60A5FA) // Blue
+                                        else -> Color.Transparent
+                                    }
+                                }
+                            }
+                        }
+
+                        Box(modifier = Modifier.padding(horizontal = 20.dp)) {
+                            StandardExamCard(
+                                exam = exam,
+                                urgencyColor = urgencyColor,
+                                isClashing = clashingExams.contains(exam),
+                                onClick = { onExamClick(exam) })
+                        }
+                    }
+                }
+            } else {
+                items(filteredExams) { exam ->
+                    val urgencyColor = remember(exam, currentTime) {
+                        val hasValidDate = exam.examDate.isNotBlank() && exam.examDate != "-"
+                        if (!hasValidDate) {
+                            Color.Transparent
+                        } else {
+                            val targetDate = try {
+                                val safeTime = getSafeStartTime(exam)
+                                val parseableTime = if (safeTime == "TBC") "11:59 PM" else safeTime
+                                sdfFull.parse("${exam.examDate} $parseableTime")
+                            } catch (_: Exception) {
+                                null
+                            }
+
+                            if (targetDate == null || targetDate.before(currentTime)) {
+                                Color.Transparent
+                            } else {
+                                val diffDays =
+                                    ((targetDate.time - currentTime.time) / (1000 * 60 * 60 * 24)).toInt()
+                                when {
+                                    diffDays <= 3 -> Color(0xFFF59E0B) // Amber
+                                    diffDays <= 7 -> Color(0xFF60A5FA) // Blue
+                                    else -> Color.Transparent
+                                }
+                            }
+                        }
+                    }
+
+                    Box(modifier = Modifier.padding(horizontal = 20.dp)) {
+                        StandardExamCard(
+                            exam = exam,
+                            urgencyColor = urgencyColor,
+                            isClashing = clashingExams.contains(exam),
+                            onClick = { onExamClick(exam) })
+                    }
                 }
             }
         }
     }
 }
 
+@Composable
+private fun ExamTypeSeparator(examType: String, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            thickness = 1.dp,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+        )
+        Text(
+            text = examType.uppercase(Locale.ENGLISH),
+            color = MaterialTheme.colorScheme.primary,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Black,
+            letterSpacing = 1.5.sp
+        )
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            thickness = 1.dp,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+        )
+    }
+}
 @Composable
 private fun NextUpCard(exam: ExamScheduleModel, currentTime: Date, onClick: () -> Unit) {
     val sdfFull = remember { SimpleDateFormat("dd-MMM-yyyy hh:mm a", Locale.ENGLISH) }
