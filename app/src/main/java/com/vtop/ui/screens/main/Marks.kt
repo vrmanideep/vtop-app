@@ -1,7 +1,14 @@
 @file:Suppress("SpellCheckingInspection")
 package com.vtop.ui.screens.main
 
+import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -13,6 +20,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -45,24 +53,32 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import com.composables.icons.lucide.*
 import com.vtop.core.SessionManager
 import com.vtop.core.TimetableRepository
 import com.vtop.logic.TimetableParser
 import com.vtop.models.*
 import com.vtop.utils.AnalyticsManager
+import com.vtop.utils.CourseFileManager
 import com.vtop.utils.Vault
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -107,6 +123,14 @@ private data class PlannedCourseEntry(
     val courseTitle: String,
     val credits: Double,
     val grade: String
+)
+
+private data class ReportSemester(
+    val semester: String,
+    val courses: List<Pair<Int, GradeHistoryItem>>,
+    val gpa: Double,
+    val totalCredits: Double,
+    val countedCredits: Double
 )
 
 private fun getGradeColor(grade: String): Color {
@@ -220,6 +244,110 @@ private fun parseExamMonth(month: String): YearMonth {
     }
 }
 
+private fun inferSemesterName(examMonth: String): String? {
+    val parts = examMonth.trim().split("-")
+    if (parts.size != 2) return null
+    val year = parts[1].trim().toIntOrNull() ?: return null
+    val mon = parts[0].trim().lowercase(Locale.ENGLISH).take(3)
+    val shortNext = ((year + 1) % 100).toString().padStart(2, '0')
+    val shortCurr = (year % 100).toString().padStart(2, '0')
+    return when (mon) {
+        "oct", "nov", "dec" -> "Fall $year-$shortNext"
+        "jan", "feb" -> "Fall ${year - 1}-$shortCurr"
+        "mar", "apr", "may" -> "Winter ${year - 1}-$shortCurr"
+        "jun" -> "Summer 1 ${year - 1}-$shortCurr"
+        "jul", "aug" -> "Summer 2 ${year - 1}-$shortCurr"
+        else -> null
+    }
+}
+
+private fun buildSemesterNameMap(
+    context: Context,
+    historyData: List<GradeHistoryItem>
+): Map<String, String> {
+    // list1: unique examMonth values sorted oldest -> newest
+    val list1 = historyData
+        .map { it.examMonth.trim() }
+        .filter { it.isNotEmpty() }
+        .distinct()
+        .sortedBy { parseExamMonth(it) }
+
+    if (list1.isEmpty()) return emptyMap()
+
+    val currentSemId = Vault.getSelectedSemester(context)[0]?.trim().orEmpty()
+
+    // list2: scraped semester options sorted oldest -> newest (excluding current active semester)
+    val list2 = Vault.getSemesterOptions(context)
+        .filter { it.id.trim() != currentSemId }
+        .reversed()
+
+    val paired = mutableMapOf<String, String>()
+    for (i in list1.indices) {
+        val semName = list2.getOrNull(i)?.name?.trim()?.takeIf { it.isNotEmpty() }
+            ?: inferSemesterName(list1[i])
+        if (semName != null) {
+            paired[list1[i]] = semName
+        }
+    }
+    return paired
+}
+
+private suspend fun downloadAndSaveGradeHistoryPdf(context: Context): Result<Uri> =
+    withContext(Dispatchers.IO) {
+        try {
+            val client = SessionManager.getSyncClient()
+                ?: return@withContext Result.failure(Exception("Session expired. Sync first."))
+
+            val regNo = Vault.getRegNo(context)
+            if (regNo.isNotBlank() && regNo != "-") {
+                client.setAuthorizedId(regNo)
+            }
+
+            val tempFile = File(context.cacheDir, "Grade_History.pdf")
+            if (tempFile.exists()) tempFile.delete()
+
+            val downloaded = client.downloadGradeHistoryPdf(tempFile)
+            if (!downloaded || !tempFile.exists()) {
+                return@withContext Result.failure(Exception("Failed to download Grade History PDF"))
+            }
+
+            val fileName = "Grade_History.pdf"
+            val savedUri: Uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                    put(MediaStore.Downloads.MIME_TYPE, "application/pdf")
+                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val resolver = context.contentResolver
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: return@withContext Result.failure(Exception("Unable to create file in Downloads"))
+
+                resolver.openOutputStream(uri)?.use { out ->
+                    tempFile.inputStream().use { input -> input.copyTo(out) }
+                } ?: return@withContext Result.failure(Exception("Unable to write PDF to Downloads"))
+
+                values.clear()
+                values.put(MediaStore.Downloads.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+                tempFile.delete()
+                uri
+            } else {
+                @Suppress("DEPRECATION")
+                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                if (!downloadsDir.exists()) downloadsDir.mkdirs()
+                val outFile = File(downloadsDir, fileName)
+                tempFile.copyTo(outFile, overwrite = true)
+                tempFile.delete()
+                FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", outFile)
+            }
+
+            Result.success(savedUri)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
 private fun buildCurrentSemesterCourses(
     timetable: TimetableModel?,
     marksData: List<CourseMark>
@@ -232,8 +360,6 @@ private fun buildCurrentSemesterCourses(
             .values
             .mapIndexed { idx, components ->
                 val first = components.first()
-                // In VTOP's L T P J C table, C already holds exact component credits
-                // (e.g. ETH = 3.0, ELA = 1.0 -> 4.0; PJT = 2.0 -> 2.0)
                 val totalCredits = components.sumOf { it.credits }
                 PlannedCourseEntry(
                     id = "cur_${idx}_${first.courseCode}",
@@ -291,24 +417,11 @@ fun Marks(
     val pagerState = rememberPagerState(pageCount = { 2 })
     val coroutineScope = rememberCoroutineScope()
 
-    var showCalculator by remember { mutableStateOf(false) }
-
     val groupedHistory = remember(historyData) { historyData.groupBy { it.examMonth.ifEmpty { "Unknown Semester" } } }
     val expandedStates = remember(groupedHistory) {
         mutableStateMapOf<String, Boolean>().apply {
             groupedHistory.keys.forEach { this[it] = true }
         }
-    }
-
-    if (showCalculator) {
-        CGPACalculatorSubView(
-            historySummary = historySummary,
-            historyData = historyData,
-            marksData = marksData,
-            timetable = timetable,
-            onBack = { showCalculator = false }
-        )
-        return
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -381,13 +494,20 @@ internal fun CGPACalculatorSubView(
     BackHandler { onBack() }
 
     val context = LocalContext.current
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
     var resolvedTimetable by remember(timetable) { mutableStateOf(timetable) }
+
+    val semesterNameMap = remember(historyData) {
+        buildSemesterNameMap(context, historyData)
+    }
 
     val initialCurrentCourses = remember(resolvedTimetable, marksData) {
         buildCurrentSemesterCourses(resolvedTimetable, marksData)
     }
 
     var plannedCourses by remember { mutableStateOf(initialCurrentCourses) }
+    val reportGradeOverrides = remember { mutableStateMapOf<Int, String>() }
 
     // Fetch & parse timetable once if cached model predates registeredCourses
     LaunchedEffect(Unit) {
@@ -446,18 +566,65 @@ internal fun CGPACalculatorSubView(
     var newCourseGrade by remember { mutableStateOf("A") }
 
     val gradeOptions = listOf("S", "A", "B", "C", "D", "E", "F")
+    val reportGradeOptions = listOf("S", "A", "B", "C", "D", "E", "F", "P")
 
     val effectiveBaselineCgpa = currentCgpaText.toDoubleOrNull()?.coerceIn(0.0, 10.0) ?: scrapedCgpa
     val effectiveCompletedCredits = completedCreditsText.toDoubleOrNull()?.coerceAtLeast(0.0) ?: scrapedCompletedCredits
 
-    // Live GPA & CGPA calculations
+    // Past semesters with live grade overrides applied
+    val effectiveHistory = remember(historyData, reportGradeOverrides.toMap()) {
+        historyData.mapIndexed { idx, item ->
+            idx to item.copy(grade = reportGradeOverrides[idx] ?: item.grade)
+        }
+    }
+
+    val pastSemesters = remember(effectiveHistory) {
+        effectiveHistory
+            .groupBy { it.second.examMonth.ifBlank { "Unknown" } }
+            .entries
+            .sortedBy { parseExamMonth(it.key) }
+            .map { (sem, list) ->
+                val items = list.map { it.second }
+                val totalCr = items.sumOf { it.credits.toDoubleOrNull() ?: 0.0 }
+                val countedCr = items
+                    .filter { getGradePoints(it.grade) >= 0 }
+                    .sumOf { it.credits.toDoubleOrNull() ?: 0.0 }
+                ReportSemester(
+                    semester = sem,
+                    courses = list,
+                    gpa = calculateSemesterGPA(items),
+                    totalCredits = totalCr,
+                    countedCredits = countedCr
+                )
+            }
+    }
+
+    // Live GPA & CGPA calculations (incorporates past grade overrides)
     val calculation = remember(
         plannedCourses,
         effectiveBaselineCgpa,
-        effectiveCompletedCredits
+        effectiveCompletedCredits,
+        reportGradeOverrides.toMap(),
+        historyData
     ) {
-        val pastPoints = effectiveBaselineCgpa * effectiveCompletedCredits
-        val pastGradedCredits = effectiveCompletedCredits
+        var pastPoints = effectiveBaselineCgpa * effectiveCompletedCredits
+        var pastGradedCredits = effectiveCompletedCredits
+
+        reportGradeOverrides.forEach { (origIdx, newGrade) ->
+            val orig = historyData.getOrNull(origIdx) ?: return@forEach
+            val cr = orig.credits.toDoubleOrNull() ?: 0.0
+            val oldPts = getGradePoints(orig.grade)
+            val newPts = getGradePoints(newGrade)
+            if (oldPts >= 0 && newPts >= 0) {
+                pastPoints += (newPts - oldPts) * cr
+            } else if (oldPts < 0 && newPts >= 0) {
+                pastPoints += newPts * cr
+                pastGradedCredits += cr
+            } else if (oldPts >= 0 && newPts < 0) {
+                pastPoints = (pastPoints - oldPts * cr).coerceAtLeast(0.0)
+                pastGradedCredits = (pastGradedCredits - cr).coerceAtLeast(0.0)
+            }
+        }
 
         var plannedPoints = 0.0
         var plannedGradedCredits = 0.0
@@ -485,6 +652,44 @@ internal fun CGPACalculatorSubView(
     val pastGradedCredits = calculation.fourth.second
     val plannedGradedCredits = calculation.fourth.third
     val cgpaDelta = projectedCgpa - effectiveBaselineCgpa
+
+    // Combined semesters for Trend & Credits charts (past + current planned)
+    val chartSemesters = remember(pastSemesters, plannedCourses, semesterSgpa, plannedGradedCredits) {
+        val list = pastSemesters.toMutableList()
+        if (plannedCourses.isNotEmpty()) {
+            val totalPlannedCr = plannedCourses.sumOf { it.credits }
+            list.add(
+                ReportSemester(
+                    semester = "Current",
+                    courses = emptyList(),
+                    gpa = semesterSgpa,
+                    totalCredits = totalPlannedCr,
+                    countedCredits = plannedGradedCredits
+                )
+            )
+        }
+        list
+    }
+
+    // Combined Grade Distribution (past + current planned)
+    val gradeDistribution = remember(effectiveHistory, plannedCourses) {
+        val order = listOf("S", "A", "B", "C", "D", "E", "F", "P")
+        val allGrades = effectiveHistory.map { it.second.grade.trim().uppercase(Locale.ENGLISH) } +
+                plannedCourses.map { it.grade.trim().uppercase(Locale.ENGLISH) }
+        allGrades
+            .groupingBy { it }
+            .eachCount()
+            .entries
+            .sortedBy { order.indexOf(it.key).takeIf { i -> i >= 0 } ?: 99 }
+            .map { it.key to it.value }
+    }
+
+    // Index of the "Past Semesters" header item in LazyColumn for "View more" scroll
+    val hasChartsSection = chartSemesters.isNotEmpty() || gradeDistribution.isNotEmpty()
+    val chartsItemCount = (if (hasChartsSection) 1 else 0) +
+            (if (chartSemesters.isNotEmpty()) 2 else 0) +
+            (if (gradeDistribution.isNotEmpty()) 1 else 0)
+    val pastSemestersHeaderIndex = 2 + chartsItemCount + 1 + plannedCourses.size + 1
 
     Column(
         modifier = Modifier
@@ -522,6 +727,7 @@ internal fun CGPACalculatorSubView(
                     completedCreditsText = formatVal(scrapedCompletedCredits)
                     isEditingBaseline = false
                     targetCgpa = scrapedCgpa
+                    reportGradeOverrides.clear()
                 }
             ) {
                 Icon(
@@ -537,6 +743,7 @@ internal fun CGPACalculatorSubView(
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
 
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
@@ -719,7 +926,7 @@ internal fun CGPACalculatorSubView(
                 }
             }
 
-            // 2. Target CGPA Card (defaults to current VTOP CGPA + pencil edit icon, no +/- buttons)
+            // 2. Target CGPA Card
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -797,10 +1004,85 @@ internal fun CGPACalculatorSubView(
                 }
             }
 
-            // 3. Courses Header + "Current semester" Button
+            // 3. Analytics Charts (Moved above Current Semester Predictor + "View more" button)
+            if (hasChartsSection) {
+                item {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Analytics",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Black,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        if (pastSemesters.isNotEmpty()) {
+                            TextButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        listState.animateScrollToItem(pastSemestersHeaderIndex)
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = "View more",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    contentDescription = "Scroll to past courses",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (chartSemesters.isNotEmpty()) {
+                    item {
+                        ReportChartCard(title = "GPA Trend by Semester") {
+                            GpaTrendChart(semesters = chartSemesters)
+                        }
+                    }
+                    item {
+                        ReportChartCard(title = "Credits by Semester") {
+                            CreditsBySemesterChart(semesters = chartSemesters)
+                        }
+                    }
+                }
+
+                if (gradeDistribution.isNotEmpty()) {
+                    item {
+                        ReportChartCard(title = "Grade Distribution") {
+                            GradeDistributionDonutChart(distribution = gradeDistribution)
+                        }
+                    }
+                }
+            }
+
+            // 4. Courses Header + "Current semester" Button
             item {
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
+                )
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -833,7 +1115,7 @@ internal fun CGPACalculatorSubView(
                 }
             }
 
-            // 4. Course Planner Cards
+            // 5. Course Planner Cards
             items(plannedCourses, key = { it.id }) { course ->
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -847,7 +1129,6 @@ internal fun CGPACalculatorSubView(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        // Top Row: Course Title + Remove (×) button
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -858,8 +1139,6 @@ internal fun CGPACalculatorSubView(
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier
                                     .weight(1f)
                                     .padding(end = 10.dp)
@@ -886,7 +1165,6 @@ internal fun CGPACalculatorSubView(
                             }
                         }
 
-                        // Middle Row: Course Code + Credit Stepper (- | 4 cr [edit] | +)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -903,7 +1181,6 @@ internal fun CGPACalculatorSubView(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                // Minus (-) button
                                 Surface(
                                     shape = CircleShape,
                                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
@@ -927,7 +1204,6 @@ internal fun CGPACalculatorSubView(
                                     }
                                 }
 
-                                // Credits label + Edit pencil icon
                                 Row(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(8.dp))
@@ -953,7 +1229,6 @@ internal fun CGPACalculatorSubView(
                                     )
                                 }
 
-                                // Plus (+) button
                                 Surface(
                                     shape = CircleShape,
                                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
@@ -979,7 +1254,6 @@ internal fun CGPACalculatorSubView(
                             }
                         }
 
-                        // Bottom Row: S A B C D E F Grade Pills
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -1016,7 +1290,7 @@ internal fun CGPACalculatorSubView(
                 }
             }
 
-            // 5. Add Custom Course Button
+            // 6. Add Custom Course Button
             item {
                 OutlinedButton(
                     onClick = {
@@ -1032,6 +1306,170 @@ internal fun CGPACalculatorSubView(
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Add Course", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+            }
+
+            // 7. Interactive Past Semesters Breakdown
+            if (pastSemesters.isNotEmpty()) {
+                item {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
+                    )
+                    Text(
+                        text = "Past Semesters",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+
+                pastSemesters.forEach { sem ->
+                    item(key = "rep_sem_${sem.semester}") {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(18.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    val mappedSem = semesterNameMap[sem.semester]
+                                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                        if (mappedSem != null) {
+                                            Text(
+                                                text = mappedSem,
+                                                fontSize = 15.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            Text(
+                                                text = "${sem.semester} · ${sem.courses.size} courses",
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        } else {
+                                            Text(
+                                                text = sem.semester,
+                                                fontSize = 15.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            Text(
+                                                text = "${sem.courses.size} courses",
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(
+                                            text = String.format(Locale.US, "%.2f", sem.gpa),
+                                            fontSize = 20.sp,
+                                            fontWeight = FontWeight.Black,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            text = "Semester GPA",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+
+                                sem.courses.forEachIndexed { rowIdx, (origIdx, course) ->
+                                    if (rowIdx > 0) {
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
+                                    }
+                                    var gradeMenuExpanded by remember { mutableStateOf(false) }
+                                    val pts = getGradePoints(course.grade)
+                                    val gColor = getGradeColor(course.grade)
+
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = course.courseTitle.ifBlank { course.courseCode },
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                text = "${course.courseCode} · ${course.credits} cr · ${if (pts < 0) "N/A" else "$pts pts"}",
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+
+                                        Box {
+                                            Row(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .background(gColor.copy(alpha = 0.14f))
+                                                    .border(1.dp, gColor.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+                                                    .clickable { gradeMenuExpanded = true }
+                                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                Text(
+                                                    text = course.grade,
+                                                    color = gColor,
+                                                    fontSize = 14.sp,
+                                                    fontWeight = FontWeight.Black
+                                                )
+                                                Icon(
+                                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                                    contentDescription = "Change grade",
+                                                    tint = gColor,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+
+                                            DropdownMenu(
+                                                expanded = gradeMenuExpanded,
+                                                onDismissRequest = { gradeMenuExpanded = false }
+                                            ) {
+                                                reportGradeOptions.forEach { g ->
+                                                    val gPts = getGradePoints(g)
+                                                    DropdownMenuItem(
+                                                        text = {
+                                                            Text(
+                                                                text = if (g == "P") "P (Pass)" else "$g ($gPts)",
+                                                                fontWeight = if (g == course.grade) FontWeight.Bold else FontWeight.Normal,
+                                                                color = if (g == course.grade) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                            )
+                                                        },
+                                                        onClick = {
+                                                            if (g == historyData[origIdx].grade) {
+                                                                reportGradeOverrides.remove(origIdx)
+                                                            } else {
+                                                                reportGradeOverrides[origIdx] = g
+                                                            }
+                                                            gradeMenuExpanded = false
+                                                        }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1226,6 +1664,241 @@ internal fun CGPACalculatorSubView(
     }
 }
 
+
+@Composable
+private fun ReportChartCard(
+    title: String,
+    content: @Composable () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = title,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            content()
+        }
+    }
+}
+
+@Composable
+private fun GpaTrendChart(semesters: List<ReportSemester>) {
+    val lineColor = MaterialTheme.colorScheme.primary
+    val gridColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(140.dp)
+        ) {
+            val padX = 16.dp.toPx()
+            val padY = 12.dp.toPx()
+            val w = size.width - padX * 2
+            val h = size.height - padY * 2
+
+            // Horizontal grid lines (0, 5, 10)
+            listOf(0f, 0.5f, 1f).forEach { frac ->
+                val y = padY + h * frac
+                drawLine(gridColor, Offset(padX, y), Offset(size.width - padX, y), strokeWidth = 1.dp.toPx())
+            }
+
+            val pts = semesters.mapIndexed { idx, sem ->
+                val x = if (semesters.size == 1) padX + w / 2f
+                else padX + (w * idx / (semesters.size - 1).toFloat())
+                val y = padY + h * (1f - (sem.gpa / 10.0).toFloat().coerceIn(0f, 1f))
+                Offset(x, y)
+            }
+
+            if (pts.size > 1) {
+                val path = Path().apply {
+                    moveTo(pts.first().x, pts.first().y)
+                    for (i in 1 until pts.size) lineTo(pts[i].x, pts[i].y)
+                }
+                drawPath(path, color = lineColor, style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round))
+            }
+
+            pts.forEach { pt ->
+                drawCircle(color = lineColor, radius = 4.5.dp.toPx(), center = pt)
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            semesters.forEach { sem ->
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = String.format(Locale.US, "%.2f", sem.gpa),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = sem.semester.substringBefore("-"),
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CreditsBySemesterChart(semesters: List<ReportSemester>) {
+    val maxCr = (semesters.maxOfOrNull { it.totalCredits } ?: 1.0).coerceAtLeast(1.0)
+    val countedColor = Color(0xFF22C55E)
+    val totalColor = Color(0xFF06B6D4)
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(Modifier.size(10.dp).background(countedColor, CircleShape))
+                Text("Counted", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(Modifier.size(10.dp).background(totalColor.copy(alpha = 0.7f), CircleShape))
+                Text("Total", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(130.dp)
+        ) {
+            val groupW = size.width / semesters.size.coerceAtLeast(1)
+            val barW = (groupW * 0.28f).coerceAtMost(22.dp.toPx())
+            val gap = 4.dp.toPx()
+
+            semesters.forEachIndexed { idx, sem ->
+                val centerX = groupW * idx + groupW / 2f
+                val countedH = ((sem.countedCredits / maxCr).toFloat().coerceIn(0f, 1f)) * size.height
+                val totalH = ((sem.totalCredits / maxCr).toFloat().coerceIn(0f, 1f)) * size.height
+
+                drawRoundRect(
+                    color = countedColor,
+                    topLeft = Offset(centerX - barW - gap / 2f, size.height - countedH),
+                    size = Size(barW, countedH),
+                    cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                )
+                drawRoundRect(
+                    color = totalColor.copy(alpha = 0.7f),
+                    topLeft = Offset(centerX + gap / 2f, size.height - totalH),
+                    size = Size(barW, totalH),
+                    cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            semesters.forEach { sem ->
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "${formatVal(sem.countedCredits)}/${formatVal(sem.totalCredits)}",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = sem.semester.substringBefore("-"),
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GradeDistributionDonutChart(distribution: List<Pair<String, Int>>) {
+    val total = distribution.sumOf { it.second }.coerceAtLeast(1)
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(20.dp)
+    ) {
+        Canvas(modifier = Modifier.size(120.dp)) {
+            val strokeW = 20.dp.toPx()
+            val inset = strokeW / 2f
+            val arcSize = Size(size.width - strokeW, size.height - strokeW)
+            var startAngle = -90f
+
+            distribution.forEach { (grade, count) ->
+                val sweep = (count.toFloat() / total.toFloat()) * 360f
+                val gap = if (distribution.size > 1) 2.5f else 0f
+                drawArc(
+                    color = getGradeColor(grade),
+                    startAngle = startAngle,
+                    sweepAngle = (sweep - gap).coerceAtLeast(1f),
+                    useCenter = false,
+                    topLeft = Offset(inset, inset),
+                    size = arcSize,
+                    style = Stroke(width = strokeW)
+                )
+                startAngle += sweep
+            }
+        }
+
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            distribution.forEach { (grade, count) ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .background(getGradeColor(grade), CircleShape)
+                        )
+                        Text(
+                            text = "Grade $grade",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Text(
+                        text = "$count (${(count * 100) / total}%)",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
 private data class Quadruple<A, B, C, D>(
     val first: A,
     val second: B,
@@ -1387,9 +2060,7 @@ fun MarksExpandableCard(mark: UiMark) {
                         text = "${mark.courseCode} - ${mark.courseTitle}",
                         color = MaterialTheme.colorScheme.onSurface,
                         fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
+                        fontWeight = FontWeight.Bold
                     )
                 }
                 Row(verticalAlignment = Alignment.Bottom) {
@@ -1495,10 +2166,19 @@ fun AcademicHistoryView(
         return
     }
 
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val isDevOptionsEnabled = remember { CourseFileManager.isDevOptionsEnabled(context) }
+    var isDownloadingPdf by remember { mutableStateOf(false) }
+
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var selectedFilter by rememberSaveable { mutableStateOf("All") }
 
     val listState = rememberLazyListState()
+
+    val semesterNameMap = remember(historyData) {
+        buildSemesterNameMap(context, historyData)
+    }
 
     val originalGpas = remember(groupedHistory) {
         groupedHistory.mapValues { calculateSemesterGPA(it.value) }
@@ -1614,30 +2294,89 @@ fun AcademicHistoryView(
             }
         }
 
-        // 2. Search Bar
+        // 2. Search Bar + Dev Options Grade_History.pdf Download Button
         item {
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = {
-                    Text(text = "Search courses...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                },
-                leadingIcon = {
-                    Icon(imageVector = Icons.Default.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
-                },
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surface,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f),
-                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    cursorColor = MaterialTheme.colorScheme.primary
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = {
+                        Text(text = "Search courses...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    },
+                    leadingIcon = {
+                        Icon(imageVector = Icons.Default.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f),
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        cursorColor = MaterialTheme.colorScheme.primary
+                    )
                 )
-            )
+
+                if (isDevOptionsEnabled) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)),
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable(enabled = !isDownloadingPdf) {
+                                isDownloadingPdf = true
+                                Toast.makeText(context, "Downloading Grade_History.pdf...", Toast.LENGTH_SHORT).show()
+                                coroutineScope.launch {
+                                    val result = downloadAndSaveGradeHistoryPdf(context)
+                                    isDownloadingPdf = false
+                                    if (result.isSuccess) {
+                                        Toast.makeText(context, "Saved Grade_History.pdf to Downloads", Toast.LENGTH_SHORT).show()
+                                        result.getOrNull()?.let { pdfUri ->
+                                            try {
+                                                val intent = Intent(Intent.ACTION_VIEW).apply {
+                                                    setDataAndType(pdfUri, "application/pdf")
+                                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                }
+                                                context.startActivity(intent)
+                                            } catch (_: Exception) {
+                                                Toast.makeText(context, "No PDF viewer found", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    } else {
+                                        val err = result.exceptionOrNull()?.message ?: "Download failed"
+                                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            if (isDownloadingPdf) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Lucide.ArrowDownToLine,
+                                    contentDescription = "Download Grade_History.pdf",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // 3. Dynamic Semester Filters
@@ -1690,7 +2429,23 @@ fun AcademicHistoryView(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(text = formattedMonth, color = MaterialTheme.colorScheme.onSurface, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    val mappedSem = semesterNameMap[examMonth]
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text(
+                            text = mappedSem ?: formattedMonth,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (mappedSem != null) {
+                            Text(
+                                text = formattedMonth,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Surface(

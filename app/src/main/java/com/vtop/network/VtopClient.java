@@ -257,8 +257,6 @@ public class VtopClient {
         return performLogin(context, listener);
     }
 
-    // VtopClient.java
-
     private boolean performLogin(Context context, LoginListener listener) throws Exception {
         if (listener != null) listener.onStatusUpdate("Opening VTOP...");
         Request initReq = new Request.Builder().url(BASE_URL + "/open/page").get().build();
@@ -919,5 +917,39 @@ public class VtopClient {
             });
             return builder;
         } catch (Exception e) { throw new RuntimeException(e); }
+    }
+
+    public boolean downloadGradeHistoryPdf(File outputFile) {
+        try {
+            activateMenu("/examinations/examGradeView/StudentGradeHistory");
+            RequestBody body = new FormBody.Builder()
+                    .add("authorizedID", authorizedId)
+                    .add("_csrf", csrfToken)
+                    .build();
+
+            Request req = new Request.Builder()
+                    .url(BASE_URL + "/examinations/examGradeView/doDownloadStudentHistory")
+                    .post(body)
+                    .header("Origin", "https://vtop.vitap.ac.in")
+                    .header("Referer", BASE_URL + "/content?")
+                    .build();
+
+            try (Response res = client.newCall(req).execute()) {
+                if (res.isSuccessful() && res.body() != null) {
+                    byte[] bytes = res.body().bytes();
+                    if (bytes.length > 10 && new String(bytes, 0, 10).contains("%PDF")) {
+                        File parent = outputFile.getParentFile();
+                        if (parent != null && !parent.exists()) parent.mkdirs();
+                        try (FileOutputStream fos = new FileOutputStream(outputFile)) {
+                            fos.write(bytes);
+                        }
+                        return true;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "downloadGradeHistoryPdf exception", e);
+        }
+        return false;
     }
 }
