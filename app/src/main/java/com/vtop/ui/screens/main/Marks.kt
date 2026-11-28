@@ -71,9 +71,10 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.core.content.edit
 import com.composables.icons.lucide.*
-import com.google.gson.Gson
 import com.vtop.core.SessionManager
 import com.vtop.core.TimetableRepository
+import com.vtop.logic.CourseAttemptRecord
+import com.vtop.logic.CourseAttemptStore
 import com.vtop.logic.TimetableParser
 import com.vtop.models.*
 import com.vtop.utils.AnalyticsManager
@@ -82,6 +83,8 @@ import com.vtop.utils.Vault
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import org.jsoup.Jsoup
 import java.io.File
 import java.time.YearMonth
@@ -132,9 +135,15 @@ private data class PlannedCourseEntry(
     val grade: String
 )
 
+private data class ReportCourseRow(
+    val key: String,
+    val effectiveIndex: Int?, // non-null only for the effective row counted in CGPA
+    val item: GradeHistoryItem
+)
+
 private data class ReportSemester(
     val semester: String,
-    val courses: List<Pair<Int, GradeHistoryItem>>,
+    val courses: List<ReportCourseRow>,
     val gpa: Double,
     val totalCredits: Double,
     val countedCredits: Double
@@ -184,6 +193,143 @@ private data class ParsedGradeViewDetail(
     val sPolicyNote: String?,
     val componentTables: List<GradeDetailComponentTable>
 )
+
+private fun ParsedGradeViewDetail.toJsonString(): String {
+    val root = JSONObject().apply {
+        put("semesterSubId", semesterSubId)
+        put("semesterName", semesterName)
+        put("courseId", courseId)
+        put("courseCode", courseCode)
+        put("courseTitle", courseTitle)
+        put("courseType", courseType)
+        put("gradingType", gradingType)
+        put("grandTotal", grandTotal)
+        put("grandTotalText", grandTotalText)
+        put("grade", grade)
+        put("classStrength", classStrength)
+        put("gradingStrength", gradingStrength)
+        put("mean", mean)
+        put("sd", sd)
+        put("sPolicyNote", sPolicyNote ?: JSONObject.NULL)
+
+        val cutoffsArr = JSONArray()
+        gradeCutoffs.forEach { c ->
+            cutoffsArr.put(JSONObject().apply {
+                put("grade", c.grade)
+                put("rawText", c.rawText)
+                put("minInclusive", c.minInclusive ?: JSONObject.NULL)
+                put("maxExclusive", c.maxExclusive ?: JSONObject.NULL)
+                put("hasPolicyNote", c.hasPolicyNote)
+            })
+        }
+        put("gradeCutoffs", cutoffsArr)
+
+        val tablesArr = JSONArray()
+        componentTables.forEach { t ->
+            val rowsArr = JSONArray()
+            t.rows.forEach { r ->
+                rowsArr.put(JSONObject().apply {
+                    put("slNo", r.slNo)
+                    put("title", r.title)
+                    put("maxMark", r.maxMark)
+                    put("weightagePercent", r.weightagePercent)
+                    put("status", r.status)
+                    put("scoredMark", r.scoredMark)
+                    put("weightageMark", r.weightageMark)
+                })
+            }
+            tablesArr.put(JSONObject().apply {
+                put("classNumber", t.classNumber)
+                put("courseType", t.courseType)
+                put("totalWeightageMark", t.totalWeightageMark)
+                put("rows", rowsArr)
+            })
+        }
+        put("componentTables", tablesArr)
+    }
+    return root.toString()
+}
+
+private fun parseGradeViewDetailFromJson(raw: String): ParsedGradeViewDetail? {
+    return try {
+        val root = JSONObject(raw)
+        val cutoffs = mutableListOf<GradeRangeCutoff>()
+        val cutoffsArr = root.optJSONArray("gradeCutoffs")
+        if (cutoffsArr != null) {
+            for (i in 0 until cutoffsArr.length()) {
+                val obj = cutoffsArr.optJSONObject(i) ?: continue
+                cutoffs.add(
+                    GradeRangeCutoff(
+                        grade = obj.optString("grade"),
+                        rawText = obj.optString("rawText"),
+                        minInclusive = if (obj.isNull("minInclusive")) null else obj.optDouble("minInclusive"),
+                        maxExclusive = if (obj.isNull("maxExclusive")) null else obj.optDouble("maxExclusive"),
+                        hasPolicyNote = obj.optBoolean("hasPolicyNote", false)
+                    )
+                )
+            }
+        }
+
+        val tables = mutableListOf<GradeDetailComponentTable>()
+        val tablesArr = root.optJSONArray("componentTables")
+        if (tablesArr != null) {
+            for (i in 0 until tablesArr.length()) {
+                val tObj = tablesArr.optJSONObject(i) ?: continue
+                val rows = mutableListOf<GradeDetailAssessmentRow>()
+                val rowsArr = tObj.optJSONArray("rows")
+                if (rowsArr != null) {
+                    for (j in 0 until rowsArr.length()) {
+                        val rObj = rowsArr.optJSONObject(j) ?: continue
+                        rows.add(
+                            GradeDetailAssessmentRow(
+                                slNo = rObj.optString("slNo"),
+                                title = rObj.optString("title"),
+                                maxMark = rObj.optString("maxMark"),
+                                weightagePercent = rObj.optString("weightagePercent"),
+                                status = rObj.optString("status"),
+                                scoredMark = rObj.optString("scoredMark"),
+                                weightageMark = rObj.optString("weightageMark")
+                            )
+                        )
+                    }
+                }
+                tables.add(
+                    GradeDetailComponentTable(
+                        classNumber = tObj.optString("classNumber"),
+                        courseType = tObj.optString("courseType"),
+                        rows = rows,
+                        totalWeightageMark = tObj.optString("totalWeightageMark")
+                    )
+                )
+            }
+        }
+
+        val title = root.optString("courseTitle")
+        if (title.isBlank()) return null
+
+        ParsedGradeViewDetail(
+            semesterSubId = root.optString("semesterSubId"),
+            semesterName = root.optString("semesterName"),
+            courseId = root.optString("courseId"),
+            courseCode = root.optString("courseCode"),
+            courseTitle = title,
+            courseType = root.optString("courseType"),
+            gradingType = root.optString("gradingType"),
+            grandTotal = root.optDouble("grandTotal", 0.0),
+            grandTotalText = root.optString("grandTotalText"),
+            grade = root.optString("grade"),
+            classStrength = root.optInt("classStrength", 0),
+            gradingStrength = root.optInt("gradingStrength", 0),
+            mean = root.optDouble("mean", 0.0),
+            sd = root.optDouble("sd", 0.0),
+            gradeCutoffs = cutoffs,
+            sPolicyNote = if (root.isNull("sPolicyNote")) null else root.optString("sPolicyNote").takeIf { it.isNotBlank() },
+            componentTables = tables
+        )
+    } catch (_: Exception) {
+        null
+    }
+}
 
 private fun getGradeColor(grade: String): Color {
     return when (grade.trim().uppercase(Locale.getDefault())) {
@@ -315,15 +461,16 @@ private fun inferSemesterName(examMonth: String): String? {
 
 private fun buildSemesterOptionMap(
     context: Context,
-    historyData: List<GradeHistoryItem>
+    historyData: List<GradeHistoryItem>,
+    attemptsMap: Map<String, List<CourseAttemptRecord>> = emptyMap()
 ): Map<String, SemesterOption> {
-    val list1 = historyData
-        .map { it.examMonth.trim() }
+    val allMonths = (historyData.map { it.examMonth.trim() } +
+            attemptsMap.values.flatten().map { it.examMonth.trim() })
         .filter { it.isNotEmpty() }
         .distinct()
         .sortedBy { parseExamMonth(it) }
 
-    if (list1.isEmpty()) return emptyMap()
+    if (allMonths.isEmpty()) return emptyMap()
 
     val currentSemId = Vault.getSelectedSemester(context)[0]?.trim().orEmpty()
     val list2 = Vault.getSemesterOptions(context)
@@ -331,14 +478,14 @@ private fun buildSemesterOptionMap(
         .reversed()
 
     val paired = mutableMapOf<String, SemesterOption>()
-    for (i in list1.indices) {
+    for (i in allMonths.indices) {
         val opt = list2.getOrNull(i)
         if (opt != null) {
-            paired[list1[i]] = opt
+            paired[allMonths[i]] = opt
         } else {
-            val fallbackName = inferSemesterName(list1[i])
+            val fallbackName = inferSemesterName(allMonths[i])
             if (fallbackName != null) {
-                paired[list1[i]] = SemesterOption("", fallbackName)
+                paired[allMonths[i]] = SemesterOption("", fallbackName)
             }
         }
     }
@@ -347,11 +494,48 @@ private fun buildSemesterOptionMap(
 
 private fun buildSemesterNameMap(
     context: Context,
-    historyData: List<GradeHistoryItem>
+    historyData: List<GradeHistoryItem>,
+    attemptsMap: Map<String, List<CourseAttemptRecord>> = emptyMap()
 ): Map<String, String> {
-    return buildSemesterOptionMap(context, historyData)
+    return buildSemesterOptionMap(context, historyData, attemptsMap)
         .mapValues { it.value.name.trim() }
         .filterValues { it.isNotEmpty() }
+}
+
+private fun buildTranscriptHistoryList(
+    historyData: List<GradeHistoryItem>,
+    attemptsMap: Map<String, List<CourseAttemptRecord>>
+): List<GradeHistoryItem> {
+    val result = mutableListOf<GradeHistoryItem>()
+    historyData.forEach { effItem ->
+        val normCode = effItem.courseCode.trim().uppercase(Locale.ENGLISH)
+        val attempts = attemptsMap[normCode]
+            ?.sortedBy { parseExamMonth(it.examMonth) }
+            .orEmpty()
+
+        if (attempts.size > 1) {
+            attempts.forEach { att ->
+                if (att.examMonth.equals(effItem.examMonth, ignoreCase = true)) {
+                    result.add(effItem)
+                } else {
+                    result.add(
+                        GradeHistoryItem(
+                            courseCode = att.courseCode,
+                            courseTitle = att.courseTitle.ifBlank { effItem.courseTitle },
+                            courseType = att.courseType,
+                            credits = att.credits,
+                            grade = att.grade,
+                            examMonth = att.examMonth,
+                            courseDistribution = effItem.courseDistribution
+                        )
+                    )
+                }
+            }
+        } else {
+            result.add(effItem)
+        }
+    }
+    return result
 }
 
 private fun parseCourseIdMapFromGradeViewHtml(html: String): Map<String, String> {
@@ -519,8 +703,8 @@ private suspend fun loadGradeDetailWithCache(
 ): Result<ParsedGradeViewDetail> = withContext(Dispatchers.IO) {
     try {
         val prefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
-        val gson = Gson()
-        val semOptionMap = buildSemesterOptionMap(context, historyData)
+        val attemptsMap = CourseAttemptStore.getAll(context)
+        val semOptionMap = buildSemesterOptionMap(context, historyData, attemptsMap)
         val semOption = semOptionMap[course.examMonth.trim()]
         val semId = semOption?.id?.trim().orEmpty()
         val semName = semOption?.name?.trim().orEmpty().ifBlank { course.examMonth }
@@ -530,12 +714,12 @@ private suspend fun loadGradeDetailWithCache(
         }
 
         val normCode = course.courseCode.trim().uppercase(Locale.ENGLISH)
-        val detailCacheKey = "GRADE_VIEW_DETAIL_${semId}_$normCode"
+        val detailCacheKey = "GRADE_VIEW_DETAIL_V2_${semId}_$normCode"
 
         if (!forceRefresh) {
             val cachedJson = prefs.getString(detailCacheKey, null)
             if (!cachedJson.isNullOrBlank()) {
-                val cached = gson.fromJson(cachedJson, ParsedGradeViewDetail::class.java)
+                val cached = parseGradeViewDetailFromJson(cachedJson)
                 if (cached != null) return@withContext Result.success(cached)
             }
         }
@@ -553,7 +737,7 @@ private suspend fun loadGradeDetailWithCache(
         var codeToIdMap: Map<String, String> = if (!forceRefresh) {
             prefs.getString(semMapKey, null)?.let { rawJson ->
                 try {
-                    val obj = org.json.JSONObject(rawJson)
+                    val obj = JSONObject(rawJson)
                     val parsedMap = mutableMapOf<String, String>()
                     val keys = obj.keys()
                     while (keys.hasNext()) {
@@ -573,7 +757,7 @@ private suspend fun loadGradeDetailWithCache(
                 ?: return@withContext Result.failure(Exception("Unable to load semester grade list from VTOP."))
             codeToIdMap = parseCourseIdMapFromGradeViewHtml(semListHtml)
             if (codeToIdMap.isNotEmpty()) {
-                prefs.edit { putString(semMapKey, org.json.JSONObject(codeToIdMap).toString()) }
+                prefs.edit { putString(semMapKey, JSONObject(codeToIdMap).toString()) }
             }
             internalCourseId = codeToIdMap[normCode]
         }
@@ -594,7 +778,7 @@ private suspend fun loadGradeDetailWithCache(
             targetCourseCode = normCode
         ) ?: return@withContext Result.failure(Exception("Could not parse grade details for $normCode."))
 
-        prefs.edit { putString(detailCacheKey, gson.toJson(parsed)) }
+        prefs.edit { putString(detailCacheKey, parsed.toJsonString()) }
         Result.success(parsed)
     } catch (e: Exception) {
         Result.failure(e)
@@ -725,7 +909,14 @@ fun Marks(
     val pagerState = rememberPagerState(pageCount = { 2 })
     val coroutineScope = rememberCoroutineScope()
 
-    val groupedHistory = remember(historyData) { historyData.groupBy { it.examMonth.ifEmpty { "Unknown Semester" } } }
+    val attemptVersion by CourseAttemptStore.version
+    val attemptsMap = remember(historyData, attemptVersion) { CourseAttemptStore.getAll(context) }
+    val transcriptHistory = remember(historyData, attemptsMap) {
+        buildTranscriptHistoryList(historyData, attemptsMap)
+    }
+    val groupedHistory = remember(transcriptHistory) {
+        transcriptHistory.groupBy { it.examMonth.ifEmpty { "Unknown Semester" } }
+    }
     val expandedStates = remember(groupedHistory) {
         mutableStateMapOf<String, Boolean>().apply {
             groupedHistory.keys.forEach { this[it] = true }
@@ -738,7 +929,8 @@ fun Marks(
                 0 -> CurrentSemesterMarksView(marksData, mergeMarks)
                 1 -> AcademicHistoryView(
                     historySummary = historySummary,
-                    historyData = historyData,
+                    effectiveHistoryData = historyData,
+                    transcriptHistoryData = transcriptHistory,
                     groupedHistory = groupedHistory,
                     expandedStates = expandedStates,
                     onCourseClick = onSelectCourse
@@ -819,6 +1011,14 @@ internal fun GradeDetailSubView(
     var detail by remember { mutableStateOf<ParsedGradeViewDetail?>(null) }
     var refreshTrigger by remember { mutableIntStateOf(0) }
 
+    val attemptVersion by CourseAttemptStore.version
+    val attemptsMap = remember(historyData, attemptVersion) {
+        CourseAttemptStore.getAll(context)
+    }
+    val semesterNameMap = remember(historyData, attemptsMap) {
+        buildSemesterNameMap(context, historyData, attemptsMap)
+    }
+
     LaunchedEffect(course, refreshTrigger) {
         isLoading = true
         errorMessage = null
@@ -868,7 +1068,7 @@ internal fun GradeDetailSubView(
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Text(
-                    text = detail?.semesterName ?: course.examMonth,
+                    text = detail?.semesterName ?: semesterNameMap[course.examMonth] ?: course.examMonth,
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1359,7 +1559,6 @@ private fun GradeBellCurveChart(
         return exp(-0.5 * z * z)
     }
 
-
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Canvas(
             modifier = Modifier
@@ -1491,8 +1690,12 @@ internal fun CGPACalculatorSubView(
     val coroutineScope = rememberCoroutineScope()
     var resolvedTimetable by remember(timetable) { mutableStateOf(timetable) }
 
-    val semesterNameMap = remember(historyData) {
-        buildSemesterNameMap(context, historyData)
+    val attemptVersion by CourseAttemptStore.version
+    val attemptsMap = remember(historyData, attemptVersion) {
+        CourseAttemptStore.getAll(context)
+    }
+    val semesterNameMap = remember(historyData, attemptsMap) {
+        buildSemesterNameMap(context, historyData, attemptsMap)
     }
 
     val initialCurrentCourses = remember(resolvedTimetable, marksData) {
@@ -1501,6 +1704,7 @@ internal fun CGPACalculatorSubView(
 
     var plannedCourses by remember { mutableStateOf(initialCurrentCourses) }
     val reportGradeOverrides = remember { mutableStateMapOf<Int, String>() }
+    val otherAttemptGradeOverrides = remember { mutableStateMapOf<String, String>() }
 
     LaunchedEffect(Unit) {
         val hasReg = !resolvedTimetable?.registeredCourses.isNullOrEmpty()
@@ -1559,19 +1763,74 @@ internal fun CGPACalculatorSubView(
     val effectiveBaselineCgpa = currentCgpaText.toDoubleOrNull()?.coerceIn(0.0, 10.0) ?: scrapedCgpa
     val effectiveCompletedCredits = completedCreditsText.toDoubleOrNull()?.coerceAtLeast(0.0) ?: scrapedCompletedCredits
 
-    val effectiveHistory = remember(historyData, reportGradeOverrides.toMap()) {
-        historyData.mapIndexed { idx, item ->
-            idx to item.copy(grade = reportGradeOverrides[idx] ?: item.grade)
+    // Build semester-wise transcript rows (every attempt placed into its own examMonth semester)
+    val allReportRows = remember(
+        historyData,
+        attemptsMap,
+        reportGradeOverrides.toMap(),
+        otherAttemptGradeOverrides.toMap()
+    ) {
+        val rows = mutableListOf<ReportCourseRow>()
+        historyData.forEachIndexed { effIdx, effItem ->
+            val normCode = effItem.courseCode.trim().uppercase(Locale.ENGLISH)
+            val attempts = attemptsMap[normCode]
+                ?.sortedBy { parseExamMonth(it.examMonth) }
+                .orEmpty()
+
+            val effectiveGrade = reportGradeOverrides[effIdx] ?: effItem.grade
+            val effectiveUpdated = effItem.copy(grade = effectiveGrade)
+
+            if (attempts.size > 1) {
+                attempts.forEachIndexed { attIdx, att ->
+                    val isEffectiveRow = att.examMonth.equals(effItem.examMonth, ignoreCase = true)
+                    if (isEffectiveRow) {
+                        rows.add(
+                            ReportCourseRow(
+                                key = "eff_${effIdx}_$normCode",
+                                effectiveIndex = effIdx,
+                                item = effectiveUpdated
+                            )
+                        )
+                    } else {
+                        val rowKey = "att_${normCode}_${att.examMonth.trim()}_$attIdx"
+                        val overriddenGrade = otherAttemptGradeOverrides[rowKey] ?: att.grade
+                        rows.add(
+                            ReportCourseRow(
+                                key = rowKey,
+                                effectiveIndex = null,
+                                item = GradeHistoryItem(
+                                    courseCode = att.courseCode,
+                                    courseTitle = att.courseTitle.ifBlank { effItem.courseTitle },
+                                    courseType = att.courseType,
+                                    credits = att.credits,
+                                    grade = overriddenGrade,
+                                    examMonth = att.examMonth,
+                                    courseDistribution = effItem.courseDistribution
+                                )
+                            )
+                        )
+                    }
+                }
+            } else {
+                rows.add(
+                    ReportCourseRow(
+                        key = "eff_${effIdx}_$normCode",
+                        effectiveIndex = effIdx,
+                        item = effectiveUpdated
+                    )
+                )
+            }
         }
+        rows
     }
 
-    val pastSemesters = remember(effectiveHistory) {
-        effectiveHistory
-            .groupBy { it.second.examMonth.ifBlank { "Unknown" } }
+    val pastSemesters = remember(allReportRows) {
+        allReportRows
+            .groupBy { it.item.examMonth.ifBlank { "Unknown" } }
             .entries
             .sortedBy { parseExamMonth(it.key) }
             .map { (sem, list) ->
-                val items = list.map { it.second }
+                val items = list.map { it.item }
                 val totalCr = items.sumOf { it.credits.toDoubleOrNull() ?: 0.0 }
                 val countedCr = items
                     .filter { getGradePoints(it.grade) >= 0 }
@@ -1586,6 +1845,7 @@ internal fun CGPACalculatorSubView(
             }
     }
 
+    // CGPA calculation uses effective historical courses + current planned courses (no double counting)
     val calculation = remember(
         plannedCourses,
         effectiveBaselineCgpa,
@@ -1631,12 +1891,8 @@ internal fun CGPACalculatorSubView(
         Quadruple(projectedCgpa, semSgpa, totalCredits, Triple(pastPoints, pastGradedCredits, plannedGradedCredits))
     }
 
-    val projectedCgpa = calculation.first
-    val semesterSgpa = calculation.second
-    val totalGradedCredits = calculation.third
-    val pastPoints = calculation.fourth.first
-    val pastGradedCredits = calculation.fourth.second
-    val plannedGradedCredits = calculation.fourth.third
+    val (projectedCgpa, semesterSgpa, totalGradedCredits, pointStats) = calculation
+    val (pastPoints, pastGradedCredits, plannedGradedCredits) = pointStats
     val cgpaDelta = projectedCgpa - effectiveBaselineCgpa
 
     val chartSemesters = remember(pastSemesters, plannedCourses, semesterSgpa, plannedGradedCredits) {
@@ -1656,9 +1912,9 @@ internal fun CGPACalculatorSubView(
         list
     }
 
-    val gradeDistribution = remember(effectiveHistory, plannedCourses) {
+    val gradeDistribution = remember(allReportRows, plannedCourses) {
         val order = listOf("S", "A", "B", "C", "D", "E", "F", "P")
-        val allGrades = effectiveHistory.map { it.second.grade.trim().uppercase(Locale.ENGLISH) } +
+        val allGrades = allReportRows.map { it.item.grade.trim().uppercase(Locale.ENGLISH) } +
                 plannedCourses.map { it.grade.trim().uppercase(Locale.ENGLISH) }
         allGrades
             .groupingBy { it }
@@ -1710,6 +1966,7 @@ internal fun CGPACalculatorSubView(
                     isEditingBaseline = false
                     targetCgpa = scrapedCgpa
                     reportGradeOverrides.clear()
+                    otherAttemptGradeOverrides.clear()
                 }
             ) {
                 Icon(
@@ -2288,7 +2545,7 @@ internal fun CGPACalculatorSubView(
                 }
             }
 
-            // 7. Interactive Past Semesters Breakdown
+            // 7. Interactive Past Semesters Breakdown (Semester-wise transcript)
             if (pastSemesters.isNotEmpty()) {
                 item {
                     HorizontalDivider(
@@ -2364,10 +2621,11 @@ internal fun CGPACalculatorSubView(
                                     }
                                 }
 
-                                sem.courses.forEachIndexed { rowIdx, (origIdx, course) ->
+                                sem.courses.forEachIndexed { rowIdx, reportRow ->
                                     if (rowIdx > 0) {
                                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
                                     }
+                                    val course = reportRow.item
                                     var gradeMenuExpanded by remember { mutableStateOf(false) }
                                     val pts = getGradePoints(course.grade)
                                     val gColor = getGradeColor(course.grade)
@@ -2433,10 +2691,15 @@ internal fun CGPACalculatorSubView(
                                                             )
                                                         },
                                                         onClick = {
-                                                            if (g == historyData[origIdx].grade) {
-                                                                reportGradeOverrides.remove(origIdx)
+                                                            val effIdx = reportRow.effectiveIndex
+                                                            if (effIdx != null) {
+                                                                if (g == historyData[effIdx].grade) {
+                                                                    reportGradeOverrides.remove(effIdx)
+                                                                } else {
+                                                                    reportGradeOverrides[effIdx] = g
+                                                                }
                                                             } else {
-                                                                reportGradeOverrides[origIdx] = g
+                                                                otherAttemptGradeOverrides[reportRow.key] = g
                                                             }
                                                             gradeMenuExpanded = false
                                                         }
@@ -3133,12 +3396,13 @@ fun MarksExpandableCard(mark: UiMark) {
 @Composable
 fun AcademicHistoryView(
     historySummary: CGPASummary?,
-    historyData: List<GradeHistoryItem>,
+    effectiveHistoryData: List<GradeHistoryItem>,
+    transcriptHistoryData: List<GradeHistoryItem>,
     groupedHistory: Map<String, List<GradeHistoryItem>>,
     expandedStates: MutableMap<String, Boolean>,
     onCourseClick: (GradeHistoryItem) -> Unit = {}
 ) {
-    if (historyData.isEmpty()) {
+    if (transcriptHistoryData.isEmpty()) {
         return
     }
 
@@ -3152,8 +3416,12 @@ fun AcademicHistoryView(
 
     val listState = rememberLazyListState()
 
-    val semesterNameMap = remember(historyData) {
-        buildSemesterNameMap(context, historyData)
+    val attemptVersion by CourseAttemptStore.version
+    val attemptsMap = remember(effectiveHistoryData, attemptVersion) {
+        CourseAttemptStore.getAll(context)
+    }
+    val semesterNameMap = remember(effectiveHistoryData, attemptsMap) {
+        buildSemesterNameMap(context, effectiveHistoryData, attemptsMap)
     }
 
     val originalGpas = remember(groupedHistory) {
@@ -3175,8 +3443,8 @@ fun AcademicHistoryView(
         listOf("All") + sortedMonths.mapNotNull { formattedMonthsMap[it] }
     }
 
-    val filteredHistory = remember(historyData, searchQuery, selectedFilter, formattedMonthsMap) {
-        historyData.filter { item ->
+    val filteredHistory = remember(transcriptHistoryData, searchQuery, selectedFilter, formattedMonthsMap) {
+        transcriptHistoryData.filter { item ->
             val q = searchQuery.trim().lowercase()
             val matchesSearch = q.isBlank() ||
                     item.courseCode.lowercase().contains(q) ||
@@ -3198,9 +3466,9 @@ fun AcademicHistoryView(
             .groupBy { it.examMonth.ifEmpty { "Unknown Semester" } }
     }
 
-    val gradeCounts = remember(historyData) {
+    val gradeCounts = remember(effectiveHistoryData) {
         val counts = mutableMapOf<String, Int>()
-        historyData.forEach { item ->
+        effectiveHistoryData.forEach { item ->
             val grade = item.grade.trim().uppercase()
             counts[grade] = (counts[grade] ?: 0) + 1
         }
@@ -3389,7 +3657,6 @@ fun AcademicHistoryView(
         sortedAndGroupedHistory.forEach { (examMonth, courses) ->
             val isExpanded = expandedStates[examMonth] ?: true
             val semGpa = originalGpas[examMonth] ?: 0.0
-
             val formattedMonth = formattedMonthsMap[examMonth] ?: examMonth
 
             item {
@@ -3450,7 +3717,10 @@ fun AcademicHistoryView(
             }
 
             if (isExpanded) {
-                items(courses) { course ->
+                items(
+                    items = courses,
+                    key = { "${it.courseCode}_${it.examMonth}_${it.grade}" }
+                ) { course ->
                     EnhancedHistoryItemCard(
                         course = course,
                         onClick = { onCourseClick(course) }
