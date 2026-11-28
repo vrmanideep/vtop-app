@@ -38,6 +38,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
@@ -58,6 +59,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
@@ -67,9 +69,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import androidx.core.content.edit
 import com.composables.icons.lucide.*
 import com.vtop.core.SessionManager
 import com.vtop.core.TimetableRepository
+import com.vtop.logic.CourseAttemptRecord
+import com.vtop.logic.CourseAttemptStore
 import com.vtop.logic.TimetableParser
 import com.vtop.models.*
 import com.vtop.utils.AnalyticsManager
@@ -78,11 +83,16 @@ import com.vtop.utils.Vault
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import org.jsoup.Jsoup
 import java.io.File
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.exp
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 private val MarksPrimaryAccent = Color(0xFF0090FF)
 private val MarksColorSuccess = Color(0xFF4ADE80)
@@ -125,13 +135,201 @@ private data class PlannedCourseEntry(
     val grade: String
 )
 
+private data class ReportCourseRow(
+    val key: String,
+    val effectiveIndex: Int?, // non-null only for the effective row counted in CGPA
+    val item: GradeHistoryItem
+)
+
 private data class ReportSemester(
     val semester: String,
-    val courses: List<Pair<Int, GradeHistoryItem>>,
+    val courses: List<ReportCourseRow>,
     val gpa: Double,
     val totalCredits: Double,
     val countedCredits: Double
 )
+
+private data class GradeRangeCutoff(
+    val grade: String,
+    val rawText: String,
+    val minInclusive: Double?,
+    val maxExclusive: Double?,
+    val hasPolicyNote: Boolean
+)
+
+private data class GradeDetailAssessmentRow(
+    val slNo: String,
+    val title: String,
+    val maxMark: String,
+    val weightagePercent: String,
+    val status: String,
+    val scoredMark: String,
+    val weightageMark: String
+)
+
+private data class GradeDetailComponentTable(
+    val classNumber: String,
+    val courseType: String,
+    val rows: List<GradeDetailAssessmentRow>,
+    val totalWeightageMark: String
+)
+
+private data class ParsedGradeViewDetail(
+    val semesterSubId: String,
+    val semesterName: String,
+    val courseId: String,
+    val courseCode: String,
+    val courseTitle: String,
+    val courseType: String,
+    val gradingType: String,
+    val grandTotal: Double,
+    val grandTotalText: String,
+    val grade: String,
+    val classStrength: Int,
+    val gradingStrength: Int,
+    val mean: Double,
+    val sd: Double,
+    val gradeCutoffs: List<GradeRangeCutoff>,
+    val sPolicyNote: String?,
+    val componentTables: List<GradeDetailComponentTable>
+)
+
+private fun ParsedGradeViewDetail.toJsonString(): String {
+    val root = JSONObject().apply {
+        put("semesterSubId", semesterSubId)
+        put("semesterName", semesterName)
+        put("courseId", courseId)
+        put("courseCode", courseCode)
+        put("courseTitle", courseTitle)
+        put("courseType", courseType)
+        put("gradingType", gradingType)
+        put("grandTotal", grandTotal)
+        put("grandTotalText", grandTotalText)
+        put("grade", grade)
+        put("classStrength", classStrength)
+        put("gradingStrength", gradingStrength)
+        put("mean", mean)
+        put("sd", sd)
+        put("sPolicyNote", sPolicyNote ?: JSONObject.NULL)
+
+        val cutoffsArr = JSONArray()
+        gradeCutoffs.forEach { c ->
+            cutoffsArr.put(JSONObject().apply {
+                put("grade", c.grade)
+                put("rawText", c.rawText)
+                put("minInclusive", c.minInclusive ?: JSONObject.NULL)
+                put("maxExclusive", c.maxExclusive ?: JSONObject.NULL)
+                put("hasPolicyNote", c.hasPolicyNote)
+            })
+        }
+        put("gradeCutoffs", cutoffsArr)
+
+        val tablesArr = JSONArray()
+        componentTables.forEach { t ->
+            val rowsArr = JSONArray()
+            t.rows.forEach { r ->
+                rowsArr.put(JSONObject().apply {
+                    put("slNo", r.slNo)
+                    put("title", r.title)
+                    put("maxMark", r.maxMark)
+                    put("weightagePercent", r.weightagePercent)
+                    put("status", r.status)
+                    put("scoredMark", r.scoredMark)
+                    put("weightageMark", r.weightageMark)
+                })
+            }
+            tablesArr.put(JSONObject().apply {
+                put("classNumber", t.classNumber)
+                put("courseType", t.courseType)
+                put("totalWeightageMark", t.totalWeightageMark)
+                put("rows", rowsArr)
+            })
+        }
+        put("componentTables", tablesArr)
+    }
+    return root.toString()
+}
+
+private fun parseGradeViewDetailFromJson(raw: String): ParsedGradeViewDetail? {
+    return try {
+        val root = JSONObject(raw)
+        val cutoffs = mutableListOf<GradeRangeCutoff>()
+        val cutoffsArr = root.optJSONArray("gradeCutoffs")
+        if (cutoffsArr != null) {
+            for (i in 0 until cutoffsArr.length()) {
+                val obj = cutoffsArr.optJSONObject(i) ?: continue
+                cutoffs.add(
+                    GradeRangeCutoff(
+                        grade = obj.optString("grade"),
+                        rawText = obj.optString("rawText"),
+                        minInclusive = if (obj.isNull("minInclusive")) null else obj.optDouble("minInclusive"),
+                        maxExclusive = if (obj.isNull("maxExclusive")) null else obj.optDouble("maxExclusive"),
+                        hasPolicyNote = obj.optBoolean("hasPolicyNote", false)
+                    )
+                )
+            }
+        }
+
+        val tables = mutableListOf<GradeDetailComponentTable>()
+        val tablesArr = root.optJSONArray("componentTables")
+        if (tablesArr != null) {
+            for (i in 0 until tablesArr.length()) {
+                val tObj = tablesArr.optJSONObject(i) ?: continue
+                val rows = mutableListOf<GradeDetailAssessmentRow>()
+                val rowsArr = tObj.optJSONArray("rows")
+                if (rowsArr != null) {
+                    for (j in 0 until rowsArr.length()) {
+                        val rObj = rowsArr.optJSONObject(j) ?: continue
+                        rows.add(
+                            GradeDetailAssessmentRow(
+                                slNo = rObj.optString("slNo"),
+                                title = rObj.optString("title"),
+                                maxMark = rObj.optString("maxMark"),
+                                weightagePercent = rObj.optString("weightagePercent"),
+                                status = rObj.optString("status"),
+                                scoredMark = rObj.optString("scoredMark"),
+                                weightageMark = rObj.optString("weightageMark")
+                            )
+                        )
+                    }
+                }
+                tables.add(
+                    GradeDetailComponentTable(
+                        classNumber = tObj.optString("classNumber"),
+                        courseType = tObj.optString("courseType"),
+                        rows = rows,
+                        totalWeightageMark = tObj.optString("totalWeightageMark")
+                    )
+                )
+            }
+        }
+
+        val title = root.optString("courseTitle")
+        if (title.isBlank()) return null
+
+        ParsedGradeViewDetail(
+            semesterSubId = root.optString("semesterSubId"),
+            semesterName = root.optString("semesterName"),
+            courseId = root.optString("courseId"),
+            courseCode = root.optString("courseCode"),
+            courseTitle = title,
+            courseType = root.optString("courseType"),
+            gradingType = root.optString("gradingType"),
+            grandTotal = root.optDouble("grandTotal", 0.0),
+            grandTotalText = root.optString("grandTotalText"),
+            grade = root.optString("grade"),
+            classStrength = root.optInt("classStrength", 0),
+            gradingStrength = root.optInt("gradingStrength", 0),
+            mean = root.optDouble("mean", 0.0),
+            sd = root.optDouble("sd", 0.0),
+            gradeCutoffs = cutoffs,
+            sPolicyNote = if (root.isNull("sPolicyNote")) null else root.optString("sPolicyNote").takeIf { it.isNotBlank() },
+            componentTables = tables
+        )
+    } catch (_: Exception) {
+        null
+    }
+}
 
 private fun getGradeColor(grade: String): Color {
     return when (grade.trim().uppercase(Locale.getDefault())) {
@@ -261,35 +459,330 @@ private fun inferSemesterName(examMonth: String): String? {
     }
 }
 
-private fun buildSemesterNameMap(
+private fun buildSemesterOptionMap(
     context: Context,
-    historyData: List<GradeHistoryItem>
-): Map<String, String> {
-    // list1: unique examMonth values sorted oldest -> newest
-    val list1 = historyData
-        .map { it.examMonth.trim() }
+    historyData: List<GradeHistoryItem>,
+    attemptsMap: Map<String, List<CourseAttemptRecord>> = emptyMap()
+): Map<String, SemesterOption> {
+    val allMonths = (historyData.map { it.examMonth.trim() } +
+            attemptsMap.values.flatten().map { it.examMonth.trim() })
         .filter { it.isNotEmpty() }
         .distinct()
         .sortedBy { parseExamMonth(it) }
 
-    if (list1.isEmpty()) return emptyMap()
+    if (allMonths.isEmpty()) return emptyMap()
 
     val currentSemId = Vault.getSelectedSemester(context)[0]?.trim().orEmpty()
-
-    // list2: scraped semester options sorted oldest -> newest (excluding current active semester)
     val list2 = Vault.getSemesterOptions(context)
         .filter { it.id.trim() != currentSemId }
         .reversed()
 
-    val paired = mutableMapOf<String, String>()
-    for (i in list1.indices) {
-        val semName = list2.getOrNull(i)?.name?.trim()?.takeIf { it.isNotEmpty() }
-            ?: inferSemesterName(list1[i])
-        if (semName != null) {
-            paired[list1[i]] = semName
+    val paired = mutableMapOf<String, SemesterOption>()
+    for (i in allMonths.indices) {
+        val opt = list2.getOrNull(i)
+        if (opt != null) {
+            paired[allMonths[i]] = opt
+        } else {
+            val fallbackName = inferSemesterName(allMonths[i])
+            if (fallbackName != null) {
+                paired[allMonths[i]] = SemesterOption("", fallbackName)
+            }
         }
     }
     return paired
+}
+
+private fun buildSemesterNameMap(
+    context: Context,
+    historyData: List<GradeHistoryItem>,
+    attemptsMap: Map<String, List<CourseAttemptRecord>> = emptyMap()
+): Map<String, String> {
+    return buildSemesterOptionMap(context, historyData, attemptsMap)
+        .mapValues { it.value.name.trim() }
+        .filterValues { it.isNotEmpty() }
+}
+
+private fun buildTranscriptHistoryList(
+    historyData: List<GradeHistoryItem>,
+    attemptsMap: Map<String, List<CourseAttemptRecord>>
+): List<GradeHistoryItem> {
+    val result = mutableListOf<GradeHistoryItem>()
+    historyData.forEach { effItem ->
+        val normCode = effItem.courseCode.trim().uppercase(Locale.ENGLISH)
+        val attempts = attemptsMap[normCode]
+            ?.sortedBy { parseExamMonth(it.examMonth) }
+            .orEmpty()
+
+        if (attempts.size > 1) {
+            attempts.forEach { att ->
+                if (att.examMonth.equals(effItem.examMonth, ignoreCase = true)) {
+                    result.add(effItem)
+                } else {
+                    result.add(
+                        GradeHistoryItem(
+                            courseCode = att.courseCode,
+                            courseTitle = att.courseTitle.ifBlank { effItem.courseTitle },
+                            courseType = att.courseType,
+                            credits = att.credits,
+                            grade = att.grade,
+                            examMonth = att.examMonth,
+                            courseDistribution = effItem.courseDistribution
+                        )
+                    )
+                }
+            }
+        } else {
+            result.add(effItem)
+        }
+    }
+    return result
+}
+
+private fun parseCourseIdMapFromGradeViewHtml(html: String): Map<String, String> {
+    val doc = Jsoup.parse(html)
+    val result = mutableMapOf<String, String>()
+    val idRegex = Regex("""getGradeViewDetails\s*\(\s*['"]([^'"]+)['"]\s*\)""")
+
+    for (row in doc.select("tr")) {
+        val tds = row.select("> td")
+        if (tds.size >= 8) {
+            val code = tds[1].text().trim().uppercase(Locale.ENGLISH)
+            val onclick = tds[7].selectFirst("button")?.attr("onclick").orEmpty()
+            val match = idRegex.find(onclick)
+            if (code.isNotEmpty() && match != null) {
+                result[code] = match.groupValues[1].trim()
+            }
+        }
+    }
+    return result
+}
+
+private fun parseGradeRangeCutoff(grade: String, rawCellText: String, hasHash: Boolean): GradeRangeCutoff {
+    val cleaned = rawCellText.replace("#", "").replace("\\s+".toRegex(), " ").trim()
+    val geMatch = Regex(""">=\s*(\d+(?:\.\d+)?)""").find(cleaned)
+    val ltMatch = Regex("""<\s*(\d+(?:\.\d+)?)""").find(cleaned)
+    return GradeRangeCutoff(
+        grade = grade,
+        rawText = cleaned,
+        minInclusive = geMatch?.groupValues?.getOrNull(1)?.toDoubleOrNull(),
+        maxExclusive = ltMatch?.groupValues?.getOrNull(1)?.toDoubleOrNull(),
+        hasPolicyNote = hasHash
+    )
+}
+
+private fun parseGradeViewDetailsHtml(
+    html: String,
+    semesterSubId: String,
+    semesterName: String,
+    courseId: String,
+    targetCourseCode: String
+): ParsedGradeViewDetail? {
+    val doc = Jsoup.parse(html)
+    val normalizedTarget = targetCourseCode.trim().uppercase(Locale.ENGLISH)
+
+    var courseTitle = ""
+    var courseType = ""
+    var gradingType = ""
+    var grandTotalText = ""
+    var grade = ""
+
+    for (row in doc.select("tr")) {
+        val tds = row.select("> td")
+        if (tds.size >= 7 && tds[1].text().trim().equals(normalizedTarget, ignoreCase = true)) {
+            courseTitle = tds[2].text().trim()
+            courseType = tds[3].text().trim()
+            gradingType = tds[4].text().trim()
+            grandTotalText = tds[5].text().trim()
+            grade = tds[6].text().trim()
+            break
+        }
+    }
+
+    if (courseTitle.isEmpty()) return null
+
+    var classStrength = 0
+    var gradingStrength = 0
+    var mean = 0.0
+    var sd = 0.0
+    val cutoffs = mutableListOf<GradeRangeCutoff>()
+    var sPolicyNote: String? = null
+    val componentTables = mutableListOf<GradeDetailComponentTable>()
+
+    val nestedTables = doc.select("td[colspan] > table")
+    for (tbl in nestedTables) {
+        val headerText = tbl.select("tr").firstOrNull()?.text().orEmpty()
+        if (headerText.contains("Class Strength", ignoreCase = true) && headerText.contains("Mean", ignoreCase = true)) {
+            val rows = tbl.select("tr")
+            val dataRow = rows.getOrNull(2)
+            val cells = dataRow?.select("td").orEmpty()
+            if (cells.size >= 11) {
+                classStrength = cells[0].text().trim().toIntOrNull() ?: 0
+                gradingStrength = cells[1].text().trim().toIntOrNull() ?: 0
+                mean = cells[2].text().trim().toDoubleOrNull() ?: 0.0
+                sd = cells[3].text().trim().toDoubleOrNull() ?: 0.0
+                val gradeLabels = listOf("S", "A", "B", "C", "D", "E", "F")
+                gradeLabels.forEachIndexed { idx, gLabel ->
+                    val cell = cells[4 + idx]
+                    val hasHash = cell.text().contains("#")
+                    cutoffs.add(parseGradeRangeCutoff(gLabel, cell.text(), hasHash))
+                }
+            }
+            val noteRow = rows.getOrNull(3)
+            if (noteRow != null && noteRow.text().contains("#")) {
+                sPolicyNote = noteRow.text().trim()
+            }
+        } else if (headerText.contains("Class Number", ignoreCase = true)) {
+            val rows = tbl.select("tr")
+            val topHeaders = rows.firstOrNull()?.select("th").orEmpty()
+            val classNumber = topHeaders.getOrNull(0)?.text()?.substringAfter(":")?.trim().orEmpty()
+            val compType = topHeaders.getOrNull(1)?.text()?.substringAfter(":")?.trim().orEmpty()
+
+            val assessmentRows = mutableListOf<GradeDetailAssessmentRow>()
+            var totalWgtMark = ""
+
+            for (i in 2 until rows.size) {
+                val r = rows[i]
+                val ths = r.select("th")
+                if (ths.size >= 2 && r.text().contains("Total", ignoreCase = true)) {
+                    totalWgtMark = ths.last()?.text()?.trim().orEmpty()
+                    continue
+                }
+                val tds = r.select("td")
+                if (tds.size >= 7) {
+                    assessmentRows.add(
+                        GradeDetailAssessmentRow(
+                            slNo = tds[0].text().trim(),
+                            title = tds[1].text().trim(),
+                            maxMark = cleanMark(tds[2].text()),
+                            weightagePercent = cleanMark(tds[3].text()),
+                            status = tds[4].text().trim(),
+                            scoredMark = cleanMark(tds[5].text()),
+                            weightageMark = cleanMark(tds[6].text())
+                        )
+                    )
+                }
+            }
+
+            componentTables.add(
+                GradeDetailComponentTable(
+                    classNumber = classNumber,
+                    courseType = compType,
+                    rows = assessmentRows,
+                    totalWeightageMark = cleanMark(totalWgtMark)
+                )
+            )
+        }
+    }
+
+    return ParsedGradeViewDetail(
+        semesterSubId = semesterSubId,
+        semesterName = semesterName,
+        courseId = courseId,
+        courseCode = normalizedTarget,
+        courseTitle = courseTitle,
+        courseType = courseType,
+        gradingType = gradingType,
+        grandTotal = grandTotalText.toDoubleOrNull() ?: 0.0,
+        grandTotalText = cleanMark(grandTotalText),
+        grade = grade,
+        classStrength = classStrength,
+        gradingStrength = gradingStrength,
+        mean = mean,
+        sd = sd,
+        gradeCutoffs = cutoffs,
+        sPolicyNote = sPolicyNote,
+        componentTables = componentTables
+    )
+}
+
+private suspend fun loadGradeDetailWithCache(
+    context: Context,
+    course: GradeHistoryItem,
+    historyData: List<GradeHistoryItem>,
+    forceRefresh: Boolean
+): Result<ParsedGradeViewDetail> = withContext(Dispatchers.IO) {
+    try {
+        val prefs = context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE)
+        val attemptsMap = CourseAttemptStore.getAll(context)
+        val semOptionMap = buildSemesterOptionMap(context, historyData, attemptsMap)
+        val semOption = semOptionMap[course.examMonth.trim()]
+        val semId = semOption?.id?.trim().orEmpty()
+        val semName = semOption?.name?.trim().orEmpty().ifBlank { course.examMonth }
+
+        if (semId.isEmpty()) {
+            return@withContext Result.failure(Exception("Semester ID not found for ${course.examMonth}. Sync once to refresh semesters."))
+        }
+
+        val normCode = course.courseCode.trim().uppercase(Locale.ENGLISH)
+        val detailCacheKey = "GRADE_VIEW_DETAIL_V2_${semId}_$normCode"
+
+        if (!forceRefresh) {
+            val cachedJson = prefs.getString(detailCacheKey, null)
+            if (!cachedJson.isNullOrBlank()) {
+                val cached = parseGradeViewDetailFromJson(cachedJson)
+                if (cached != null) return@withContext Result.success(cached)
+            }
+        }
+
+        val client = SessionManager.getSyncClient()
+            ?: return@withContext Result.failure(Exception("Session expired. Pull down to sync first."))
+
+        val regNo = Vault.getRegNo(context)
+        if (regNo.isNotBlank() && regNo != "-") {
+            client.authorizedId = regNo
+        }
+
+        // Step 1: Resolve internal courseId (e.g. AM_MAT1011_00210) from doStudentGradeView
+        val semMapKey = "GRADE_VIEW_SEM_IDS_$semId"
+        var codeToIdMap: Map<String, String> = if (!forceRefresh) {
+            prefs.getString(semMapKey, null)?.let { rawJson ->
+                try {
+                    val obj = JSONObject(rawJson)
+                    val parsedMap = mutableMapOf<String, String>()
+                    val keys = obj.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        parsedMap[k] = obj.optString(k)
+                    }
+                    parsedMap
+                } catch (_: Exception) { null }
+            }.orEmpty()
+        } else {
+            emptyMap()
+        }
+
+        var internalCourseId = codeToIdMap[normCode]
+        if (internalCourseId.isNullOrBlank()) {
+            val semListHtml = client.fetchGradesRawHtml(semId, null)
+                ?: return@withContext Result.failure(Exception("Unable to load semester grade list from VTOP."))
+            codeToIdMap = parseCourseIdMapFromGradeViewHtml(semListHtml)
+            if (codeToIdMap.isNotEmpty()) {
+                prefs.edit { putString(semMapKey, JSONObject(codeToIdMap).toString()) }
+            }
+            internalCourseId = codeToIdMap[normCode]
+        }
+
+        if (internalCourseId.isNullOrBlank()) {
+            return@withContext Result.failure(Exception("Course details unavailable for $normCode in $semName."))
+        }
+
+        // Step 2: Fetch getGradeViewDetails for the resolved internal courseId
+        val detailHtml = client.fetchGradeViewDetailsRawHtml(semId, internalCourseId)
+            ?: return@withContext Result.failure(Exception("Failed to fetch grade statistics from VTOP."))
+
+        val parsed = parseGradeViewDetailsHtml(
+            html = detailHtml,
+            semesterSubId = semId,
+            semesterName = semName,
+            courseId = internalCourseId,
+            targetCourseCode = normCode
+        ) ?: return@withContext Result.failure(Exception("Could not parse grade details for $normCode."))
+
+        prefs.edit { putString(detailCacheKey, parsed.toJsonString()) }
+        Result.success(parsed)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
 }
 
 private suspend fun downloadAndSaveGradeHistoryPdf(context: Context): Result<Uri> =
@@ -300,7 +793,7 @@ private suspend fun downloadAndSaveGradeHistoryPdf(context: Context): Result<Uri
 
             val regNo = Vault.getRegNo(context)
             if (regNo.isNotBlank() && regNo != "-") {
-                client.setAuthorizedId(regNo)
+                client.authorizedId = regNo
             }
 
             val tempFile = File(context.cacheDir, "Grade_History.pdf")
@@ -352,7 +845,6 @@ private fun buildCurrentSemesterCourses(
     timetable: TimetableModel?,
     marksData: List<CourseMark>
 ): List<PlannedCourseEntry> {
-    // Note: Gson can leave new Java List fields null on legacy cached JSON
     val regList: List<TimetableModel.RegisteredCourse> = timetable?.registeredCourses ?: emptyList()
     if (regList.isNotEmpty()) {
         return regList
@@ -372,7 +864,6 @@ private fun buildCurrentSemesterCourses(
             .sortedBy { it.courseCode }
     }
 
-    // Fallback before timetable is re-synced with registeredCourses
     return marksData
         .groupBy { it.courseCode.trim().uppercase(Locale.ENGLISH) }
         .values
@@ -404,8 +895,9 @@ fun Marks(
     marksData: List<CourseMark>,
     historySummary: CGPASummary?,
     historyData: List<GradeHistoryItem>,
-    timetable: TimetableModel? = null,
-    onOpenCalculator: () -> Unit = {}
+    @Suppress("UNUSED_PARAMETER") timetable: TimetableModel? = null,
+    onOpenCalculator: () -> Unit = {},
+    onSelectCourse: (GradeHistoryItem) -> Unit = {}
 ) {
     LaunchedEffect(Unit) {
         AnalyticsManager.logScreenView("Marks_Screen")
@@ -417,7 +909,14 @@ fun Marks(
     val pagerState = rememberPagerState(pageCount = { 2 })
     val coroutineScope = rememberCoroutineScope()
 
-    val groupedHistory = remember(historyData) { historyData.groupBy { it.examMonth.ifEmpty { "Unknown Semester" } } }
+    val attemptVersion by CourseAttemptStore.version
+    val attemptsMap = remember(historyData, attemptVersion) { CourseAttemptStore.getAll(context) }
+    val transcriptHistory = remember(historyData, attemptsMap) {
+        buildTranscriptHistoryList(historyData, attemptsMap)
+    }
+    val groupedHistory = remember(transcriptHistory) {
+        transcriptHistory.groupBy { it.examMonth.ifEmpty { "Unknown Semester" } }
+    }
     val expandedStates = remember(groupedHistory) {
         mutableStateMapOf<String, Boolean>().apply {
             groupedHistory.keys.forEach { this[it] = true }
@@ -428,7 +927,14 @@ fun Marks(
         HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
             when (page) {
                 0 -> CurrentSemesterMarksView(marksData, mergeMarks)
-                1 -> AcademicHistoryView(historySummary, historyData, groupedHistory, expandedStates)
+                1 -> AcademicHistoryView(
+                    historySummary = historySummary,
+                    effectiveHistoryData = historyData,
+                    transcriptHistoryData = transcriptHistory,
+                    groupedHistory = groupedHistory,
+                    expandedStates = expandedStates,
+                    onCourseClick = onSelectCourse
+                )
             }
         }
 
@@ -483,6 +989,692 @@ fun Marks(
     }
 }
 
+private fun normalCdf(z: Double): Double {
+    val sign = if (z < 0.0) -1.0 else 1.0
+    val x = kotlin.math.abs(z) / sqrt(2.0)
+    val t = 1.0 / (1.0 + 0.3275911 * x)
+    val erfApprox = 1.0 - (((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t) * exp(-x * x)
+    return 0.5 * (1.0 + sign * erfApprox)
+}
+
+@Composable
+internal fun GradeDetailSubView(
+    course: GradeHistoryItem,
+    historyData: List<GradeHistoryItem>,
+    onBack: () -> Unit
+) {
+    BackHandler { onBack() }
+
+    val context = LocalContext.current
+    var isLoading by remember { mutableStateOf(true) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var detail by remember { mutableStateOf<ParsedGradeViewDetail?>(null) }
+    var refreshTrigger by remember { mutableIntStateOf(0) }
+
+    val attemptVersion by CourseAttemptStore.version
+    val attemptsMap = remember(historyData, attemptVersion) {
+        CourseAttemptStore.getAll(context)
+    }
+    val semesterNameMap = remember(historyData, attemptsMap) {
+        buildSemesterNameMap(context, historyData, attemptsMap)
+    }
+
+    LaunchedEffect(course, refreshTrigger) {
+        isLoading = true
+        errorMessage = null
+        val res = loadGradeDetailWithCache(
+            context = context,
+            course = course,
+            historyData = historyData,
+            forceRefresh = refreshTrigger > 0
+        )
+        isLoading = false
+        if (res.isSuccess) {
+            detail = res.getOrNull()
+        } else {
+            errorMessage = res.exceptionOrNull()?.message ?: "Failed to load course grade details"
+        }
+    }
+
+    val gradeColor = getGradeColor(detail?.grade ?: course.grade)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+    ) {
+        // Top Bar
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    tint = MaterialTheme.colorScheme.onBackground
+                )
+            }
+            Spacer(Modifier.width(4.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = course.courseCode,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Black,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    text = detail?.semesterName ?: semesterNameMap[course.examMonth] ?: course.examMonth,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            IconButton(
+                onClick = { refreshTrigger++ },
+                enabled = !isLoading
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Refresh Grade Details",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
+        if (isLoading && detail == null) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                    Text(
+                        text = "Fetching grade breakdown & class stats...",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        } else if (errorMessage != null && detail == null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = errorMessage ?: "Unable to load grade details",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center
+                    )
+                    Button(onClick = { refreshTrigger++ }) {
+                        Text("Retry", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        } else {
+            val data = detail ?: return@Column
+
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // 1. Course Summary Hero Card
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(18.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                    Text(
+                                        text = data.courseTitle,
+                                        fontSize = 17.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        text = "${data.courseType} · ${course.credits} Credits",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .size(50.dp)
+                                        .background(gradeColor.copy(alpha = 0.16f), RoundedCornerShape(14.dp))
+                                        .border(1.5.dp, gradeColor.copy(alpha = 0.45f), RoundedCornerShape(14.dp)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = data.grade,
+                                        fontSize = 22.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = gradeColor
+                                    )
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Surface(
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text(
+                                            text = "GRAND TOTAL",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            letterSpacing = 0.8.sp
+                                        )
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(
+                                            text = "${data.grandTotalText} / 100",
+                                            fontSize = 18.sp,
+                                            fontWeight = FontWeight.Black,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+
+                                Surface(
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text(
+                                            text = "GRADING MODE",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            letterSpacing = 0.8.sp
+                                        )
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(
+                                            text = when (data.gradingType.uppercase(Locale.ENGLISH)) {
+                                                "RG" -> "Relative (RG)"
+                                                "AG" -> "Absolute (AG)"
+                                                else -> data.gradingType
+                                            },
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Black,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 2. Bell Curve & Class Statistics (shown when Mean & SD are present, i.e. RG)
+                if (data.mean > 0.0 && data.sd > 0.0) {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(18.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                val zScore = (data.grandTotal - data.mean) / data.sd
+                                val percentile = (normalCdf(zScore) * 100.0).coerceIn(0.1, 99.9)
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Class Distribution",
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                        shape = RoundedCornerShape(50)
+                                    ) {
+                                        Text(
+                                            text = "~${String.format(Locale.US, "%.1f", percentile)}th percentile",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                }
+
+                                GradeBellCurveChart(
+                                    mean = data.mean,
+                                    sd = data.sd,
+                                    studentScore = data.grandTotal,
+                                    studentGrade = data.grade,
+                                    cutoffs = data.gradeCutoffs
+                                )
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    StatPill(label = "Class Size", value = data.classStrength.toString())
+                                    StatPill(label = "Graded", value = data.gradingStrength.toString())
+                                    StatPill(label = "Mean", value = String.format(Locale.US, "%.2f", data.mean))
+                                    StatPill(label = "Std Dev", value = String.format(Locale.US, "%.2f", data.sd))
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 3. Exact Range of Grades Card
+                if (data.gradeCutoffs.isNotEmpty()) {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(18.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text(
+                                    text = "Range of Grades",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+
+                                data.gradeCutoffs.forEach { cutoff ->
+                                    val isEarned = cutoff.grade.equals(data.grade, ignoreCase = true)
+                                    val cColor = getGradeColor(cutoff.grade)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(
+                                                if (isEarned) cColor.copy(alpha = 0.14f)
+                                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                                            )
+                                            .then(
+                                                if (isEarned) Modifier.border(1.dp, cColor.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                                                else Modifier
+                                            )
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(26.dp)
+                                                    .background(cColor.copy(alpha = 0.18f), RoundedCornerShape(7.dp)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = cutoff.grade,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Black,
+                                                    color = cColor
+                                                )
+                                            }
+                                            if (isEarned) {
+                                                Text(
+                                                    text = "Your Grade",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = cColor
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = if (cutoff.hasPolicyNote) "${cutoff.rawText} #" else cutoff.rawText,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (isEarned) FontWeight.Bold else FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+
+                                data.sPolicyNote?.let { note ->
+                                    Text(
+                                        text = note,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 4. Component Marks Breakdown Tables
+                data.componentTables.forEachIndexed { idx, comp ->
+                    item(key = "comp_${idx}_${comp.classNumber}") {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(18.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = comp.courseType.ifBlank { "Assessments" },
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        if (comp.classNumber.isNotBlank()) {
+                                            Text(
+                                                text = comp.classNumber,
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                    if (comp.totalWeightageMark.isNotBlank()) {
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                            shape = RoundedCornerShape(10.dp)
+                                        ) {
+                                            Text(
+                                                text = "Total: ${comp.totalWeightageMark}",
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Black,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "Mark Title",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.weight(1.2f)
+                                        )
+                                        Text(
+                                            text = "Scored / Max",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.weight(0.9f)
+                                        )
+                                        Text(
+                                            text = "Wgt / %",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            textAlign = TextAlign.End,
+                                            modifier = Modifier.weight(0.8f)
+                                        )
+                                    }
+
+                                    comp.rows.forEach { row ->
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1.2f)) {
+                                                Text(
+                                                    text = row.title,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                                if (row.status.isNotBlank() && !row.status.equals("Present", ignoreCase = true)) {
+                                                    Text(
+                                                        text = row.status,
+                                                        fontSize = 10.sp,
+                                                        color = MaterialTheme.colorScheme.error
+                                                    )
+                                                }
+                                            }
+                                            Text(
+                                                text = "${row.scoredMark} / ${row.maxMark}",
+                                                fontSize = 12.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                textAlign = TextAlign.Center,
+                                                modifier = Modifier.weight(0.9f)
+                                            )
+                                            Text(
+                                                text = "${row.weightageMark} / ${row.weightagePercent}",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                textAlign = TextAlign.End,
+                                                modifier = Modifier.weight(0.8f)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatPill(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = value,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Black,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = label,
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun GradeBellCurveChart(
+    mean: Double,
+    sd: Double,
+    studentScore: Double,
+    studentGrade: String,
+    cutoffs: List<GradeRangeCutoff>
+) {
+    val curveStrokeColor = MaterialTheme.colorScheme.primary
+    val meanLineColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val studentColor = getGradeColor(studentGrade)
+
+    val minX = minOf(0.0, mean - 3.2 * sd, studentScore - 5.0).coerceAtLeast(0.0)
+    val maxX = maxOf(100.0, mean + 3.2 * sd, studentScore + 5.0).coerceAtMost(100.0)
+    val span = (maxX - minX).coerceAtLeast(1.0)
+
+    fun pdf(x: Double): Double {
+        val z = (x - mean) / sd
+        return exp(-0.5 * z * z)
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(165.dp)
+        ) {
+            val padX = 12.dp.toPx()
+            val padTop = 18.dp.toPx()
+            val padBottom = 10.dp.toPx()
+            val w = size.width - padX * 2
+            val h = size.height - padTop - padBottom
+            val baseY = padTop + h
+
+            fun xToPx(xVal: Double): Float = padX + (((xVal - minX) / span).toFloat().coerceIn(0f, 1f)) * w
+            fun yToPx(yNorm: Double): Float = baseY - (yNorm.toFloat().coerceIn(0f, 1f)) * h
+
+            // Shaded grade intervals under the bell curve
+            val orderedGrades = listOf("F", "E", "D", "C", "B", "A", "S")
+            orderedGrades.forEach { g ->
+                val c = cutoffs.find { it.grade == g } ?: return@forEach
+                val segStart = (c.minInclusive ?: minX).coerceIn(minX, maxX)
+                val segEnd = (c.maxExclusive ?: maxX).coerceIn(minX, maxX)
+                if (segEnd > segStart) {
+                    val steps = 28
+                    val fillPath = Path().apply {
+                        moveTo(xToPx(segStart), baseY)
+                        for (s in 0..steps) {
+                            val xv = segStart + (segEnd - segStart) * (s.toDouble() / steps)
+                            lineTo(xToPx(xv), yToPx(pdf(xv)))
+                        }
+                        lineTo(xToPx(segEnd), baseY)
+                        close()
+                    }
+                    val alpha = if (g.equals(studentGrade, ignoreCase = true)) 0.34f else 0.14f
+                    drawPath(fillPath, color = getGradeColor(g).copy(alpha = alpha))
+                }
+            }
+
+            // Bell curve outline
+            val totalSteps = 120
+            val curvePath = Path().apply {
+                for (s in 0..totalSteps) {
+                    val xv = minX + span * (s.toDouble() / totalSteps)
+                    val px = xToPx(xv)
+                    val py = yToPx(pdf(xv))
+                    if (s == 0) moveTo(px, py) else lineTo(px, py)
+                }
+            }
+            drawPath(
+                path = curvePath,
+                color = curveStrokeColor,
+                style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round)
+            )
+
+            // Baseline
+            drawLine(
+                color = meanLineColor.copy(alpha = 0.25f),
+                start = Offset(padX, baseY),
+                end = Offset(size.width - padX, baseY),
+                strokeWidth = 1.dp.toPx()
+            )
+
+            // Mean dashed vertical line
+            val meanPx = xToPx(mean)
+            drawLine(
+                color = meanLineColor.copy(alpha = 0.7f),
+                start = Offset(meanPx, padTop),
+                end = Offset(meanPx, baseY),
+                strokeWidth = 1.5.dp.toPx(),
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f), 0f)
+            )
+
+            // Student score vertical marker & dot
+            val scorePx = xToPx(studentScore)
+            val scorePy = yToPx(pdf(studentScore))
+            drawLine(
+                color = studentColor,
+                start = Offset(scorePx, padTop - 4.dp.toPx()),
+                end = Offset(scorePx, baseY),
+                strokeWidth = 2.dp.toPx()
+            )
+            drawCircle(
+                color = studentColor,
+                radius = 5.dp.toPx(),
+                center = Offset(scorePx, scorePy)
+            )
+        }
+
+        // Legend row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(Modifier.size(9.dp).background(meanLineColor, CircleShape))
+                Text(
+                    text = "Mean: ${String.format(Locale.US, "%.1f", mean)}",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(Modifier.size(9.dp).background(studentColor, CircleShape))
+                Text(
+                    text = "You: ${formatVal(studentScore)} ($studentGrade)",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = studentColor
+                )
+            }
+        }
+    }
+}
+
 @Composable
 internal fun CGPACalculatorSubView(
     historySummary: CGPASummary?,
@@ -498,8 +1690,12 @@ internal fun CGPACalculatorSubView(
     val coroutineScope = rememberCoroutineScope()
     var resolvedTimetable by remember(timetable) { mutableStateOf(timetable) }
 
-    val semesterNameMap = remember(historyData) {
-        buildSemesterNameMap(context, historyData)
+    val attemptVersion by CourseAttemptStore.version
+    val attemptsMap = remember(historyData, attemptVersion) {
+        CourseAttemptStore.getAll(context)
+    }
+    val semesterNameMap = remember(historyData, attemptsMap) {
+        buildSemesterNameMap(context, historyData, attemptsMap)
     }
 
     val initialCurrentCourses = remember(resolvedTimetable, marksData) {
@@ -508,8 +1704,8 @@ internal fun CGPACalculatorSubView(
 
     var plannedCourses by remember { mutableStateOf(initialCurrentCourses) }
     val reportGradeOverrides = remember { mutableStateMapOf<Int, String>() }
+    val otherAttemptGradeOverrides = remember { mutableStateMapOf<String, String>() }
 
-    // Fetch & parse timetable once if cached model predates registeredCourses
     LaunchedEffect(Unit) {
         val hasReg = !resolvedTimetable?.registeredCourses.isNullOrEmpty()
         if (!hasReg) {
@@ -529,7 +1725,6 @@ internal fun CGPACalculatorSubView(
         }
     }
 
-    // Scraped baseline CGPA & completed credits from VTOP summary
     val scrapedCgpa = remember(historySummary, historyData) {
         historySummary?.cgpa?.toDoubleOrNull()?.takeIf { it > 0.0 }
             ?: calculateSemesterGPA(historyData)
@@ -549,16 +1744,13 @@ internal fun CGPACalculatorSubView(
     }
     var isEditingBaseline by remember { mutableStateOf(false) }
 
-    // Target CGPA defaults to current CGPA scraped from VTOP
     var targetCgpa by remember(scrapedCgpa) { mutableDoubleStateOf(scrapedCgpa) }
     var showTargetEditDialog by remember { mutableStateOf(false) }
     var targetInputText by remember { mutableStateOf("") }
 
-    // Manual credit edit dialog state
     var editingCreditCourse by remember { mutableStateOf<PlannedCourseEntry?>(null) }
     var creditInputText by remember { mutableStateOf("") }
 
-    // Add custom course dialog state
     var showAddCourseDialog by remember { mutableStateOf(false) }
     var newCourseTitle by remember { mutableStateOf("") }
     var newCourseCode by remember { mutableStateOf("") }
@@ -571,20 +1763,74 @@ internal fun CGPACalculatorSubView(
     val effectiveBaselineCgpa = currentCgpaText.toDoubleOrNull()?.coerceIn(0.0, 10.0) ?: scrapedCgpa
     val effectiveCompletedCredits = completedCreditsText.toDoubleOrNull()?.coerceAtLeast(0.0) ?: scrapedCompletedCredits
 
-    // Past semesters with live grade overrides applied
-    val effectiveHistory = remember(historyData, reportGradeOverrides.toMap()) {
-        historyData.mapIndexed { idx, item ->
-            idx to item.copy(grade = reportGradeOverrides[idx] ?: item.grade)
+    // Build semester-wise transcript rows (every attempt placed into its own examMonth semester)
+    val allReportRows = remember(
+        historyData,
+        attemptsMap,
+        reportGradeOverrides.toMap(),
+        otherAttemptGradeOverrides.toMap()
+    ) {
+        val rows = mutableListOf<ReportCourseRow>()
+        historyData.forEachIndexed { effIdx, effItem ->
+            val normCode = effItem.courseCode.trim().uppercase(Locale.ENGLISH)
+            val attempts = attemptsMap[normCode]
+                ?.sortedBy { parseExamMonth(it.examMonth) }
+                .orEmpty()
+
+            val effectiveGrade = reportGradeOverrides[effIdx] ?: effItem.grade
+            val effectiveUpdated = effItem.copy(grade = effectiveGrade)
+
+            if (attempts.size > 1) {
+                attempts.forEachIndexed { attIdx, att ->
+                    val isEffectiveRow = att.examMonth.equals(effItem.examMonth, ignoreCase = true)
+                    if (isEffectiveRow) {
+                        rows.add(
+                            ReportCourseRow(
+                                key = "eff_${effIdx}_$normCode",
+                                effectiveIndex = effIdx,
+                                item = effectiveUpdated
+                            )
+                        )
+                    } else {
+                        val rowKey = "att_${normCode}_${att.examMonth.trim()}_$attIdx"
+                        val overriddenGrade = otherAttemptGradeOverrides[rowKey] ?: att.grade
+                        rows.add(
+                            ReportCourseRow(
+                                key = rowKey,
+                                effectiveIndex = null,
+                                item = GradeHistoryItem(
+                                    courseCode = att.courseCode,
+                                    courseTitle = att.courseTitle.ifBlank { effItem.courseTitle },
+                                    courseType = att.courseType,
+                                    credits = att.credits,
+                                    grade = overriddenGrade,
+                                    examMonth = att.examMonth,
+                                    courseDistribution = effItem.courseDistribution
+                                )
+                            )
+                        )
+                    }
+                }
+            } else {
+                rows.add(
+                    ReportCourseRow(
+                        key = "eff_${effIdx}_$normCode",
+                        effectiveIndex = effIdx,
+                        item = effectiveUpdated
+                    )
+                )
+            }
         }
+        rows
     }
 
-    val pastSemesters = remember(effectiveHistory) {
-        effectiveHistory
-            .groupBy { it.second.examMonth.ifBlank { "Unknown" } }
+    val pastSemesters = remember(allReportRows) {
+        allReportRows
+            .groupBy { it.item.examMonth.ifBlank { "Unknown" } }
             .entries
             .sortedBy { parseExamMonth(it.key) }
             .map { (sem, list) ->
-                val items = list.map { it.second }
+                val items = list.map { it.item }
                 val totalCr = items.sumOf { it.credits.toDoubleOrNull() ?: 0.0 }
                 val countedCr = items
                     .filter { getGradePoints(it.grade) >= 0 }
@@ -599,7 +1845,7 @@ internal fun CGPACalculatorSubView(
             }
     }
 
-    // Live GPA & CGPA calculations (incorporates past grade overrides)
+    // CGPA calculation uses effective historical courses + current planned courses (no double counting)
     val calculation = remember(
         plannedCourses,
         effectiveBaselineCgpa,
@@ -620,7 +1866,7 @@ internal fun CGPACalculatorSubView(
             } else if (oldPts < 0 && newPts >= 0) {
                 pastPoints += newPts * cr
                 pastGradedCredits += cr
-            } else if (oldPts >= 0 && newPts < 0) {
+            } else if (oldPts >= 0) {
                 pastPoints = (pastPoints - oldPts * cr).coerceAtLeast(0.0)
                 pastGradedCredits = (pastGradedCredits - cr).coerceAtLeast(0.0)
             }
@@ -645,15 +1891,10 @@ internal fun CGPACalculatorSubView(
         Quadruple(projectedCgpa, semSgpa, totalCredits, Triple(pastPoints, pastGradedCredits, plannedGradedCredits))
     }
 
-    val projectedCgpa = calculation.first
-    val semesterSgpa = calculation.second
-    val totalGradedCredits = calculation.third
-    val pastPoints = calculation.fourth.first
-    val pastGradedCredits = calculation.fourth.second
-    val plannedGradedCredits = calculation.fourth.third
+    val (projectedCgpa, semesterSgpa, totalGradedCredits, pointStats) = calculation
+    val (pastPoints, pastGradedCredits, plannedGradedCredits) = pointStats
     val cgpaDelta = projectedCgpa - effectiveBaselineCgpa
 
-    // Combined semesters for Trend & Credits charts (past + current planned)
     val chartSemesters = remember(pastSemesters, plannedCourses, semesterSgpa, plannedGradedCredits) {
         val list = pastSemesters.toMutableList()
         if (plannedCourses.isNotEmpty()) {
@@ -671,10 +1912,9 @@ internal fun CGPACalculatorSubView(
         list
     }
 
-    // Combined Grade Distribution (past + current planned)
-    val gradeDistribution = remember(effectiveHistory, plannedCourses) {
+    val gradeDistribution = remember(allReportRows, plannedCourses) {
         val order = listOf("S", "A", "B", "C", "D", "E", "F", "P")
-        val allGrades = effectiveHistory.map { it.second.grade.trim().uppercase(Locale.ENGLISH) } +
+        val allGrades = allReportRows.map { it.item.grade.trim().uppercase(Locale.ENGLISH) } +
                 plannedCourses.map { it.grade.trim().uppercase(Locale.ENGLISH) }
         allGrades
             .groupingBy { it }
@@ -684,7 +1924,6 @@ internal fun CGPACalculatorSubView(
             .map { it.key to it.value }
     }
 
-    // Index of the "Past Semesters" header item in LazyColumn for "View more" scroll
     val hasChartsSection = chartSemesters.isNotEmpty() || gradeDistribution.isNotEmpty()
     val chartsItemCount = (if (hasChartsSection) 1 else 0) +
             (if (chartSemesters.isNotEmpty()) 2 else 0) +
@@ -698,7 +1937,6 @@ internal fun CGPACalculatorSubView(
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
-        // Top Bar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -728,6 +1966,7 @@ internal fun CGPACalculatorSubView(
                     isEditingBaseline = false
                     targetCgpa = scrapedCgpa
                     reportGradeOverrides.clear()
+                    otherAttemptGradeOverrides.clear()
                 }
             ) {
                 Icon(
@@ -750,7 +1989,7 @@ internal fun CGPACalculatorSubView(
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // 1. Hero Card (Semester GPA Ring + Projected CGPA + Editable Baseline)
+            // 1. Hero Card
             item {
                 Card(
                     modifier = Modifier
@@ -769,7 +2008,6 @@ internal fun CGPACalculatorSubView(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(18.dp)
                         ) {
-                            // Circular Semester GPA Gauge
                             val ringProgress = (semesterSgpa / 10.0).toFloat().coerceIn(0f, 1f)
                             Box(
                                 modifier = Modifier.size(96.dp),
@@ -795,7 +2033,6 @@ internal fun CGPACalculatorSubView(
                                 )
                             }
 
-                            // Right Column: Semester GPA & Projected CGPA
                             Column(
                                 modifier = Modifier.weight(1f),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -864,7 +2101,6 @@ internal fun CGPACalculatorSubView(
                             }
                         }
 
-                        // Baseline Row: CGPA X over Y credits + Edit / Done toggle
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1004,7 +2240,7 @@ internal fun CGPACalculatorSubView(
                 }
             }
 
-            // 3. Analytics Charts (Moved above Current Semester Predictor + "View more" button)
+            // 3. Analytics Charts + "View more" button
             if (hasChartsSection) {
                 item {
                     HorizontalDivider(
@@ -1073,7 +2309,7 @@ internal fun CGPACalculatorSubView(
                 }
             }
 
-            // 4. Courses Header + "Current semester" Button
+            // 4. Courses Header
             item {
                 HorizontalDivider(
                     modifier = Modifier.padding(vertical = 4.dp),
@@ -1309,7 +2545,7 @@ internal fun CGPACalculatorSubView(
                 }
             }
 
-            // 7. Interactive Past Semesters Breakdown
+            // 7. Interactive Past Semesters Breakdown (Semester-wise transcript)
             if (pastSemesters.isNotEmpty()) {
                 item {
                     HorizontalDivider(
@@ -1385,10 +2621,11 @@ internal fun CGPACalculatorSubView(
                                     }
                                 }
 
-                                sem.courses.forEachIndexed { rowIdx, (origIdx, course) ->
+                                sem.courses.forEachIndexed { rowIdx, reportRow ->
                                     if (rowIdx > 0) {
                                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
                                     }
+                                    val course = reportRow.item
                                     var gradeMenuExpanded by remember { mutableStateOf(false) }
                                     val pts = getGradePoints(course.grade)
                                     val gColor = getGradeColor(course.grade)
@@ -1454,10 +2691,15 @@ internal fun CGPACalculatorSubView(
                                                             )
                                                         },
                                                         onClick = {
-                                                            if (g == historyData[origIdx].grade) {
-                                                                reportGradeOverrides.remove(origIdx)
+                                                            val effIdx = reportRow.effectiveIndex
+                                                            if (effIdx != null) {
+                                                                if (g == historyData[effIdx].grade) {
+                                                                    reportGradeOverrides.remove(effIdx)
+                                                                } else {
+                                                                    reportGradeOverrides[effIdx] = g
+                                                                }
                                                             } else {
-                                                                reportGradeOverrides[origIdx] = g
+                                                                otherAttemptGradeOverrides[reportRow.key] = g
                                                             }
                                                             gradeMenuExpanded = false
                                                         }
@@ -1475,7 +2717,6 @@ internal fun CGPACalculatorSubView(
         }
     }
 
-    // Manual Target CGPA Edit Dialog
     if (showTargetEditDialog) {
         AlertDialog(
             onDismissRequest = { showTargetEditDialog = false },
@@ -1517,7 +2758,6 @@ internal fun CGPACalculatorSubView(
         )
     }
 
-    // Manual Credit Edit Dialog
     editingCreditCourse?.let { target ->
         AlertDialog(
             onDismissRequest = { editingCreditCourse = null },
@@ -1568,7 +2808,6 @@ internal fun CGPACalculatorSubView(
         )
     }
 
-    // Add Custom Course Dialog
     if (showAddCourseDialog) {
         AlertDialog(
             onDismissRequest = { showAddCourseDialog = false },
@@ -1707,7 +2946,6 @@ private fun GpaTrendChart(semesters: List<ReportSemester>) {
             val w = size.width - padX * 2
             val h = size.height - padY * 2
 
-            // Horizontal grid lines (0, 5, 10)
             listOf(0f, 0.5f, 1f).forEach { frac ->
                 val y = padY + h * frac
                 drawLine(gridColor, Offset(padX, y), Offset(size.width - padX, y), strokeWidth = 1.dp.toPx())
@@ -2158,11 +3396,13 @@ fun MarksExpandableCard(mark: UiMark) {
 @Composable
 fun AcademicHistoryView(
     historySummary: CGPASummary?,
-    historyData: List<GradeHistoryItem>,
+    effectiveHistoryData: List<GradeHistoryItem>,
+    transcriptHistoryData: List<GradeHistoryItem>,
     groupedHistory: Map<String, List<GradeHistoryItem>>,
-    expandedStates: MutableMap<String, Boolean>
+    expandedStates: MutableMap<String, Boolean>,
+    onCourseClick: (GradeHistoryItem) -> Unit = {}
 ) {
-    if (historyData.isEmpty()) {
+    if (transcriptHistoryData.isEmpty()) {
         return
     }
 
@@ -2176,8 +3416,12 @@ fun AcademicHistoryView(
 
     val listState = rememberLazyListState()
 
-    val semesterNameMap = remember(historyData) {
-        buildSemesterNameMap(context, historyData)
+    val attemptVersion by CourseAttemptStore.version
+    val attemptsMap = remember(effectiveHistoryData, attemptVersion) {
+        CourseAttemptStore.getAll(context)
+    }
+    val semesterNameMap = remember(effectiveHistoryData, attemptsMap) {
+        buildSemesterNameMap(context, effectiveHistoryData, attemptsMap)
     }
 
     val originalGpas = remember(groupedHistory) {
@@ -2199,8 +3443,8 @@ fun AcademicHistoryView(
         listOf("All") + sortedMonths.mapNotNull { formattedMonthsMap[it] }
     }
 
-    val filteredHistory = remember(historyData, searchQuery, selectedFilter, formattedMonthsMap) {
-        historyData.filter { item ->
+    val filteredHistory = remember(transcriptHistoryData, searchQuery, selectedFilter, formattedMonthsMap) {
+        transcriptHistoryData.filter { item ->
             val q = searchQuery.trim().lowercase()
             val matchesSearch = q.isBlank() ||
                     item.courseCode.lowercase().contains(q) ||
@@ -2222,9 +3466,9 @@ fun AcademicHistoryView(
             .groupBy { it.examMonth.ifEmpty { "Unknown Semester" } }
     }
 
-    val gradeCounts = remember(historyData) {
+    val gradeCounts = remember(effectiveHistoryData) {
         val counts = mutableMapOf<String, Int>()
-        historyData.forEach { item ->
+        effectiveHistoryData.forEach { item ->
             val grade = item.grade.trim().uppercase()
             counts[grade] = (counts[grade] ?: 0) + 1
         }
@@ -2413,7 +3657,6 @@ fun AcademicHistoryView(
         sortedAndGroupedHistory.forEach { (examMonth, courses) ->
             val isExpanded = expandedStates[examMonth] ?: true
             val semGpa = originalGpas[examMonth] ?: 0.0
-
             val formattedMonth = formattedMonthsMap[examMonth] ?: examMonth
 
             item {
@@ -2474,8 +3717,14 @@ fun AcademicHistoryView(
             }
 
             if (isExpanded) {
-                items(courses) { course ->
-                    EnhancedHistoryItemCard(course)
+                items(
+                    items = courses,
+                    key = { "${it.courseCode}_${it.examMonth}_${it.grade}" }
+                ) { course ->
+                    EnhancedHistoryItemCard(
+                        course = course,
+                        onClick = { onCourseClick(course) }
+                    )
                 }
             }
         }
@@ -2483,14 +3732,18 @@ fun AcademicHistoryView(
 }
 
 @Composable
-fun EnhancedHistoryItemCard(course: GradeHistoryItem) {
+fun EnhancedHistoryItemCard(
+    course: GradeHistoryItem,
+    onClick: () -> Unit = {}
+) {
     val gradeColor = getGradeColor(course.grade)
     val isLabOrProject = course.courseType.contains("Lab", true) || course.courseType.contains("Project", true)
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp)),
+            .clip(RoundedCornerShape(16.dp))
+            .clickable { onClick() },
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
     ) {
@@ -2502,7 +3755,7 @@ fun EnhancedHistoryItemCard(course: GradeHistoryItem) {
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f).padding(end = 16.dp)
+                    modifier = Modifier.weight(1f).padding(end = 12.dp)
                 ) {
                     Box(
                         modifier = Modifier
@@ -2537,7 +3790,10 @@ fun EnhancedHistoryItemCard(course: GradeHistoryItem) {
                     }
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     Box(
                         modifier = Modifier
                             .background(gradeColor.copy(alpha = 0.1f), RoundedCornerShape(10.dp))
@@ -2552,6 +3808,13 @@ fun EnhancedHistoryItemCard(course: GradeHistoryItem) {
                             fontWeight = FontWeight.Bold
                         )
                     }
+
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = "View Grade Details",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
         }

@@ -67,9 +67,8 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.User
 import com.composables.icons.lucide.LayoutGrid
 import com.vtop.core.*
-import com.vtop.logic.AttendanceSyncEngine
-import com.vtop.logic.AttendanceSyncMode
-import com.vtop.logic.TimetableParser
+import com.vtop.logic.*
+import com.vtop.models.*
 import com.vtop.services.TTExport
 import com.vtop.sync.SyncManager
 import com.vtop.ui.components.OtpForm
@@ -119,6 +118,7 @@ fun MainScreen(
     val sharedPrefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
     var showHolidaysOnHome by remember { mutableStateOf(sharedPrefs.getBoolean("SHOW_HOLIDAYS_ON_HOME", true)) }
     var showCalculator by remember { mutableStateOf(false) }
+    var selectedGradeDetailCourse by remember { mutableStateOf<GradeHistoryItem?>(null) }
 
     LaunchedEffect(Unit) {
         if (sharedPrefs.contains("CUSTOM_ACCENT")) ThemeManager.customAccent.value = Color(sharedPrefs.getInt("CUSTOM_ACCENT", 0))
@@ -156,7 +156,7 @@ fun MainScreen(
         Unit
     }
 
-    BackHandler(enabled = !showCalculator && (uiState.showPortal || (uiState.currentTab != "HOME" && !uiState.isProfileSubPage))) {
+    BackHandler(enabled = !showCalculator && selectedGradeDetailCourse == null && (uiState.showPortal || (uiState.currentTab != "HOME" && !uiState.isProfileSubPage))) {
         if (uiState.showPortal) viewModel.updatePortalVisibility(false) else viewModel.updateTab("HOME")
     }
 
@@ -203,7 +203,8 @@ fun MainScreen(
                             historySummary = historySummary,
                             historyData = historyItems,
                             timetable = timetable,
-                            onOpenCalculator = { showCalculator = true }
+                            onOpenCalculator = { showCalculator = true },
+                            onSelectCourse = { selectedGradeDetailCourse = it }
                         )
                     }
                     "OUTINGS" -> { VtopOutingsTab(outingsData = outingsData, handler = outingHandler) }
@@ -442,6 +443,20 @@ fun MainScreen(
                 timetable = timetable,
                 onBack = { showCalculator = false }
             )
+        }
+        AnimatedVisibility(
+            visible = selectedGradeDetailCourse != null,
+            enter = fadeIn(tween(150)) + slideInVertically(tween(300)) { it / 8 },
+            exit = fadeOut(tween(150)) + slideOutVertically(tween(300)) { it / 8 },
+            modifier = Modifier.fillMaxSize().zIndex(50f)
+        ) {
+            selectedGradeDetailCourse?.let { courseItem ->
+                GradeDetailSubView(
+                    course = courseItem,
+                    historyData = historyItems,
+                    onBack = { selectedGradeDetailCourse = null }
+                )
+            }
         }
     }
 }
