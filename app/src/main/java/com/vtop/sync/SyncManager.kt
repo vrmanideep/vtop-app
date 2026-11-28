@@ -287,7 +287,7 @@ object SyncManager {
             Vault.saveSemesterOptions(context, mappedOptions)
             val marksData = MarksParser.parseMarks(marksHtml)
             val gradesData = MarksParser.parseGrades(gradesHtml)
-            val historyPair = MarksParser.parseHistory(historyHtml)
+            val historyPair = MarksParser.parseHistory(historyHtml, context)
 
             MarksRepository.update(context, marksData)
             GradesRepository.updateGrades(context, gradesData)
