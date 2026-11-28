@@ -1409,10 +1409,10 @@ fun CourseBunkCard(
     val activeComponent = if (selectedTab == "Theory") course.theory else course.lab
     if (activeComponent == null) return
 
-    val isDanger = activeComponent.projectedPct < 75f && !activeComponent.noData
+    val isDanger = activeComponent.projectedPct < 75f && activeComponent.projectedTotal > 0
 
     val statusColor = when {
-        activeComponent.noData -> Color(0xFFF59E0B)
+        activeComponent.noData && activeComponent.projectedTotal == 0 -> Color(0xFFF59E0B)
         isDanger -> MaterialTheme.colorScheme.error
         else -> Color(0xFF10B981)
     }
@@ -1435,22 +1435,38 @@ fun CourseBunkCard(
                     }
                 }
 
-                Box(
-                    modifier = Modifier
-                        .background(statusColor.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = when {
-                            activeComponent.noData -> "NO DATA"
-                            isDanger -> "BELOW 75%"
-                            else -> "SAFE"
-                        },
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = statusColor,
-                        letterSpacing = 0.5.sp
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (activeComponent.noData) {
+                        Box(
+                            modifier = Modifier
+                                .background(Color(0xFFF59E0B).copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = "NO DATA",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFF59E0B),
+                                letterSpacing = 0.5.sp
+                            )
+                        }
+                    }
+
+                    if (activeComponent.projectedTotal > 0) {
+                        Box(
+                            modifier = Modifier
+                                .background(statusColor.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = if (isDanger) "BELOW 75%" else "SAFE",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = statusColor,
+                                letterSpacing = 0.5.sp
+                            )
+                        }
+                    }
                 }
             }
 
@@ -1488,203 +1504,203 @@ fun CourseBunkCard(
 
             if (activeComponent.noData) {
                 Text(
-                    text = "Attendance history unavailable.",
-                    color = statusColor,
-                    fontSize = 13.sp,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp)
+                    text = "Attendance history unavailable — projecting from 0/0.",
+                    color = Color(0xFFF59E0B),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(bottom = 12.dp)
                 )
-            } else {
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("CURRENT", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 0.5.sp)
-                        Spacer(Modifier.height(4.dp))
-                        Text("${activeComponent.currentPct.roundToInt()}%", fontSize = 20.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
-                        Text("${activeComponent.currentAttended} / ${activeComponent.currentTotal}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+            }
 
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("UNTIL $examName", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 0.5.sp)
-                        Spacer(Modifier.height(4.dp))
-                        Text("${activeComponent.projectedPct.roundToInt()}%", fontSize = 20.sp, fontWeight = FontWeight.Black, color = statusColor)
-                        Text("${activeComponent.projectedAttended} / ${activeComponent.projectedTotal}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("CURRENT", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 0.5.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text("${activeComponent.currentPct.roundToInt()}%", fontSize = 20.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+                    Text("${activeComponent.currentAttended} / ${activeComponent.currentTotal}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
 
-                Spacer(Modifier.height(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("UNTIL $examName", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 0.5.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text("${activeComponent.projectedPct.roundToInt()}%", fontSize = 20.sp, fontWeight = FontWeight.Black, color = statusColor)
+                    Text("${activeComponent.projectedAttended} / ${activeComponent.projectedTotal}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
 
-                if (activeComponent.selectedOccurrences.isNotEmpty()) {
-                    val classStr = if (activeComponent.plannedBunks == 1) "class" else "classes"
+            Spacer(Modifier.height(16.dp))
 
-                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().clickable { bunksExpanded = !bunksExpanded }.padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = buildAnnotatedString {
-                                    withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary)) {
-                                        append("Bunking ${activeComponent.plannedBunks}")
-                                    }
-                                    append(" $classStr")
-                                },
-                                fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Icon(
-                                imageVector = if (bunksExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                                contentDescription = "Expand",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+            if (activeComponent.selectedOccurrences.isNotEmpty()) {
+                val classStr = if (activeComponent.plannedBunks == 1) "class" else "classes"
 
-                        if (bunksExpanded) {
-                            Spacer(Modifier.height(8.dp))
-                            activeComponent.selectedOccurrences.forEach { occurrence ->
-                                val isBunking = if (occurrence.isPosted) {
-                                    !(postedOverrides[occurrence.key] ?: true)
-                                } else {
-                                    val hasOverride = occurrence.key in attendanceOverrides
-                                    if (occurrence.isDefaultBunk) !hasOverride else hasOverride
+                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { bunksExpanded = !bunksExpanded }.padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = buildAnnotatedString {
+                                withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary)) {
+                                    append("Bunking ${activeComponent.plannedBunks}")
                                 }
-                                val isAttending = !isBunking
+                                append(" $classStr")
+                            },
+                            fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Icon(
+                            imageVector = if (bunksExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = "Expand",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
 
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp, horizontal = 4.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        val dFormatter = DateTimeFormatter.ofPattern("dd MMM · EEEE", Locale.ENGLISH)
-                                        Text(
-                                            occurrence.date.format(dFormatter),
-                                            fontSize = 12.sp,
-                                            color = if (!occurrence.isDefaultBunk) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        val slotStr = if (occurrence.weight == 1) occurrence.slot else "${occurrence.slot} · ${occurrence.weight} classes"
-                                        val statusTag = when {
-                                            occurrence.isPosted -> " (Posted override)"
-                                            !occurrence.isDefaultBunk -> " (Not posted)"
-                                            else -> ""
+                    if (bunksExpanded) {
+                        Spacer(Modifier.height(8.dp))
+                        activeComponent.selectedOccurrences.forEach { occurrence ->
+                            val isBunking = if (occurrence.isPosted) {
+                                !(postedOverrides[occurrence.key] ?: true)
+                            } else {
+                                val hasOverride = occurrence.key in attendanceOverrides
+                                if (occurrence.isDefaultBunk) !hasOverride else hasOverride
+                            }
+                            val isAttending = !isBunking
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp, horizontal = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    val dFormatter = DateTimeFormatter.ofPattern("dd MMM · EEEE", Locale.ENGLISH)
+                                    Text(
+                                        occurrence.date.format(dFormatter),
+                                        fontSize = 12.sp,
+                                        color = if (!occurrence.isDefaultBunk) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    val slotStr = if (occurrence.weight == 1) occurrence.slot else "${occurrence.slot} · ${occurrence.weight} classes"
+                                    val statusTag = when {
+                                        occurrence.isPosted -> " (Posted override)"
+                                        !occurrence.isDefaultBunk -> " (Not posted)"
+                                        else -> ""
+                                    }
+                                    Text(
+                                        text = "$slotStr$statusTag",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
+                                Button(
+                                    onClick = {
+                                        if (occurrence.isPosted) {
+                                            onPostedOverrideChange(occurrence, isBunking)
+                                        } else {
+                                            onAttendanceOverrideChange(occurrence, isBunking)
                                         }
-                                        Text(
-                                            text = "$slotStr$statusTag",
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-
-                                    Button(
-                                        onClick = {
-                                            if (occurrence.isPosted) {
-                                                onPostedOverrideChange(occurrence, isBunking)
-                                            } else {
-                                                onAttendanceOverrideChange(occurrence, isBunking)
-                                            }
-                                        },
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (isAttending) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
-                                            contentColor = if (isAttending) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                                        ),
-                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
-                                        modifier = Modifier.height(32.dp),
-                                        shape = RoundedCornerShape(8.dp),
-                                        elevation = null
-                                    ) {
-                                        Text(
-                                            text = if (isAttending) "Bunk" else "Attend",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isAttending) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                                        contentColor = if (isAttending) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(32.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    elevation = null
+                                ) {
+                                    Text(
+                                        text = if (isAttending) "Bunk" else "Attend",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
                             }
-                            Spacer(Modifier.height(4.dp))
                         }
-                    }
-
-                    if (isDanger) {
-                        val overBy = floor((0.75 * activeComponent.projectedTotal) - activeComponent.projectedAttended).toInt().coerceAtLeast(1)
-                        val overByStr = if (overBy == 1) "class" else "classes"
-                        Text(
-                            text = buildAnnotatedString {
-                                append("Over safe limit by ")
-                                withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary)) {
-                                    append("$overBy")
-                                }
-                                append(" $overByStr")
-                            },
-                            fontSize = 13.sp, fontWeight = FontWeight.Bold, color = statusColor, modifier = Modifier.padding(vertical = 2.dp)
-                        )
-                    } else {
-                        val safeStr = if (activeComponent.additionalSafeBunks == 1) "class" else "classes"
-                        Text(
-                            text = buildAnnotatedString {
-                                append("Can still bunk ")
-                                withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary)) {
-                                    append("${activeComponent.additionalSafeBunks}")
-                                }
-                                append(" more $safeStr")
-                            },
-                            fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(vertical = 2.dp)
-                        )
-                    }
-                } else {
-                    if (isDanger) {
-                        val toAttend = floor((0.75 * activeComponent.projectedTotal) - activeComponent.projectedAttended).toInt().coerceAtLeast(1)
-                        val attendStr = if (toAttend == 1) "class" else "classes"
-                        Text(
-                            text = buildAnnotatedString {
-                                append("Must attend next ")
-                                withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary)) {
-                                    append("$toAttend")
-                                }
-                                append(" $attendStr")
-                            },
-                            fontSize = 13.sp, fontWeight = FontWeight.Bold, color = statusColor, modifier = Modifier.padding(vertical = 2.dp)
-                        )
-                    } else {
-                        val safeStr = if (activeComponent.additionalSafeBunks == 1) "class" else "classes"
-                        Text(
-                            text = buildAnnotatedString {
-                                append("Can ")
-                                withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary)) {
-                                    append("bunk ${activeComponent.additionalSafeBunks}")
-                                }
-                                append(" $safeStr")
-                            },
-                            fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(vertical = 2.dp)
-                        )
+                        Spacer(Modifier.height(4.dp))
                     }
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.Bottom
-                ) {
-                    val remStr = if (activeComponent.remainingClasses == 1) "class" else "classes"
+                if (isDanger) {
+                    val overBy = floor((0.75 * activeComponent.projectedTotal) - activeComponent.projectedAttended).toInt().coerceAtLeast(1)
+                    val overByStr = if (overBy == 1) "class" else "classes"
                     Text(
                         text = buildAnnotatedString {
+                            append("Over safe limit by ")
                             withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary)) {
-                                append("${activeComponent.remainingClasses}")
+                                append("$overBy")
                             }
-                            append(" $remStr remaining")
+                            append(" $overByStr")
                         },
-                        fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                        fontSize = 13.sp, fontWeight = FontWeight.Bold, color = statusColor, modifier = Modifier.padding(vertical = 2.dp)
                     )
-
+                } else {
+                    val safeStr = if (activeComponent.additionalSafeBunks == 1) "class" else "classes"
                     Text(
-                        text = "View Calculation",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .clickable { onViewCalculation(activeComponent.displayType) }
-                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                        text = buildAnnotatedString {
+                            append("Can still bunk ")
+                            withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary)) {
+                                append("${activeComponent.additionalSafeBunks}")
+                            }
+                            append(" more $safeStr")
+                        },
+                        fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(vertical = 2.dp)
                     )
                 }
+            } else {
+                if (isDanger) {
+                    val toAttend = floor((0.75 * activeComponent.projectedTotal) - activeComponent.projectedAttended).toInt().coerceAtLeast(1)
+                    val attendStr = if (toAttend == 1) "class" else "classes"
+                    Text(
+                        text = buildAnnotatedString {
+                            append("Must attend next ")
+                            withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary)) {
+                                append("$toAttend")
+                            }
+                            append(" $attendStr")
+                        },
+                        fontSize = 13.sp, fontWeight = FontWeight.Bold, color = statusColor, modifier = Modifier.padding(vertical = 2.dp)
+                    )
+                } else {
+                    val safeStr = if (activeComponent.additionalSafeBunks == 1) "class" else "classes"
+                    Text(
+                        text = buildAnnotatedString {
+                            append("Can ")
+                            withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary)) {
+                                append("bunk ${activeComponent.additionalSafeBunks}")
+                            }
+                            append(" $safeStr")
+                        },
+                        fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(vertical = 2.dp)
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Bottom
+            ) {
+                val remStr = if (activeComponent.remainingClasses == 1) "class" else "classes"
+                Text(
+                    text = buildAnnotatedString {
+                        withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary)) {
+                            append("${activeComponent.remainingClasses}")
+                        }
+                        append(" $remStr remaining")
+                    },
+                    fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Text(
+                    text = "View Calculation",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .clickable { onViewCalculation(activeComponent.displayType) }
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                )
             }
         }
     }
