@@ -19,6 +19,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -43,6 +44,10 @@ import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material.ExperimentalMaterialApi
+import androidx.compose.material.pullrefresh.PullRefreshIndicator
+import androidx.compose.material.pullrefresh.pullRefresh
+import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vtop.logic.ExamAttendanceProjector
 import com.vtop.models.*
+import com.vtop.sync.SyncManager
 import com.vtop.utils.AnalyticsManager
 import java.time.Instant
 import java.time.LocalDate
@@ -418,7 +424,7 @@ fun getCalendarContext(context: Context, selectedSemester: String): CalendarCont
 // --- Main Composable ---
 
 @SuppressLint("NewApi")
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterialApi::class)
 @Composable
 fun BunkSimulatorTab(
     timetable: TimetableModel,
@@ -430,6 +436,12 @@ fun BunkSimulatorTab(
 
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("VTOP_PREFS", Context.MODE_PRIVATE) }
+
+    val isSyncing by SyncManager.isSyncing.collectAsState()
+    val pullRefreshState = rememberPullRefreshState(
+        refreshing = isSyncing,
+        onRefresh = { SyncManager.performSync(context, priorityTab = "ATTENDANCE") }
+    )
 
     val (semesterId) = remember(selectedSemester) { com.vtop.utils.Vault.getSelectedSemester(context) }
     val academicCalendar = remember(selectedSemester) { com.vtop.utils.Vault.getAcademicCalendar(context, semesterId ?: "") }
@@ -528,7 +540,7 @@ fun BunkSimulatorTab(
 
                 var remaining = 0
                 var plannedBunks = 0
-                var futureBunks = 0 // Tracks only future bunks for accurate remaining safe bunks
+                var futureBunks = 0
                 var simulatedAttended = attended
 
                 val selectedOccurrences = mutableListOf<BunkOccurrence>()
@@ -574,7 +586,6 @@ fun BunkSimulatorTab(
                                         val wasAttended = isActuallyPresent || isActuallyOD
                                         val finalIsPresent = overriddenStatus ?: wasAttended
 
-                                        // Accurately adjust attendance only if manually changed
                                         if (wasAttended && !finalIsPresent) {
                                             simulatedAttended -= sessionWeight
                                         } else if (!wasAttended && finalIsPresent) {
@@ -587,7 +598,6 @@ fun BunkSimulatorTab(
                                             bunkOccs += occurrence
                                         }
 
-                                        // Only add to the card dropdown if explicitly overridden
                                         if (overriddenStatus != null) {
                                             selectedOccurrences += occurrence
                                             if (!finalIsPresent) plannedBunks += sessionWeight
@@ -635,7 +645,6 @@ fun BunkSimulatorTab(
                     curr = curr.plusDays(1)
                 }
 
-                // Final accurate projection mapping
                 val projectedAttended = simulatedAttended
                 val projectedTotal = total + remaining
                 val projectedPct = if (projectedTotal > 0) projectedAttended.toFloat() / projectedTotal * 100f else 0f
@@ -686,7 +695,7 @@ fun BunkSimulatorTab(
             viewingDisplayType = null
         }
 
-        val isProjectedDanger = activeDetailsComponent.projectedPct < 75f
+        val isProjectedDanger = activeDetailsComponent.projectedPct < 75f && activeDetailsComponent.projectedTotal > 0
 
         Column(
             modifier = Modifier
@@ -736,229 +745,250 @@ fun BunkSimulatorTab(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
 
-            Column(
+            Box(
                 modifier = Modifier
+                    .weight(1f)
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .padding(top = 12.dp)
+                    .pullRefresh(pullRefreshState)
             ) {
-                // Header Card: Starting Point
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text("STARTING POINT", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.height(4.dp))
-                        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                            Text(activeDetailsComponent.auditStartDateStr, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                            Text("${activeDetailsComponent.auditStartAttended} / ${activeDetailsComponent.auditStartTotal}", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                        }
-                    }
-                }
-
-                // Toggle Button & Header
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("CLASS BREAKDOWN", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    TextButton(
-                        onClick = { showPostedClassesInDetails = !showPostedClassesInDetails },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                        modifier = Modifier.height(26.dp)
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                            .padding(top = 12.dp)
                     ) {
-                        Text(if (showPostedClassesInDetails) "Hide Posted" else "View Posted", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-
-                if (showPostedClassesInDetails) {
-                    Text(
-                        text = "Tip: Tap a posted class to override its status.",
-                        fontSize = 10.sp,
-                        fontStyle = FontStyle.Italic,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 6.dp)
-                    )
-                }
-
-                // Table Header
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("DATE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(0.22f))
-                    Text("DETAILS", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(0.48f))
-                    Text("ACTION", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(0.30f), textAlign = TextAlign.End)
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            }
-
-            // Scrollable Table Body
-            val visibleLog = if (showPostedClassesInDetails) activeDetailsComponent.auditLog else activeDetailsComponent.auditLog.filter { !it.isPosted }
-
-            if (visibleLog.isEmpty()) {
-                Box(
-                    modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "No classes found before target date.",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    items(visibleLog) { entry ->
-                        val isInteractive = entry.occurrences.isNotEmpty()
-                        val impactStr = if (entry.isBunk) "0" else "+${entry.deltaClasses}"
-                        val isOD = entry.reason == "On Duty"
-
-                        val rowColor = when {
-                            entry.isBunk -> MaterialTheme.colorScheme.error
-                            isOD -> Color(0xFF3B82F6)
-                            else -> MaterialTheme.colorScheme.primary
+                        // Header Card: Starting Point
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("STARTING POINT", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.height(4.dp))
+                                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                                    Text(activeDetailsComponent.auditStartDateStr, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                    Text("${activeDetailsComponent.auditStartAttended} / ${activeDetailsComponent.auditStartTotal}", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                }
+                            }
                         }
 
-                        val iconTint = when {
-                            entry.isBunk -> MaterialTheme.colorScheme.error
-                            isOD -> Color(0xFF3B82F6)
-                            else -> Color(0xFF10B981)
-                        }
-
+                        // Toggle Button & Header
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(rowColor.copy(alpha = 0.06f))
-                                .border(
-                                    width = 1.dp,
-                                    color = rowColor.copy(alpha = 0.16f),
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-                                .padding(horizontal = 10.dp, vertical = 10.dp),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Date Column
-                            Column(modifier = Modifier.weight(0.22f)) {
-                                Text(entry.dateStr, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                                Text(entry.dayOfWeek, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("CLASS BREAKDOWN", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            TextButton(
+                                onClick = { showPostedClassesInDetails = !showPostedClassesInDetails },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                modifier = Modifier.height(26.dp)
+                            ) {
+                                Text(if (showPostedClassesInDetails) "Hide Posted" else "View Posted", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
+                        }
 
-                            // Details Column
-                            Row(modifier = Modifier.weight(0.48f), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = if (entry.isBunk) Icons.Default.Close else Icons.Default.Check,
-                                    contentDescription = null,
-                                    tint = iconTint,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = entry.reason,
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
+                        if (showPostedClassesInDetails) {
+                            Text(
+                                text = "Tip: Tap a posted class to override its status.",
+                                fontSize = 10.sp,
+                                fontStyle = FontStyle.Italic,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 6.dp)
+                            )
+                        }
 
-                            // Action Column
-                            Box(modifier = Modifier.weight(0.30f), contentAlignment = Alignment.CenterEnd) {
-                                if (isInteractive) {
-                                    val isAttending = !entry.isBunk
-                                    Surface(
-                                        color = if (isAttending) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
-                                        shape = RoundedCornerShape(6.dp),
-                                        modifier = Modifier.clickable {
-                                            val newAttendState = entry.isBunk
-                                            entry.occurrences.forEach { occ ->
-                                                if (entry.isPosted) {
-                                                    postedOverrides = postedOverrides + (occ.key to newAttendState)
-                                                } else {
-                                                    val wantsToBunk = !newAttendState
-                                                    val needsOverride = occ.isDefaultBunk != wantsToBunk
-                                                    attendanceOverrides = if (needsOverride) {
-                                                        attendanceOverrides + occ.key
-                                                    } else {
-                                                        attendanceOverrides - occ.key
+                        // Table Header
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("DATE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(0.22f))
+                            Text("DETAILS", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(0.48f))
+                            Text("ACTION", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(0.30f), textAlign = TextAlign.End)
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    }
+
+                    // Scrollable Table Body
+                    val visibleLog = if (showPostedClassesInDetails) activeDetailsComponent.auditLog else activeDetailsComponent.auditLog.filter { !it.isPosted }
+
+                    if (visibleLog.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState())
+                                .padding(24.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "No classes found before target date.",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(visibleLog) { entry ->
+                                val isInteractive = entry.occurrences.isNotEmpty()
+                                val impactStr = if (entry.isBunk) "0" else "+${entry.deltaClasses}"
+                                val isOD = entry.reason == "On Duty"
+
+                                val rowColor = when {
+                                    entry.isBunk -> MaterialTheme.colorScheme.error
+                                    isOD -> Color(0xFF3B82F6)
+                                    else -> MaterialTheme.colorScheme.primary
+                                }
+
+                                val iconTint = when {
+                                    entry.isBunk -> MaterialTheme.colorScheme.error
+                                    isOD -> Color(0xFF3B82F6)
+                                    else -> Color(0xFF10B981)
+                                }
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(rowColor.copy(alpha = 0.06f))
+                                        .border(
+                                            width = 1.dp,
+                                            color = rowColor.copy(alpha = 0.16f),
+                                            shape = RoundedCornerShape(10.dp)
+                                        )
+                                        .padding(horizontal = 10.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // Date Column
+                                    Column(modifier = Modifier.weight(0.22f)) {
+                                        Text(entry.dateStr, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                        Text(entry.dayOfWeek, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+
+                                    // Details Column
+                                    Row(modifier = Modifier.weight(0.48f), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = if (entry.isBunk) Icons.Default.Close else Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = iconTint,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = entry.reason,
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+
+                                    // Action Column
+                                    Box(modifier = Modifier.weight(0.30f), contentAlignment = Alignment.CenterEnd) {
+                                        if (isInteractive) {
+                                            val isAttending = !entry.isBunk
+                                            Surface(
+                                                color = if (isAttending) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                                                shape = RoundedCornerShape(6.dp),
+                                                modifier = Modifier.clickable {
+                                                    val newAttendState = entry.isBunk
+                                                    entry.occurrences.forEach { occ ->
+                                                        if (entry.isPosted) {
+                                                            postedOverrides = postedOverrides + (occ.key to newAttendState)
+                                                        } else {
+                                                            val wantsToBunk = !newAttendState
+                                                            val needsOverride = occ.isDefaultBunk != wantsToBunk
+                                                            attendanceOverrides = if (needsOverride) {
+                                                                attendanceOverrides + occ.key
+                                                            } else {
+                                                                attendanceOverrides - occ.key
+                                                            }
+                                                        }
                                                     }
                                                 }
+                                            ) {
+                                                if (entry.isPosted) {
+                                                    Text(
+                                                        text = impactStr,
+                                                        fontSize = 12.sp,
+                                                        fontWeight = FontWeight.Black,
+                                                        color = iconTint,
+                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                                    )
+                                                } else {
+                                                    Text(
+                                                        text = if (isAttending) "- Bunk" else "+ Add",
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (isAttending) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                                    )
+                                                }
                                             }
-                                        }
-                                    ) {
-                                        if (entry.isPosted) {
-                                            Text(
-                                                text = impactStr,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Black,
-                                                color = iconTint,
-                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                            )
                                         } else {
-                                            Text(
-                                                text = if (isAttending) "- Bunk" else "+ Add",
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = if (isAttending) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                            )
+                                            Text("-", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
-                                } else {
-                                    Text("-", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+
+                    // Pinned Footer Card: Final Projected
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                    ) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Text(
+                                    text = "FINAL PROJECTED · UNTIL $examName",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Row(
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.Bottom
+                                ) {
+                                    Text(
+                                        text = "${activeDetailsComponent.projectedPct.roundToInt()}%",
+                                        fontSize = 24.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = if (isProjectedDanger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                    Text(
+                                        text = "${activeDetailsComponent.projectedAttended} / ${activeDetailsComponent.projectedTotal}",
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            // Pinned Footer Card: Final Projected
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
-            ) {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Text(
-                            text = "FINAL PROJECTED · UNTIL $examName",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Row(
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.Bottom
-                        ) {
-                            Text(
-                                text = "${activeDetailsComponent.projectedPct.roundToInt()}%",
-                                fontSize = 24.sp,
-                                fontWeight = FontWeight.Black,
-                                color = if (isProjectedDanger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                            Text(
-                                text = "${activeDetailsComponent.projectedAttended} / ${activeDetailsComponent.projectedTotal}",
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
-                    }
-                }
+                PullRefreshIndicator(
+                    refreshing = isSyncing,
+                    state = pullRefreshState,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    backgroundColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.primary
+                )
             }
         }
         return
@@ -1161,183 +1191,198 @@ fun BunkSimulatorTab(
             }
         }
 
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = 8.dp, bottom = 120.dp)
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .pullRefresh(pullRefreshState)
         ) {
-            item {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    if (calCtx.startDate != LocalDate.MIN) {
-                        if (today.isBefore(calCtx.startDate)) {
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer), modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp), shape = RoundedCornerShape(12.dp)) {
-                                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Info, null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Text("Classes begin on ${calCtx.startDate.format(DateTimeFormatter.ofPattern("dd MMM yyyy"))}.", color = MaterialTheme.colorScheme.onSecondaryContainer, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        } else if (today.isAfter(calCtx.trueEndDate)) {
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)), modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp), shape = RoundedCornerShape(12.dp)) {
-                                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.onErrorContainer)
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Text("${calCtx.semesterName} is completely finished.", color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-
-                    Text(
-                        text = "SELECT DAYS TO BUNK",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        letterSpacing = 0.5.sp,
-                        modifier = Modifier.padding(start = 20.dp, top = 8.dp, bottom = 4.dp)
-                    )
-
-                    val quickDates = listOf(
-                        "Today" to today,
-                        "Tomorrow" to today.plusDays(1),
-                        today.plusDays(2).dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() } to today.plusDays(2)
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        quickDates.forEach { (label, date) ->
-                            val isSelected = selectedDates.contains(date)
-                            val count = getSimulatableClassCount(date)
-                            val chipLabel = if (count > 0) "$label · $count classes" else "$label · No classes"
-
-                            FilterChip(
-                                selected = isSelected,
-                                onClick = {
-                                    if (isSelected) {
-                                        selectedDates = selectedDates - date
-                                        attendanceOverrides = attendanceOverrides.filterNot { key ->
-                                            key.startsWith("$date|")
-                                        }.toSet()
-                                    } else {
-                                        selectedDates = selectedDates + date
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(top = 8.dp, bottom = 120.dp)
+            ) {
+                item {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        if (calCtx.startDate != LocalDate.MIN) {
+                            if (today.isBefore(calCtx.startDate)) {
+                                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer), modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp), shape = RoundedCornerShape(12.dp)) {
+                                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Info, null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Text("Classes begin on ${calCtx.startDate.format(DateTimeFormatter.ofPattern("dd MMM yyyy"))}.", color = MaterialTheme.colorScheme.onSecondaryContainer, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                     }
-                                },
-                                label = { Text(chipLabel, fontWeight = FontWeight.Bold) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                                ),
-                                shape = RoundedCornerShape(50)
-                            )
+                                }
+                            } else if (today.isAfter(calCtx.trueEndDate)) {
+                                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)), modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp), shape = RoundedCornerShape(12.dp)) {
+                                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.onErrorContainer)
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Text("${calCtx.semesterName} is completely finished.", color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
                         }
 
-                        FilterChip(
-                            selected = false,
-                            onClick = { showBunkDatePicker = true },
-                            label = { Text("+ Pick Date", fontWeight = FontWeight.Bold) },
-                            leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = "Calendar", modifier = Modifier.size(16.dp)) },
-                            shape = RoundedCornerShape(50)
+                        Text(
+                            text = "SELECT DAYS TO BUNK",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            letterSpacing = 0.5.sp,
+                            modifier = Modifier.padding(start = 20.dp, top = 8.dp, bottom = 4.dp)
                         )
-                    }
 
-                    if (selectedDates.isNotEmpty() || postedOverrides.isNotEmpty()) {
+                        val quickDates = listOf(
+                            "Today" to today,
+                            "Tomorrow" to today.plusDays(1),
+                            today.plusDays(2).dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() } to today.plusDays(2)
+                        )
+
                         Row(
                             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            selectedDates.sorted().forEach { date ->
-                                Row(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
-                                        .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                                        .clickable {
+                            quickDates.forEach { (label, date) ->
+                                val isSelected = selectedDates.contains(date)
+                                val count = getSimulatableClassCount(date)
+                                val chipLabel = if (count > 0) "$label · $count classes" else "$label · No classes"
+
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        if (isSelected) {
                                             selectedDates = selectedDates - date
                                             attendanceOverrides = attendanceOverrides.filterNot { key ->
                                                 key.startsWith("$date|")
                                             }.toSet()
+                                        } else {
+                                            selectedDates = selectedDates + date
                                         }
-                                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(text = date.format(DateTimeFormatter.ofPattern("dd MMM", Locale.ENGLISH)), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Icon(Icons.Default.Close, contentDescription = "Remove", modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
-                                }
+                                    },
+                                    label = { Text(chipLabel, fontWeight = FontWeight.Bold) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                    ),
+                                    shape = RoundedCornerShape(50)
+                                )
                             }
 
-                            if (postedOverrides.isNotEmpty()) {
-                                val count = postedOverrides.size
-                                Row(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f))
-                                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                                        .clickable { postedOverrides = emptyMap() }
-                                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "$count posted override${if (count == 1) "" else "s"}",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Icon(Icons.Default.Close, contentDescription = "Clear posted overrides", modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                                }
-                            }
+                            FilterChip(
+                                selected = false,
+                                onClick = { showBunkDatePicker = true },
+                                label = { Text("+ Pick Date", fontWeight = FontWeight.Bold) },
+                                leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = "Calendar", modifier = Modifier.size(16.dp)) },
+                                shape = RoundedCornerShape(50)
+                            )
+                        }
 
-                            TextButton(
-                                onClick = {
-                                    selectedDates = emptySet()
-                                    attendanceOverrides = emptySet()
-                                    postedOverrides = emptyMap()
-                                },
-                                contentPadding = PaddingValues(0.dp)
+                        if (selectedDates.isNotEmpty() || postedOverrides.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Clear all", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                                selectedDates.sorted().forEach { date ->
+                                    Row(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
+                                            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                selectedDates = selectedDates - date
+                                                attendanceOverrides = attendanceOverrides.filterNot { key ->
+                                                    key.startsWith("$date|")
+                                                }.toSet()
+                                            }
+                                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(text = date.format(DateTimeFormatter.ofPattern("dd MMM", Locale.ENGLISH)), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Icon(Icons.Default.Close, contentDescription = "Remove", modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+
+                                if (postedOverrides.isNotEmpty()) {
+                                    val count = postedOverrides.size
+                                    Row(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f))
+                                            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                            .clickable { postedOverrides = emptyMap() }
+                                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "$count posted override${if (count == 1) "" else "s"}",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Icon(Icons.Default.Close, contentDescription = "Clear posted overrides", modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                                    }
+                                }
+
+                                TextButton(
+                                    onClick = {
+                                        selectedDates = emptySet()
+                                        attendanceOverrides = emptySet()
+                                        postedOverrides = emptyMap()
+                                    },
+                                    contentPadding = PaddingValues(0.dp)
+                                ) {
+                                    Text("Clear all", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                                }
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(8.dp))
                     }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
-                    Spacer(modifier = Modifier.height(8.dp))
                 }
-            }
 
-            items(groupedCourses, key = { it.courseCode }) { course ->
-                Box(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-                    CourseBunkCard(
-                        course = course,
-                        examName = examName,
-                        attendanceOverrides = attendanceOverrides,
-                        postedOverrides = postedOverrides,
-                        onAttendanceOverrideChange = { occurrence, wantsToAttend ->
-                            val wantsToBunk = !wantsToAttend
-                            val needsOverride = occurrence.isDefaultBunk != wantsToBunk
+                items(groupedCourses, key = { it.courseCode }) { course ->
+                    Box(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                        CourseBunkCard(
+                            course = course,
+                            examName = examName,
+                            attendanceOverrides = attendanceOverrides,
+                            postedOverrides = postedOverrides,
+                            onAttendanceOverrideChange = { occurrence, wantsToAttend ->
+                                val wantsToBunk = !wantsToAttend
+                                val needsOverride = occurrence.isDefaultBunk != wantsToBunk
 
-                            attendanceOverrides = if (needsOverride) {
-                                attendanceOverrides + occurrence.key
-                            } else {
-                                attendanceOverrides - occurrence.key
+                                attendanceOverrides = if (needsOverride) {
+                                    attendanceOverrides + occurrence.key
+                                } else {
+                                    attendanceOverrides - occurrence.key
+                                }
+                            },
+                            onPostedOverrideChange = { occurrence, newAttendState ->
+                                postedOverrides = postedOverrides + (occurrence.key to newAttendState)
+                            },
+                            onViewCalculation = { displayType ->
+                                showPostedClassesInDetails = false
+                                viewingCourseCode = course.courseCode
+                                viewingDisplayType = displayType
                             }
-                        },
-                        onPostedOverrideChange = { occurrence, newAttendState ->
-                            postedOverrides = postedOverrides + (occurrence.key to newAttendState)
-                        },
-                        onViewCalculation = { displayType ->
-                            showPostedClassesInDetails = false
-                            viewingCourseCode = course.courseCode
-                            viewingDisplayType = displayType
-                        }
-                    )
+                        )
+                    }
                 }
             }
+
+            PullRefreshIndicator(
+                refreshing = isSyncing,
+                state = pullRefreshState,
+                modifier = Modifier.align(Alignment.TopCenter),
+                backgroundColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.primary
+            )
         }
     }
 

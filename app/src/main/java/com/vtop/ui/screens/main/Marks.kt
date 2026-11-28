@@ -46,6 +46,10 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.ExperimentalMaterialApi
+import androidx.compose.material.pullrefresh.PullRefreshIndicator
+import androidx.compose.material.pullrefresh.pullRefresh
+import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
@@ -71,15 +75,11 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.core.content.edit
 import com.composables.icons.lucide.*
-import com.vtop.core.SessionManager
-import com.vtop.core.TimetableRepository
-import com.vtop.logic.CourseAttemptRecord
-import com.vtop.logic.CourseAttemptStore
-import com.vtop.logic.TimetableParser
+import com.vtop.core.*
+import com.vtop.logic.*
 import com.vtop.models.*
-import com.vtop.utils.AnalyticsManager
-import com.vtop.utils.CourseFileManager
-import com.vtop.utils.Vault
+import com.vtop.sync.*
+import com.vtop.utils.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -997,6 +997,7 @@ private fun normalCdf(z: Double): Double {
     return 0.5 * (1.0 + sign * erfApprox)
 }
 
+@OptIn(ExperimentalMaterialApi::class)
 @Composable
 internal fun GradeDetailSubView(
     course: GradeHistoryItem,
@@ -1010,7 +1011,10 @@ internal fun GradeDetailSubView(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var detail by remember { mutableStateOf<ParsedGradeViewDetail?>(null) }
     var refreshTrigger by remember { mutableIntStateOf(0) }
-
+    val pullRefreshState = rememberPullRefreshState(
+        refreshing = isLoading,
+        onRefresh = { if (!isLoading) refreshTrigger++ }
+    )
     val attemptVersion by CourseAttemptStore.version
     val attemptsMap = remember(historyData, attemptVersion) {
         CourseAttemptStore.getAll(context)
@@ -1087,428 +1091,437 @@ internal fun GradeDetailSubView(
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
 
-        if (isLoading && detail == null) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                    Text(
-                        text = "Fetching grade breakdown & class stats...",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .pullRefresh(pullRefreshState)
+        ) {
+            if (isLoading && detail == null) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                        Text(
+                            text = "Fetching grade breakdown & class stats...",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
-            }
-        } else if (errorMessage != null && detail == null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+            } else if (errorMessage != null && detail == null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = errorMessage ?: "Unable to load grade details",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.error,
-                        textAlign = TextAlign.Center
-                    )
-                    Button(onClick = { refreshTrigger++ }) {
-                        Text("Retry", fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        } else {
-            val data = detail ?: return@Column
-
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 32.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                // 1. Course Summary Hero Card
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(20.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Column(
-                            modifier = Modifier.padding(18.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.Top
-                            ) {
-                                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                                    Text(
-                                        text = data.courseTitle,
-                                        fontSize = 17.sp,
-                                        fontWeight = FontWeight.Black,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                                    )
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(
-                                        text = "${data.courseType} · ${course.credits} Credits",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
-                                    )
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .size(50.dp)
-                                        .background(gradeColor.copy(alpha = 0.16f), RoundedCornerShape(14.dp))
-                                        .border(1.5.dp, gradeColor.copy(alpha = 0.45f), RoundedCornerShape(14.dp)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = data.grade,
-                                        fontSize = 22.sp,
-                                        fontWeight = FontWeight.Black,
-                                        color = gradeColor
-                                    )
-                                }
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Surface(
-                                    modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)
-                                ) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
-                                        Text(
-                                            text = "GRAND TOTAL",
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            letterSpacing = 0.8.sp
-                                        )
-                                        Spacer(Modifier.height(2.dp))
-                                        Text(
-                                            text = "${data.grandTotalText} / 100",
-                                            fontSize = 18.sp,
-                                            fontWeight = FontWeight.Black,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                }
-
-                                Surface(
-                                    modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)
-                                ) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
-                                        Text(
-                                            text = "GRADING MODE",
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            letterSpacing = 0.8.sp
-                                        )
-                                        Spacer(Modifier.height(2.dp))
-                                        Text(
-                                            text = when (data.gradingType.uppercase(Locale.ENGLISH)) {
-                                                "RG" -> "Relative (RG)"
-                                                "AG" -> "Absolute (AG)"
-                                                else -> data.gradingType
-                                            },
-                                            fontSize = 16.sp,
-                                            fontWeight = FontWeight.Black,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                    }
-                                }
-                            }
+                        Text(
+                            text = errorMessage ?: "Unable to load grade details",
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.error,
+                            textAlign = TextAlign.Center
+                        )
+                        Button(onClick = { refreshTrigger++ }) {
+                            Text("Retry", fontWeight = FontWeight.Bold)
                         }
                     }
                 }
-
-                // 2. Bell Curve & Class Statistics (shown when Mean & SD are present, i.e. RG)
-                if (data.mean > 0.0 && data.sd > 0.0) {
-                    item {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(18.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
+            } else {
+                val data = detail
+                if (data != null) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 32.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // 1. Course Summary Hero Card
+                        item {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(20.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
                             ) {
-                                val zScore = (data.grandTotal - data.mean) / data.sd
-                                val percentile = (normalCdf(zScore) * 100.0).coerceIn(0.1, 99.9)
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                Column(
+                                    modifier = Modifier.padding(18.dp),
+                                    verticalArrangement = Arrangement.spacedBy(14.dp)
                                 ) {
-                                    Text(
-                                        text = "Class Distribution",
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Surface(
-                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                                        shape = RoundedCornerShape(50)
-                                    ) {
-                                        Text(
-                                            text = "~${String.format(Locale.US, "%.1f", percentile)}th percentile",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                        )
-                                    }
-                                }
-
-                                GradeBellCurveChart(
-                                    mean = data.mean,
-                                    sd = data.sd,
-                                    studentScore = data.grandTotal,
-                                    studentGrade = data.grade,
-                                    cutoffs = data.gradeCutoffs
-                                )
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    StatPill(label = "Class Size", value = data.classStrength.toString())
-                                    StatPill(label = "Graded", value = data.gradingStrength.toString())
-                                    StatPill(label = "Mean", value = String.format(Locale.US, "%.2f", data.mean))
-                                    StatPill(label = "Std Dev", value = String.format(Locale.US, "%.2f", data.sd))
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 3. Exact Range of Grades Card
-                if (data.gradeCutoffs.isNotEmpty()) {
-                    item {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(18.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Text(
-                                    text = "Range of Grades",
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-
-                                data.gradeCutoffs.forEach { cutoff ->
-                                    val isEarned = cutoff.grade.equals(data.grade, ignoreCase = true)
-                                    val cColor = getGradeColor(cutoff.grade)
                                     Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(
-                                                if (isEarned) cColor.copy(alpha = 0.14f)
-                                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-                                            )
-                                            .then(
-                                                if (isEarned) Modifier.border(1.dp, cColor.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
-                                                else Modifier
-                                            )
-                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                        verticalAlignment = Alignment.Top
                                     ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                            Text(
+                                                text = data.courseTitle,
+                                                fontSize = 17.sp,
+                                                fontWeight = FontWeight.Black,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                            Spacer(Modifier.height(4.dp))
+                                            Text(
+                                                text = "${data.courseType} · ${course.credits} Credits",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                                            )
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .size(50.dp)
+                                                .background(gradeColor.copy(alpha = 0.16f), RoundedCornerShape(14.dp))
+                                                .border(1.5.dp, gradeColor.copy(alpha = 0.45f), RoundedCornerShape(14.dp)),
+                                            contentAlignment = Alignment.Center
                                         ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(26.dp)
-                                                    .background(cColor.copy(alpha = 0.18f), RoundedCornerShape(7.dp)),
-                                                contentAlignment = Alignment.Center
-                                            ) {
+                                            Text(
+                                                text = data.grade,
+                                                fontSize = 22.sp,
+                                                fontWeight = FontWeight.Black,
+                                                color = gradeColor
+                                            )
+                                        }
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Surface(
+                                            modifier = Modifier.weight(1f),
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)
+                                        ) {
+                                            Column(modifier = Modifier.padding(12.dp)) {
                                                 Text(
-                                                    text = cutoff.grade,
-                                                    fontSize = 13.sp,
-                                                    fontWeight = FontWeight.Black,
-                                                    color = cColor
-                                                )
-                                            }
-                                            if (isEarned) {
-                                                Text(
-                                                    text = "Your Grade",
-                                                    fontSize = 11.sp,
+                                                    text = "GRAND TOTAL",
+                                                    fontSize = 10.sp,
                                                     fontWeight = FontWeight.Bold,
-                                                    color = cColor
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    letterSpacing = 0.8.sp
+                                                )
+                                                Spacer(Modifier.height(2.dp))
+                                                Text(
+                                                    text = "${data.grandTotalText} / 100",
+                                                    fontSize = 18.sp,
+                                                    fontWeight = FontWeight.Black,
+                                                    color = MaterialTheme.colorScheme.onSurface
                                                 )
                                             }
                                         }
-                                        Text(
-                                            text = if (cutoff.hasPolicyNote) "${cutoff.rawText} #" else cutoff.rawText,
-                                            fontSize = 12.sp,
-                                            fontWeight = if (isEarned) FontWeight.Bold else FontWeight.Medium,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                }
 
-                                data.sPolicyNote?.let { note ->
-                                    Text(
-                                        text = note,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.error
-                                    )
+                                        Surface(
+                                            modifier = Modifier.weight(1f),
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)
+                                        ) {
+                                            Column(modifier = Modifier.padding(12.dp)) {
+                                                Text(
+                                                    text = "GRADING MODE",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    letterSpacing = 0.8.sp
+                                                )
+                                                Spacer(Modifier.height(2.dp))
+                                                Text(
+                                                    text = when (data.gradingType.uppercase(Locale.ENGLISH)) {
+                                                        "RG" -> "Relative (RG)"
+                                                        "AG" -> "Absolute (AG)"
+                                                        else -> data.gradingType
+                                                    },
+                                                    fontSize = 16.sp,
+                                                    fontWeight = FontWeight.Black,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
-                    }
-                }
 
-                // 4. Component Marks Breakdown Tables
-                data.componentTables.forEachIndexed { idx, comp ->
-                    item(key = "comp_${idx}_${comp.classNumber}") {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(18.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Row(
+                        // 2. Bell Curve & Class Statistics (shown when Mean & SD are present, i.e. RG)
+                        if (data.mean > 0.0 && data.sd > 0.0) {
+                            item {
+                                Card(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                    shape = RoundedCornerShape(18.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
+                                    Column(
+                                        modifier = Modifier.padding(16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        val zScore = (data.grandTotal - data.mean) / data.sd
+                                        val percentile = (normalCdf(zScore) * 100.0).coerceIn(0.1, 99.9)
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "Class Distribution",
+                                                fontSize = 15.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Surface(
+                                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                                shape = RoundedCornerShape(50)
+                                            ) {
+                                                Text(
+                                                    text = "~${String.format(Locale.US, "%.1f", percentile)}th percentile",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                                )
+                                            }
+                                        }
+
+                                        GradeBellCurveChart(
+                                            mean = data.mean,
+                                            sd = data.sd,
+                                            studentScore = data.grandTotal,
+                                            studentGrade = data.grade,
+                                            cutoffs = data.gradeCutoffs
+                                        )
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            StatPill(label = "Class Size", value = data.classStrength.toString())
+                                            StatPill(label = "Graded", value = data.gradingStrength.toString())
+                                            StatPill(label = "Mean", value = String.format(Locale.US, "%.2f", data.mean))
+                                            StatPill(label = "Std Dev", value = String.format(Locale.US, "%.2f", data.sd))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 3. Exact Range of Grades Card
+                        if (data.gradeCutoffs.isNotEmpty()) {
+                            item {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(18.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
                                         Text(
-                                            text = comp.courseType.ifBlank { "Assessments" },
+                                            text = "Range of Grades",
                                             fontSize = 15.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
-                                        if (comp.classNumber.isNotBlank()) {
-                                            Text(
-                                                text = comp.classNumber,
-                                                fontSize = 11.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
+
+                                        data.gradeCutoffs.forEach { cutoff ->
+                                            val isEarned = cutoff.grade.equals(data.grade, ignoreCase = true)
+                                            val cColor = getGradeColor(cutoff.grade)
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .background(
+                                                        if (isEarned) cColor.copy(alpha = 0.14f)
+                                                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                                                    )
+                                                    .then(
+                                                        if (isEarned) Modifier.border(1.dp, cColor.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                                                        else Modifier
+                                                    )
+                                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(26.dp)
+                                                            .background(cColor.copy(alpha = 0.18f), RoundedCornerShape(7.dp)),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Text(
+                                                            text = cutoff.grade,
+                                                            fontSize = 13.sp,
+                                                            fontWeight = FontWeight.Black,
+                                                            color = cColor
+                                                        )
+                                                    }
+                                                    if (isEarned) {
+                                                        Text(
+                                                            text = "Your Grade",
+                                                            fontSize = 11.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = cColor
+                                                        )
+                                                    }
+                                                }
+                                                Text(
+                                                    text = if (cutoff.hasPolicyNote) "${cutoff.rawText} #" else cutoff.rawText,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = if (isEarned) FontWeight.Bold else FontWeight.Medium,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                            }
                                         }
-                                    }
-                                    if (comp.totalWeightageMark.isNotBlank()) {
-                                        Surface(
-                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                                            shape = RoundedCornerShape(10.dp)
-                                        ) {
+
+                                        data.sPolicyNote?.let { note ->
                                             Text(
-                                                text = "Total: ${comp.totalWeightageMark}",
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.Black,
-                                                color = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                                text = note,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.error
                                             )
                                         }
                                     }
                                 }
+                            }
+                        }
 
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
+                        // 4. Component Marks Breakdown Tables
+                        data.componentTables.forEachIndexed { idx, comp ->
+                            item(key = "comp_${idx}_${comp.classNumber}") {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(18.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
                                 ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
-                                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
+                                    Column(
+                                        modifier = Modifier.padding(16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(12.dp)
                                     ) {
-                                        Text(
-                                            text = "Mark Title",
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.weight(1.2f)
-                                        )
-                                        Text(
-                                            text = "Scored / Max",
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            textAlign = TextAlign.Center,
-                                            modifier = Modifier.weight(0.9f)
-                                        )
-                                        Text(
-                                            text = "Wgt / %",
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            textAlign = TextAlign.End,
-                                            modifier = Modifier.weight(0.8f)
-                                        )
-                                    }
-
-                                    comp.rows.forEach { row ->
-                                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
                                         Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Column(modifier = Modifier.weight(1.2f)) {
+                                            Column(modifier = Modifier.weight(1f)) {
                                                 Text(
-                                                    text = row.title,
-                                                    fontSize = 12.sp,
+                                                    text = comp.courseType.ifBlank { "Assessments" },
+                                                    fontSize = 15.sp,
                                                     fontWeight = FontWeight.Bold,
                                                     color = MaterialTheme.colorScheme.onSurface
                                                 )
-                                                if (row.status.isNotBlank() && !row.status.equals("Present", ignoreCase = true)) {
+                                                if (comp.classNumber.isNotBlank()) {
                                                     Text(
-                                                        text = row.status,
-                                                        fontSize = 10.sp,
-                                                        color = MaterialTheme.colorScheme.error
+                                                        text = comp.classNumber,
+                                                        fontSize = 11.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
                                                 }
                                             }
-                                            Text(
-                                                text = "${row.scoredMark} / ${row.maxMark}",
-                                                fontSize = 12.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                textAlign = TextAlign.Center,
-                                                modifier = Modifier.weight(0.9f)
-                                            )
-                                            Text(
-                                                text = "${row.weightageMark} / ${row.weightagePercent}",
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.primary,
-                                                textAlign = TextAlign.End,
-                                                modifier = Modifier.weight(0.8f)
-                                            )
+                                            if (comp.totalWeightageMark.isNotBlank()) {
+                                                Surface(
+                                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                                    shape = RoundedCornerShape(10.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "Total: ${comp.totalWeightageMark}",
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.Black,
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "Mark Title",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.weight(1.2f)
+                                                )
+                                                Text(
+                                                    text = "Scored / Max",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    textAlign = TextAlign.Center,
+                                                    modifier = Modifier.weight(0.9f)
+                                                )
+                                                Text(
+                                                    text = "Wgt / %",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    textAlign = TextAlign.End,
+                                                    modifier = Modifier.weight(0.8f)
+                                                )
+                                            }
+
+                                            comp.rows.forEach { row ->
+                                                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Column(modifier = Modifier.weight(1.2f)) {
+                                                        Text(
+                                                            text = row.title,
+                                                            fontSize = 12.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = MaterialTheme.colorScheme.onSurface
+                                                        )
+                                                        if (row.status.isNotBlank() && !row.status.equals("Present", ignoreCase = true)) {
+                                                            Text(
+                                                                text = row.status,
+                                                                fontSize = 10.sp,
+                                                                color = MaterialTheme.colorScheme.error
+                                                            )
+                                                        }
+                                                    }
+                                                    Text(
+                                                        text = "${row.scoredMark} / ${row.maxMark}",
+                                                        fontSize = 12.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        textAlign = TextAlign.Center,
+                                                        modifier = Modifier.weight(0.9f)
+                                                    )
+                                                    Text(
+                                                        text = "${row.weightageMark} / ${row.weightagePercent}",
+                                                        fontSize = 12.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        textAlign = TextAlign.End,
+                                                        modifier = Modifier.weight(0.8f)
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -1517,6 +1530,14 @@ internal fun GradeDetailSubView(
                     }
                 }
             }
+
+            PullRefreshIndicator(
+                refreshing = isLoading,
+                state = pullRefreshState,
+                modifier = Modifier.align(Alignment.TopCenter),
+                backgroundColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.primary
+            )
         }
     }
 }
@@ -1675,6 +1696,7 @@ private fun GradeBellCurveChart(
     }
 }
 
+@OptIn(ExperimentalMaterialApi::class)
 @Composable
 internal fun CGPACalculatorSubView(
     historySummary: CGPASummary?,
@@ -1689,6 +1711,12 @@ internal fun CGPACalculatorSubView(
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     var resolvedTimetable by remember(timetable) { mutableStateOf(timetable) }
+
+    val isSyncing by SyncManager.isSyncing.collectAsState()
+    val pullRefreshState = rememberPullRefreshState(
+        refreshing = isSyncing,
+        onRefresh = { SyncManager.performSync(context, priorityTab = "MARKS") }
+    )
 
     val attemptVersion by CourseAttemptStore.version
     val attemptsMap = remember(historyData, attemptVersion) {
@@ -1981,267 +2009,339 @@ internal fun CGPACalculatorSubView(
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
 
-        LazyColumn(
-            state = listState,
+        Box(
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth(),
-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+                .fillMaxWidth()
+                .pullRefresh(pullRefreshState)
         ) {
-            // 1. Hero Card
-            item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .animateContentSize(),
-                    shape = RoundedCornerShape(22.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
-                ) {
-                    Column(
-                        modifier = Modifier.padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // 1. Hero Card
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .animateContentSize(),
+                        shape = RoundedCornerShape(22.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(18.dp)
+                        Column(
+                            modifier = Modifier.padding(18.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
-                            val ringProgress = (semesterSgpa / 10.0).toFloat().coerceIn(0f, 1f)
-                            Box(
-                                modifier = Modifier.size(96.dp),
-                                contentAlignment = Alignment.Center
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(18.dp)
                             ) {
-                                CircularProgressIndicator(
-                                    progress = { 1f },
-                                    modifier = Modifier.fillMaxSize(),
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.14f),
-                                    strokeWidth = 7.dp
-                                )
-                                CircularProgressIndicator(
-                                    progress = { ringProgress },
-                                    modifier = Modifier.fillMaxSize(),
-                                    color = MaterialTheme.colorScheme.primary,
-                                    strokeWidth = 7.dp
-                                )
-                                Text(
-                                    text = if (plannedGradedCredits > 0.0) String.format(Locale.US, "%.2f", semesterSgpa) else "-",
-                                    fontSize = 22.sp,
-                                    fontWeight = FontWeight.Black,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                            }
-
-                            Column(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Column {
-                                    Text(
-                                        text = "Semester GPA",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                                val ringProgress = (semesterSgpa / 10.0).toFloat().coerceIn(0f, 1f)
+                                Box(
+                                    modifier = Modifier.size(96.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(
+                                        progress = { 1f },
+                                        modifier = Modifier.fillMaxSize(),
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.14f),
+                                        strokeWidth = 7.dp
+                                    )
+                                    CircularProgressIndicator(
+                                        progress = { ringProgress },
+                                        modifier = Modifier.fillMaxSize(),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        strokeWidth = 7.dp
                                     )
                                     Text(
-                                        text = "${plannedCourses.size} ${if (plannedCourses.size == 1) "course" else "courses"} · ${formatVal(plannedGradedCredits)} credits",
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.Bold,
+                                        text = if (plannedGradedCredits > 0.0) String.format(Locale.US, "%.2f", semesterSgpa) else "-",
+                                        fontSize = 22.sp,
+                                        fontWeight = FontWeight.Black,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer
                                     )
                                 }
 
-                                Column {
-                                    Text(
-                                        text = "Projected CGPA (${formatVal(totalGradedCredits)} credits)",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
-                                    )
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Column {
                                         Text(
-                                            text = String.format(Locale.US, "%.2f", effectiveBaselineCgpa),
-                                            fontSize = 16.sp,
+                                            text = "Semester GPA",
+                                            fontSize = 13.sp,
                                             fontWeight = FontWeight.SemiBold,
                                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
                                         )
                                         Text(
-                                            text = "→",
+                                            text = "${plannedCourses.size} ${if (plannedCourses.size == 1) "course" else "courses"} · ${formatVal(plannedGradedCredits)} credits",
                                             fontSize = 15.sp,
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
-                                        )
-                                        Text(
-                                            text = String.format(Locale.US, "%.2f", projectedCgpa),
-                                            fontSize = 20.sp,
-                                            fontWeight = FontWeight.Black,
+                                            fontWeight = FontWeight.Bold,
                                             color = MaterialTheme.colorScheme.onPrimaryContainer
                                         )
-                                        if (kotlin.math.abs(cgpaDelta) >= 0.005) {
-                                            val isPositive = cgpaDelta > 0
-                                            val deltaColor = if (isPositive) Color(0xFF10B981) else MaterialTheme.colorScheme.error
-                                            Surface(
-                                                color = deltaColor.copy(alpha = 0.18f),
-                                                shape = RoundedCornerShape(50)
-                                            ) {
-                                                Text(
-                                                    text = String.format(Locale.US, "%+.2f", cgpaDelta),
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = deltaColor,
-                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                                )
+                                    }
+
+                                    Column {
+                                        Text(
+                                            text = "Projected CGPA (${formatVal(totalGradedCredits)} credits)",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(
+                                                text = String.format(Locale.US, "%.2f", effectiveBaselineCgpa),
+                                                fontSize = 16.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                                            )
+                                            Text(
+                                                text = "→",
+                                                fontSize = 15.sp,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                                            )
+                                            Text(
+                                                text = String.format(Locale.US, "%.2f", projectedCgpa),
+                                                fontSize = 20.sp,
+                                                fontWeight = FontWeight.Black,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                            if (kotlin.math.abs(cgpaDelta) >= 0.005) {
+                                                val isPositive = cgpaDelta > 0
+                                                val deltaColor = if (isPositive) Color(0xFF10B981) else MaterialTheme.colorScheme.error
+                                                Surface(
+                                                    color = deltaColor.copy(alpha = 0.18f),
+                                                    shape = RoundedCornerShape(50)
+                                                ) {
+                                                    Text(
+                                                        text = String.format(Locale.US, "%+.2f", cgpaDelta),
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = deltaColor,
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                                    )
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
-                        }
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "CGPA ${String.format(Locale.US, "%.2f", effectiveBaselineCgpa)} over ${formatVal(effectiveCompletedCredits)} credits",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f),
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text(
-                                text = if (isEditingBaseline) "Done" else "Edit",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .clickable { isEditingBaseline = !isEditingBaseline }
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-
-                        if (isEditingBaseline) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                OutlinedTextField(
-                                    value = currentCgpaText,
-                                    onValueChange = { raw ->
-                                        if (raw.length <= 5 && raw.all { it.isDigit() || it == '.' }) {
-                                            currentCgpaText = raw
-                                        }
-                                    },
-                                    label = { Text("Current CGPA", fontSize = 12.sp) },
-                                    singleLine = true,
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                    shape = RoundedCornerShape(12.dp),
+                                Text(
+                                    text = "CGPA ${String.format(Locale.US, "%.2f", effectiveBaselineCgpa)} over ${formatVal(effectiveCompletedCredits)} credits",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f),
                                     modifier = Modifier.weight(1f)
                                 )
-                                OutlinedTextField(
-                                    value = completedCreditsText,
-                                    onValueChange = { raw ->
-                                        if (raw.length <= 6 && raw.all { it.isDigit() || it == '.' }) {
-                                            completedCreditsText = raw
-                                        }
-                                    },
-                                    label = { Text("Completed credits", fontSize = 12.sp) },
-                                    singleLine = true,
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                    shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier.weight(1f)
+                                Text(
+                                    text = if (isEditingBaseline) "Done" else "Edit",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable { isEditingBaseline = !isEditingBaseline }
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
+                            }
+
+                            if (isEditingBaseline) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = currentCgpaText,
+                                        onValueChange = { raw ->
+                                            if (raw.length <= 5 && raw.all { it.isDigit() || it == '.' }) {
+                                                currentCgpaText = raw
+                                            }
+                                        },
+                                        label = { Text("Current CGPA", fontSize = 12.sp) },
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    OutlinedTextField(
+                                        value = completedCreditsText,
+                                        onValueChange = { raw ->
+                                            if (raw.length <= 6 && raw.all { it.isDigit() || it == '.' }) {
+                                                completedCreditsText = raw
+                                            }
+                                        },
+                                        label = { Text("Completed credits", fontSize = 12.sp) },
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // 2. Target CGPA Card
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                // 2. Target CGPA Card
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
                     ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Target CGPA",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+
+                                Row(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            targetInputText = String.format(Locale.US, "%.2f", targetCgpa)
+                                            showTargetEditDialog = true
+                                        }
+                                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = String.format(Locale.US, "%.2f", targetCgpa),
+                                        fontSize = 20.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "Edit Target CGPA",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+
+                            if (plannedGradedCredits > 0.0) {
+                                val requiredSgpa = ((targetCgpa * (pastGradedCredits + plannedGradedCredits)) - pastPoints) / plannedGradedCredits
+                                val clampedDisplay = if (requiredSgpa <= 0.0) 0.0 else requiredSgpa
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "Needs a ",
+                                        fontSize = 14.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = String.format(Locale.US, "%.2f", clampedDisplay),
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = if (requiredSgpa > 10.0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = " semester GPA",
+                                        fontSize = 14.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 3. Analytics Charts + "View more" button
+                if (hasChartsSection) {
+                    item {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 4.dp),
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
+                        )
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Target CGPA",
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface
+                                text = "Analytics",
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Black,
+                                color = MaterialTheme.colorScheme.onBackground
                             )
-
-                            Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        targetInputText = String.format(Locale.US, "%.2f", targetCgpa)
-                                        showTargetEditDialog = true
-                                    }
-                                    .padding(horizontal = 6.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Text(
-                                    text = String.format(Locale.US, "%.2f", targetCgpa),
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Black,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = "Edit Target CGPA",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(16.dp)
-                                )
+                            if (pastSemesters.isNotEmpty()) {
+                                TextButton(
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            listState.animateScrollToItem(pastSemestersHeaderIndex)
+                                        }
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = "View more",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.KeyboardArrowDown,
+                                        contentDescription = "Scroll to past courses",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
                             }
                         }
+                    }
 
-                        if (plannedGradedCredits > 0.0) {
-                            val requiredSgpa = ((targetCgpa * (pastGradedCredits + plannedGradedCredits)) - pastPoints) / plannedGradedCredits
-                            val clampedDisplay = if (requiredSgpa <= 0.0) 0.0 else requiredSgpa
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "Needs a ",
-                                    fontSize = 14.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = String.format(Locale.US, "%.2f", clampedDisplay),
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Black,
-                                    color = if (requiredSgpa > 10.0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = " semester GPA",
-                                    fontSize = 14.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                    if (chartSemesters.isNotEmpty()) {
+                        item {
+                            ReportChartCard(title = "GPA Trend by Semester") {
+                                GpaTrendChart(semesters = chartSemesters)
+                            }
+                        }
+                        item {
+                            ReportChartCard(title = "Credits by Semester") {
+                                CreditsBySemesterChart(semesters = chartSemesters)
+                            }
+                        }
+                    }
+
+                    if (gradeDistribution.isNotEmpty()) {
+                        item {
+                            ReportChartCard(title = "Grade Distribution") {
+                                GradeDistributionDonutChart(distribution = gradeDistribution)
                             }
                         }
                     }
                 }
-            }
 
-            // 3. Analytics Charts + "View more" button
-            if (hasChartsSection) {
+                // 4. Courses Header
                 item {
                     HorizontalDivider(
                         modifier = Modifier.padding(vertical = 4.dp),
@@ -2255,455 +2355,388 @@ internal fun CGPACalculatorSubView(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Analytics",
+                            text = "Courses",
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Black,
                             color = MaterialTheme.colorScheme.onBackground
                         )
-                        if (pastSemesters.isNotEmpty()) {
-                            TextButton(
-                                onClick = {
-                                    coroutineScope.launch {
-                                        listState.animateScrollToItem(pastSemestersHeaderIndex)
-                                    }
-                                },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        TextButton(
+                            onClick = {
+                                plannedCourses = buildCurrentSemesterCourses(resolvedTimetable, marksData)
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DateRange,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "Current semester",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+
+                // 5. Course Planner Cards
+                items(plannedCourses, key = { it.id }) { course ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.Top
                             ) {
                                 Text(
-                                    text = "View more",
-                                    fontSize = 13.sp,
+                                    text = course.courseTitle,
+                                    fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Icon(
-                                    imageVector = Icons.Default.KeyboardArrowDown,
-                                    contentDescription = "Scroll to past courses",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                if (chartSemesters.isNotEmpty()) {
-                    item {
-                        ReportChartCard(title = "GPA Trend by Semester") {
-                            GpaTrendChart(semesters = chartSemesters)
-                        }
-                    }
-                    item {
-                        ReportChartCard(title = "Credits by Semester") {
-                            CreditsBySemesterChart(semesters = chartSemesters)
-                        }
-                    }
-                }
-
-                if (gradeDistribution.isNotEmpty()) {
-                    item {
-                        ReportChartCard(title = "Grade Distribution") {
-                            GradeDistributionDonutChart(distribution = gradeDistribution)
-                        }
-                    }
-                }
-            }
-
-            // 4. Courses Header
-            item {
-                HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 4.dp),
-                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Courses",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Black,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    TextButton(
-                        onClick = {
-                            plannedCourses = buildCurrentSemesterCourses(resolvedTimetable, marksData)
-                        },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DateRange,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = "Current semester",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
-            }
-
-            // 5. Course Planner Cards
-            items(plannedCourses, key = { it.id }) { course ->
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            Text(
-                                text = course.courseTitle,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(end = 10.dp)
-                            )
-                            Surface(
-                                shape = CircleShape,
-                                color = Color.Transparent,
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .clip(CircleShape)
-                                    .clickable {
-                                        plannedCourses = plannedCourses.filterNot { it.id == course.id }
-                                    }
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "Remove course",
-                                        tint = MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = course.courseCode.ifBlank { "Custom" },
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-                                    modifier = Modifier
-                                        .size(30.dp)
-                                        .clip(CircleShape)
-                                        .clickable {
-                                            val updatedCr = (course.credits - 0.5).coerceAtLeast(0.5)
-                                            plannedCourses = plannedCourses.map {
-                                                if (it.id == course.id) it.copy(credits = updatedCr) else it
-                                            }
-                                        }
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Text(
-                                            text = "−",
-                                            fontSize = 16.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                }
-
-                                Row(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable {
-                                            editingCreditCourse = course
-                                            creditInputText = formatVal(course.credits)
-                                        }
-                                        .padding(horizontal = 4.dp, vertical = 2.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Text(
-                                        text = "${formatVal(course.credits)} cr",
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Icon(
-                                        imageVector = Icons.Default.Edit,
-                                        contentDescription = "Edit credits",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                }
-
-                                Surface(
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-                                    modifier = Modifier
-                                        .size(30.dp)
-                                        .clip(CircleShape)
-                                        .clickable {
-                                            val updatedCr = (course.credits + 0.5).coerceAtMost(20.0)
-                                            plannedCourses = plannedCourses.map {
-                                                if (it.id == course.id) it.copy(credits = updatedCr) else it
-                                            }
-                                        }
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Text(
-                                            text = "+",
-                                            fontSize = 16.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            gradeOptions.forEach { g ->
-                                val isSelected = course.grade.equals(g, ignoreCase = true)
-                                Box(
+                                    color = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier
                                         .weight(1f)
-                                        .height(38.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(
-                                            if (isSelected) MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-                                        )
+                                        .padding(end = 10.dp)
+                                )
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color.Transparent,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(CircleShape)
                                         .clickable {
-                                            plannedCourses = plannedCourses.map {
-                                                if (it.id == course.id) it.copy(grade = g) else it
-                                            }
-                                        },
-                                    contentAlignment = Alignment.Center
+                                            plannedCourses = plannedCourses.filterNot { it.id == course.id }
+                                        }
                                 ) {
-                                    Text(
-                                        text = g,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary
-                                        else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Remove course",
+                                            tint = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                 }
                             }
-                        }
-                    }
-                }
-            }
 
-            // 6. Add Custom Course Button
-            item {
-                OutlinedButton(
-                    onClick = {
-                        newCourseTitle = ""
-                        newCourseCode = ""
-                        newCourseCredits = "3"
-                        newCourseGrade = "A"
-                        showAddCourseDialog = true
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Add Course", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                }
-            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = course.courseCode.ifBlank { "Custom" },
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
 
-            // 7. Interactive Past Semesters Breakdown (Semester-wise transcript)
-            if (pastSemesters.isNotEmpty()) {
-                item {
-                    HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 4.dp),
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
-                    )
-                    Text(
-                        text = "Past Semesters",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Black,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                }
-
-                pastSemesters.forEach { sem ->
-                    item(key = "rep_sem_${sem.semester}") {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(18.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
-                        ) {
-                            Column(modifier = Modifier.fillMaxWidth()) {
                                 Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
-                                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    val mappedSem = semesterNameMap[sem.semester]
-                                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                                        if (mappedSem != null) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                                        modifier = Modifier
+                                            .size(30.dp)
+                                            .clip(CircleShape)
+                                            .clickable {
+                                                val updatedCr = (course.credits - 0.5).coerceAtLeast(0.5)
+                                                plannedCourses = plannedCourses.map {
+                                                    if (it.id == course.id) it.copy(credits = updatedCr) else it
+                                                }
+                                            }
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
                                             Text(
-                                                text = mappedSem,
-                                                fontSize = 15.sp,
+                                                text = "−",
+                                                fontSize = 16.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                            Text(
-                                                text = "${sem.semester} · ${sem.courses.size} courses",
-                                                fontSize = 11.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        } else {
-                                            Text(
-                                                text = sem.semester,
-                                                fontSize = 15.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                            Text(
-                                                text = "${sem.courses.size} courses",
-                                                fontSize = 11.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                color = MaterialTheme.colorScheme.onSurface
                                             )
                                         }
                                     }
-                                    Column(horizontalAlignment = Alignment.End) {
-                                        Text(
-                                            text = String.format(Locale.US, "%.2f", sem.gpa),
-                                            fontSize = 20.sp,
-                                            fontWeight = FontWeight.Black,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                        Text(
-                                            text = "Semester GPA",
-                                            fontSize = 10.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-
-                                sem.courses.forEachIndexed { rowIdx, reportRow ->
-                                    if (rowIdx > 0) {
-                                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
-                                    }
-                                    val course = reportRow.item
-                                    var gradeMenuExpanded by remember { mutableStateOf(false) }
-                                    val pts = getGradePoints(course.grade)
-                                    val gColor = getGradeColor(course.grade)
 
                                     Row(
                                         modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                editingCreditCourse = course
+                                                creditInputText = formatVal(course.credits)
+                                            }
+                                            .padding(horizontal = 4.dp, vertical = 2.dp),
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
-                                        Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "${formatVal(course.credits)} cr",
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Icon(
+                                            imageVector = Icons.Default.Edit,
+                                            contentDescription = "Edit credits",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                                        modifier = Modifier
+                                            .size(30.dp)
+                                            .clip(CircleShape)
+                                            .clickable {
+                                                val updatedCr = (course.credits + 0.5).coerceAtMost(20.0)
+                                                plannedCourses = plannedCourses.map {
+                                                    if (it.id == course.id) it.copy(credits = updatedCr) else it
+                                                }
+                                            }
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
                                             Text(
-                                                text = course.courseTitle.ifBlank { course.courseCode },
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.SemiBold,
+                                                text = "+",
+                                                fontSize = 16.sp,
+                                                fontWeight = FontWeight.Bold,
                                                 color = MaterialTheme.colorScheme.onSurface
                                             )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                gradeOptions.forEach { g ->
+                                    val isSelected = course.grade.equals(g, ignoreCase = true)
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(38.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(
+                                                if (isSelected) MaterialTheme.colorScheme.primary
+                                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                                            )
+                                            .clickable {
+                                                plannedCourses = plannedCourses.map {
+                                                    if (it.id == course.id) it.copy(grade = g) else it
+                                                }
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = g,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary
+                                            else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 6. Add Custom Course Button
+                item {
+                    OutlinedButton(
+                        onClick = {
+                            newCourseTitle = ""
+                            newCourseCode = ""
+                            newCourseCredits = "3"
+                            newCourseGrade = "A"
+                            showAddCourseDialog = true
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Add Course", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+                }
+
+                // 7. Interactive Past Semesters Breakdown (Semester-wise transcript)
+                if (pastSemesters.isNotEmpty()) {
+                    item {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 4.dp),
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
+                        )
+                        Text(
+                            text = "Past Semesters",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Black,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+
+                    pastSemesters.forEach { sem ->
+                        item(key = "rep_sem_${sem.semester}") {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(18.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+                            ) {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        val mappedSem = semesterNameMap[sem.semester]
+                                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                            if (mappedSem != null) {
+                                                Text(
+                                                    text = mappedSem,
+                                                    fontSize = 15.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                                Text(
+                                                    text = "${sem.semester} · ${sem.courses.size} courses",
+                                                    fontSize = 11.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            } else {
+                                                Text(
+                                                    text = sem.semester,
+                                                    fontSize = 15.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                                Text(
+                                                    text = "${sem.courses.size} courses",
+                                                    fontSize = 11.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                        Column(horizontalAlignment = Alignment.End) {
                                             Text(
-                                                text = "${course.courseCode} · ${course.credits} cr · ${if (pts < 0) "N/A" else "$pts pts"}",
-                                                fontSize = 11.sp,
+                                                text = String.format(Locale.US, "%.2f", sem.gpa),
+                                                fontSize = 20.sp,
+                                                fontWeight = FontWeight.Black,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            Text(
+                                                text = "Semester GPA",
+                                                fontSize = 10.sp,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
+                                    }
 
-                                        Box {
-                                            Row(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(10.dp))
-                                                    .background(gColor.copy(alpha = 0.14f))
-                                                    .border(1.dp, gColor.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
-                                                    .clickable { gradeMenuExpanded = true }
-                                                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                            ) {
+                                    sem.courses.forEachIndexed { rowIdx, reportRow ->
+                                        if (rowIdx > 0) {
+                                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
+                                        }
+                                        val course = reportRow.item
+                                        var gradeMenuExpanded by remember { mutableStateOf(false) }
+                                        val pts = getGradePoints(course.grade)
+                                        val gColor = getGradeColor(course.grade)
+
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
                                                 Text(
-                                                    text = course.grade,
-                                                    color = gColor,
-                                                    fontSize = 14.sp,
-                                                    fontWeight = FontWeight.Black
+                                                    text = course.courseTitle.ifBlank { course.courseCode },
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.onSurface
                                                 )
-                                                Icon(
-                                                    imageVector = Icons.Default.KeyboardArrowDown,
-                                                    contentDescription = "Change grade",
-                                                    tint = gColor,
-                                                    modifier = Modifier.size(16.dp)
+                                                Text(
+                                                    text = "${course.courseCode} · ${course.credits} cr · ${if (pts < 0) "N/A" else "$pts pts"}",
+                                                    fontSize = 11.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
                                             }
 
-                                            DropdownMenu(
-                                                expanded = gradeMenuExpanded,
-                                                onDismissRequest = { gradeMenuExpanded = false }
-                                            ) {
-                                                reportGradeOptions.forEach { g ->
-                                                    val gPts = getGradePoints(g)
-                                                    DropdownMenuItem(
-                                                        text = {
-                                                            Text(
-                                                                text = if (g == "P") "P (Pass)" else "$g ($gPts)",
-                                                                fontWeight = if (g == course.grade) FontWeight.Bold else FontWeight.Normal,
-                                                                color = if (g == course.grade) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                                            )
-                                                        },
-                                                        onClick = {
-                                                            val effIdx = reportRow.effectiveIndex
-                                                            if (effIdx != null) {
-                                                                if (g == historyData[effIdx].grade) {
-                                                                    reportGradeOverrides.remove(effIdx)
-                                                                } else {
-                                                                    reportGradeOverrides[effIdx] = g
-                                                                }
-                                                            } else {
-                                                                otherAttemptGradeOverrides[reportRow.key] = g
-                                                            }
-                                                            gradeMenuExpanded = false
-                                                        }
+                                            Box {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(10.dp))
+                                                        .background(gColor.copy(alpha = 0.14f))
+                                                        .border(1.dp, gColor.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+                                                        .clickable { gradeMenuExpanded = true }
+                                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = course.grade,
+                                                        color = gColor,
+                                                        fontSize = 14.sp,
+                                                        fontWeight = FontWeight.Black
                                                     )
+                                                    Icon(
+                                                        imageVector = Icons.Default.KeyboardArrowDown,
+                                                        contentDescription = "Change grade",
+                                                        tint = gColor,
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+
+                                                DropdownMenu(
+                                                    expanded = gradeMenuExpanded,
+                                                    onDismissRequest = { gradeMenuExpanded = false }
+                                                ) {
+                                                    reportGradeOptions.forEach { g ->
+                                                        val gPts = getGradePoints(g)
+                                                        DropdownMenuItem(
+                                                            text = {
+                                                                Text(
+                                                                    text = if (g == "P") "P (Pass)" else "$g ($gPts)",
+                                                                    fontWeight = if (g == course.grade) FontWeight.Bold else FontWeight.Normal,
+                                                                    color = if (g == course.grade) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                                )
+                                                            },
+                                                            onClick = {
+                                                                val effIdx = reportRow.effectiveIndex
+                                                                if (effIdx != null) {
+                                                                    if (g == historyData[effIdx].grade) {
+                                                                        reportGradeOverrides.remove(effIdx)
+                                                                    } else {
+                                                                        reportGradeOverrides[effIdx] = g
+                                                                    }
+                                                                } else {
+                                                                    otherAttemptGradeOverrides[reportRow.key] = g
+                                                                }
+                                                                gradeMenuExpanded = false
+                                                            }
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -2714,6 +2747,14 @@ internal fun CGPACalculatorSubView(
                     }
                 }
             }
+
+            PullRefreshIndicator(
+                refreshing = isSyncing,
+                state = pullRefreshState,
+                modifier = Modifier.align(Alignment.TopCenter),
+                backgroundColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.primary
+            )
         }
     }
 
